@@ -23,7 +23,7 @@ def download_prices(  # pyright: ignore[reportUnknownParameterType]
         output = f'{ticker.lower()}_10yr_prices.csv'
 
     data = pd.DataFrame(yf.download(ticker, period=period))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
-    closes: pd.Series[float] = data['Close']
+    closes = data[['Close']]  # keep as DataFrame so to_csv preserves the column
 
     closes.to_csv(output, header=True)  # pyright: ignore[reportUnknownMemberType]
     print(f"Saved {len(closes)} days of {ticker} closing prices to {output}")

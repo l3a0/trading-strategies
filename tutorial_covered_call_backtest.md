@@ -25,6 +25,7 @@
 
 Before diving in, here are a few terms you'll see throughout this tutorial:
 
+- **Assignment loss:** What happens when your covered call gets exercised because the stock rallied past the strike. You collected premium up front, but to keep running the overlay you must rebuy the shares at the current (higher) market price. The overlay's net is `premium − (market_price − strike)`. It's a **loss** when the stock rallied past `strike + premium`. Example: you sold a $310 strike call for $1.50 premium and the stock closed at $325 — you keep the $1.50 but pay back $15 of capped upside, netting **−$13.50/share**. The stock appreciation up to the strike is still yours (tracked separately as part of equity), but the *uncapped* portion of the rally is gone. In a strong bull market this is the dominant cost the overlay pays.
 - **CC (Covered Call):** A strategy where you own 100 shares of a stock and sell a call option against them. You collect the premium up front; if the stock stays below the strike at expiration, you keep the shares and the premium. If it rises above the strike, your shares may be called away at that price. "Covered" means you already own the shares, so you're not exposed to unlimited upside risk like a naked call.
 - **CSP (Cash-Secured Put):** A strategy where you sell a put option and set aside enough cash to buy 100 shares at the strike price if assigned. You collect the premium up front; if the stock stays above the strike, the put expires worthless and you keep the cash. If it falls below, you're obligated to buy the shares at the strike. CSPs are the "entry" half of the wheel — a way to get paid while waiting to buy a stock at a discount.
 - **CDF (Cumulative Distribution Function):** Answers the question "what's the probability a value falls at or below X?" Imagine filling a glass of water as you move left to right across a bell curve — at the far left it's nearly empty (0%), at the center it's half full (50%), at the far right it's nearly full (100%). In our context, the CDF converts a stock's distance from the strike price into a probability, which is exactly what Black-Scholes needs to price an option.
@@ -33,7 +34,7 @@ Before diving in, here are a few terms you'll see throughout this tutorial:
 - **DTE (Days to Expiration):** How many calendar days until the option expires. We use 21 DTE (about 3 weeks) as our default.
 - **Gamma risk:** The risk that your option's delta changes rapidly as the stock moves. Near expiration, small stock moves can cause big swings in an option's value — a "safe" out-of-the-money call can suddenly become in-the-money. This is why we close positions before the last week of expiration.
 - **HV (Historical Volatility):** How much the stock price has actually been bouncing around, measured from past prices.
-- **IV (Implied Volatility):** What the market thinks future volatility will be, baked into the option price. Since we don't have real IV data, we estimate it as HV × a multiplier (typically 1.3).
+- **IV (Implied Volatility):** What the market thinks future volatility will be, baked into the option price. Since we don't have real IV data, we estimate it using a regime-based multiplier on HV (1.1× in high-vol regimes, 1.3× in normal, 1.5× in low-vol).
 - **OTM (Out of the Money):** A call option where the strike price is above the current stock price (the buyer wouldn't exercise yet). We sell OTM calls to collect premium while giving the stock room to grow.
 - **PDF (Probability Density Function):** The "height" of the bell curve at a given point. While the CDF measures the area under the curve (a cumulative probability), the PDF measures how tall the curve is at one specific value. We need it inside the CDF approximation formula — the approximation works by multiplying the PDF (height) by a polynomial correction to estimate the CDF (area).
 - **Premium:** The price the option buyer pays you. This is your income as a covered call seller.
@@ -234,6 +235,15 @@ def normal_cdf(x):
 
 **Why this works:** The CDF is the area under the bell curve. The approximation says: "take the height of the curve at this point (PDF), multiply by a polynomial correction, and you get a good estimate of the area." It's like estimating the area of a hill by measuring its height and applying a shape factor.
 
+> **Production note:** The A&S polynomial above is shown here because you can read it and *understand* how a CDF approximation works. In actual production code (and in the runnable scripts later in this tutorial) we use Python's built-in `math.erf` instead, via the identity:
+>
+> ```python
+> def normal_cdf(x):
+>     return 0.5 * (1.0 + math.erf(x / math.sqrt(2)))
+> ```
+>
+> The C standard library's `erf` is good to ~15 decimals (vs A&S's ~7), which matters when you stack hundreds of thousands of CDF calls in a backtest — the accumulated rounding error in A&S can shift final equity by a few cents. Same algorithm, more precise pipes. We keep the polynomial here for teaching purposes only.
+
 ### Delta: The Probability Dial — What 0.20 Δ Actually Means
 
 Delta (Δ) is one of the most misunderstood Greek letters in finance.
@@ -329,14 +339,20 @@ def normal_pdf(x):
     return math.exp(-x**2 / 2.0) / math.sqrt(2 * math.pi)
 
 def normal_cdf(x):
-    """Standard normal CDF (Abramowitz & Stegun, 1964, Formula 26.2.17)."""
-    b1, b2, b3, b4, b5 = 0.319381530, -0.356563782, 1.781477937, -1.821255978, 1.330274429
-    p = 0.2316419
-    sign = 1 if x >= 0 else -1
-    x_abs = abs(x)
-    t = 1.0 / (1.0 + p * x_abs)
-    y = 1.0 - normal_pdf(x_abs) * (b1*t + b2*t**2 + b3*t**3 + b4*t**4 + b5*t**5)
-    return y if sign == 1 else 1.0 - y
+    """
+    Standard normal CDF Φ(x) — area under the bell curve from -∞ to x.
+
+    Uses the identity Φ(x) = 0.5 · (1 + erf(x/√2)) and delegates to
+    math.erf, which uses the C standard library's optimized rational/
+    Chebyshev approximation (~15-16 decimals, near-machine-precision).
+
+    The educational section above shows the Abramowitz & Stegun 1964
+    polynomial (~7 decimals) so you can see *why* CDF approximations
+    work. In production we prefer math.erf because it's effectively
+    exact: across hundreds of thousands of CDF calls in a backtest,
+    A&S's 8th-decimal error compounds into a few cents of equity drift.
+    """
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2)))
 
 def bs_price(S, K, T, r, sigma, option_type='put'):
     """
@@ -470,9 +486,9 @@ In our backtest, we **don't have historical option prices**, so we can't extract
 - When the market is calm, IV might be *lower* than HV (people expect calm)
 - When the market is nervous, IV might be *higher* than HV (people expect chaos)
 
-### The IV Proxy: Why HV × 1.3 Works and When It Doesn't
+### The IV Proxy: Why a Regime-Based Multiplier Works
 
-In practice, we calculate **rolling historical volatility** and multiply by a constant factor.
+In practice, we calculate **rolling historical volatility** and multiply by a **regime-dependent** factor — higher when vol is low (markets underpricing risk), lower when vol is already elevated (IV converges toward HV).
 
 ```python
 import numpy as np
@@ -480,6 +496,7 @@ import numpy as np
 def rolling_volatility(prices, window=30):
     """
     Calculate rolling historical volatility using log returns.
+    Uses sample std dev (ddof=1) for unbiased estimation.
     
     Args:
         prices: array of daily closing prices
@@ -490,41 +507,57 @@ def rolling_volatility(prices, window=30):
     """
     log_returns = np.diff(np.log(prices))
     
-    # Use pandas rolling window to calculate std dev
-    rolling_std = pd.Series(log_returns).rolling(window).std()
+    # ddof=1 applies Bessel's correction: divide by (N-1) instead of N.
+    # Why: our 30-day window is a SAMPLE of returns drawn from the stock's
+    # true (unknown) return distribution, not the full population. Dividing
+    # by N systematically underestimates the true variance — intuitively,
+    # because the sample mean is computed from the same data, it "uses up"
+    # one degree of freedom, leaving only N-1 independent pieces of info.
+    # Dividing by N-1 corrects for this bias and gives an unbiased estimate
+    # of the true variance. For N=30 the correction is small (~3% larger
+    # std dev) but it's the statistically correct choice.
+    rolling_std = pd.Series(log_returns).rolling(window).std(ddof=1)
     
     # Annualize (multiply by sqrt(252) for daily data)
     annualized_vol = rolling_std * np.sqrt(252)
     
     return annualized_vol
 
+def detect_regime(hv):
+    """Classify current vol regime based on HV level."""
+    if hv > 0.25:
+        return 'high'
+    elif hv < 0.15:
+        return 'low'
+    return 'normal'
+
+def estimate_iv(hv):
+    """Apply regime-based multiplier to convert HV → IV estimate."""
+    regime = detect_regime(hv)
+    mult = {'high': 1.1, 'normal': 1.3, 'low': 1.5}[regime]
+    return hv * mult
+
 # Example
 closing_prices = np.array([100, 101, 99, 102, 98, ...])  # daily closes
 hv = rolling_volatility(closing_prices, window=30)
 
-# Adjust for IV: HV × 1.3
-iv_estimate = hv * 1.3
+# Adjust for IV: regime-based multiplier
+iv = np.array([estimate_iv(h) for h in hv])
 ```
 
-**Why 1.3?**
+**Why these multipliers?**
 
 - Empirically, implied volatility tends to be 20–40% higher than realized volatility
-- 1.3 is a reasonable middle ground
-- But **it's not perfect** — it assumes the future is like the past
+- But the gap **varies by regime**: when vol is already high, IV doesn't spike as much above HV; when vol is low, IV tends to stay well above HV (mean-reversion pricing)
+- The regime-based approach (1.1×/1.3×/1.5×) captures this dynamic better than a flat constant
 
-**When this breaks down:**
+**When this still breaks down:**
 
 - **Before earnings:** IV spikes way above HV (the market expects a big move)
 - **After a crash:** HV explodes but IV might normalize faster (panic recedes)
 - **In persistent trends:** HV might be high (the stock is moving a lot) but IV might be low (it's moving in one direction, so options are more predictable)
 
-For a production system, you'd want **regime-dependent** IV multipliers:
-
-- High volatility regime (VIX > 20) → use HV × 1.1 (IV is already elevated)
-- Normal regime (VIX 12–20) → use HV × 1.3
-- Low volatility regime (VIX < 12) → use HV × 1.5 (IV is suppressed; expect it to mean-revert)
-
-We'll implement a version of this in Part 3.
+We implement this regime-based approach in Part 3's `run_cc_overlay()` engine.
 
 ---
 
@@ -911,7 +944,12 @@ def run_cc_overlay(dates, prices, params):
             - close_at_pct: close when this % of premium captured (e.g., 0.75)
             - dte: days to expiration when opening position (e.g., 21)
             - risk_free_rate: annual risk-free rate (e.g., 0.045)
-            - iv_multiplier: HV × this = IV estimate (e.g., 1.3)
+            - capital: total dollars committed to the portfolio (default:
+              cost of 1 contract). Sized into whole 100-share contracts;
+              remainder sits as 0%-yield cash.
+        
+        IV estimation uses the regime-based detect_regime() + estimate_iv()
+        functions (multiplier varies: 1.1× in high vol, 1.3× normal, 1.5× low).
     
     Returns:
         (summary, trades, daily_equity)
@@ -922,16 +960,33 @@ def run_cc_overlay(dates, prices, params):
     close_at_pct = params.get('close_at_pct', 0.75)
     dte = params.get('dte', 21)
     r = params.get('risk_free_rate', 0.045)
-    iv_mult = params.get('iv_multiplier', 1.3)
+    # Note: iv_multiplier is no longer used here — the regime-based
+    # detect_regime() + estimate_iv() functions handle the HV→IV
+    # adjustment dynamically based on current volatility level.
 
-    
+    initial_price = prices[0]
+    contract_cost = initial_price * 100  # cost of one 100-share contract
+
+    # Size the portfolio. Default: single contract (the original behavior).
+    # Pass capital=100000 to test a $100K portfolio — the engine sizes it
+    # into whole contracts (uninvested remainder sits as 0%-yield cash).
+    capital = float(params.get('capital', contract_cost))
+    num_contracts = int(capital // contract_cost)
+    if num_contracts < 1:
+        raise ValueError(
+            f"Capital ${capital:,.2f} insufficient for 1 contract "
+            f"at ${initial_price:.2f}/share (need ${contract_cost:,.2f})"
+        )
+    shares = 100 * num_contracts                   # total shares held
+    initial_stock_cost = shares * initial_price    # actual capital deployed in stock
+    cash = capital - initial_stock_cost            # leftover, 0% yield
+
     num_days = len(dates)
     trades = []
     daily_equity = []
     
     # State tracking
     position = None  # None or {'strike', 'premium_collected', 'entry_price', 'entry_idx', 'entry_date'}
-    initial_price = prices[0]
     realized_pnl = 0.0  # cumulative premium overlay P&L (excludes stock appreciation)
     num_calls_sold = 0
     total_premium_collected = 0
@@ -947,7 +1002,7 @@ def run_cc_overlay(dates, prices, params):
         # Math: annualized stdev of daily log returns.
         #   log(prices)           -> log prices
         #   np.diff(...)           -> daily log returns r_t = ln(P_t / P_{t-1})
-        #   np.std(...)            -> daily volatility (stdev of those returns)
+        #   np.std(..., ddof=1)    -> daily volatility (sample stdev of those returns)
         #   * sqrt(252)            -> annualize. Why sqrt and not 252?
         #     Log returns are additive across time: the 252-day log return is
         #     just the sum of 252 daily log returns,
@@ -974,10 +1029,21 @@ def run_cc_overlay(dates, prices, params):
         # the idiomatic way to say "up through today, inclusive." np.diff then
         # turns N prices into N-1 returns, so a 30-price window yields 29 log
         # returns.
-        if day_idx < 30:
-            # Warmup (day_idx < 30): not enough history yet; use every price we
-            # have so far, from day 0 through today.
-            rolling_vol = np.std(np.diff(np.log(prices[:day_idx+1]))) * np.sqrt(252)
+        if day_idx < 3:
+            # Warmup (day_idx < 3): fewer than 3 prices means 0 or 1 log
+            # returns, so np.std() would return NaN (empty) or 0 (single
+            # value). Neither is useful — NaN crashes Black-Scholes and 0
+            # makes all OTM option prices zero. Fall back to 20% annualized
+            # vol (a reasonable long-run equity estimate) until we have
+            # enough data to compute a real standard deviation.
+            rolling_vol = 0.20
+        elif day_idx < 30:
+            # Early days (3 ≤ day_idx < 30): use all available history.
+            # ddof=1 (Bessel's correction) because these returns are a
+            # sample from the stock's theoretical distribution, not the
+            # entire population — dividing by N-1 avoids underestimating
+            # the true volatility. This matches calc_rolling_volatility().
+            rolling_vol = np.std(np.diff(np.log(prices[:day_idx+1])), ddof=1) * np.sqrt(252)
         else:
             # Steady state: use the last 30 prices, i.e. [day_idx-29, day_idx].
             # Note the `-29`, not `-30`: for a trailing window of size N ending
@@ -986,10 +1052,20 @@ def run_cc_overlay(dates, prices, params):
             # prices (a 31-day window — off by one). As day_idx advances, the
             # window slides forward by one: it adds today and evicts the
             # oldest price, keeping the size pinned at 30.
-            rolling_vol = np.std(np.diff(np.log(prices[day_idx-29:day_idx+1]))) * np.sqrt(252)
+            #
+            # ddof=1 (Bessel's correction) — same reasoning as early-days
+            # branch above. The standalone calc_rolling_volatility() also
+            # uses ddof=1; we match it here for consistency.
+            rolling_vol = np.std(np.diff(np.log(prices[day_idx-29:day_idx+1])), ddof=1) * np.sqrt(252)
         
-        # IV estimate: HV × multiplier
-        iv_estimate = rolling_vol * iv_mult
+        # IV estimate: use regime-based multiplier.
+        # The detect_regime() and estimate_iv() functions defined earlier
+        # adjust the HV→IV multiplier based on the current vol level:
+        #   high vol (>25%) → 1.1× (IV already elevated, won't expand much)
+        #   normal (15-25%) → 1.3× (typical relationship)
+        #   low vol (<15%)  → 1.5× (IV is suppressed, expect mean reversion)
+        regime = detect_regime(rolling_vol)
+        iv_estimate = estimate_iv(rolling_vol, regime)
         
         # If no position, consider opening
         if position is None:
@@ -1001,6 +1077,14 @@ def run_cc_overlay(dates, prices, params):
             # Apply transaction costs
             net_premium = premium * (1 - 0.03) - 0.0065  # 3% slippage, $0.65 commission
             
+            # Skip if premium is too small after costs — this can happen
+            # during very low volatility periods where the OTM call is nearly
+            # worthless and slippage + commission exceed the gross premium.
+            # Opening a position with zero or negative net premium would lock
+            # us into a guaranteed loss.
+            if net_premium <= 0:
+                continue
+            
             # Open position
             position = {
                 'strike': strike,
@@ -1010,7 +1094,7 @@ def run_cc_overlay(dates, prices, params):
                 'entry_date': date,
             }
             num_calls_sold += 1
-            total_premium_collected += net_premium * 100
+            total_premium_collected += net_premium * shares
             
             trades.append({
                 'date': date,
@@ -1043,14 +1127,35 @@ def run_cc_overlay(dates, prices, params):
             days_left = dte - (day_idx - position['entry_idx'])
             
             if days_left <= 0:
-                # Expiration reached.
-                # Overlay P&L only — stock appreciation is tracked separately.
+                # Expiration reached. Overlay P&L only — stock appreciation
+                # is tracked separately by the daily equity calculation below.
                 if price >= position['strike']:
-                    # Called away: keep premium, but pay to rebuy shares above strike
-                    pnl = (position['premium_collected'] - (price - position['strike'])) * 100
+                    # Called away (assignment): the buyer exercises the call
+                    # and takes our shares at the strike. To stay in the
+                    # overlay business (always own 100 shares), we immediately
+                    # rebuy at the current market price.
+                    #
+                    # Cash flow per share: collect strike, pay current price.
+                    # Net to overlay: premium_collected - (price - strike).
+                    #
+                    # Example (per share):
+                    #   strike = $310, premium = $1.50, market = $325
+                    #   pnl = $1.50 - ($325 - $310) = -$13.50  → assignment loss
+                    # Or if the stock barely closed ITM:
+                    #   strike = $310, premium = $1.50, market = $311
+                    #   pnl = $1.50 - $1.00 = +$0.50  → small win
+                    #
+                    # An assignment is a LOSS for the overlay when the stock
+                    # rallied past `strike + premium` — you collected premium
+                    # but had to pay back the upside above strike. The stock
+                    # appreciation up to `strike` is still kept (it's in the
+                    # daily equity tracking), so you don't lose money overall;
+                    # you just lose the *uncapped* portion of the rally.
+                    pnl = (position['premium_collected'] - (price - position['strike'])) * shares
                 else:
-                    # Expired OTM: keep full premium
-                    pnl = position['premium_collected'] * 100
+                    # Expired OTM: stock closed below strike, call is worthless,
+                    # we keep the full premium and the shares.
+                    pnl = position['premium_collected'] * shares
                 
                 realized_pnl += pnl
                 if pnl >= 0:
@@ -1076,7 +1181,7 @@ def run_cc_overlay(dates, prices, params):
                 # Close if profit target reached (close_at_pct of premium captured)
                 if call_value_today <= position['premium_collected'] * (1 - close_at_pct):
                     # Buy back the call
-                    pnl = (position['premium_collected'] - call_value_today) * 100 - 0.65
+                    pnl = (position['premium_collected'] - call_value_today) * shares - 0.65 * num_contracts
                     realized_pnl += pnl
                     if pnl >= 0:
                         wins += 1
@@ -1095,29 +1200,69 @@ def run_cc_overlay(dates, prices, params):
                     })
                 
                 else:
-                    # Hold
-                    unrealized_pnl = (position['premium_collected'] - call_value_today) * 100
+                    # Check deep ITM: if delta > 0.70, the call is almost
+                    # certainly going to be assigned. Close now to free up
+                    # capital for the next cycle rather than riding gamma
+                    # risk into expiration. This matches the state machine
+                    # diagram and the run_cc_overlay_day() function above.
+                    delta_today = bs_delta(price, position['strike'], T_remaining, r, iv_estimate, option_type='call')
+                    if delta_today > 0.70:
+                        pnl = (position['premium_collected'] - call_value_today) * shares - 0.65 * num_contracts
+                        realized_pnl += pnl
+                        if pnl >= 0:
+                            wins += 1
+                        else:
+                            losses += 1
+                        position = None
+                        
+                        trades.append({
+                            'date': date,
+                            'price': price,
+                            'action': 'close_itm',
+                            'call_value': call_value_today,
+                            'pnl': pnl,
+                            'realized_pnl': realized_pnl,
+                        })
+                # Otherwise: hold — nothing to do today. The daily equity
+                # tracking below will reflect the current unrealized P&L.
         
-        # Track daily equity: stock value (100 shares) + cumulative overlay P&L.
-        # This measures the total value of the covered call position: what the
-        # shares are worth today plus all net premium income earned so far.
-        # Return is measured against initial stock cost, not the capital param.
-        stock_value = price * 100
-        equity = stock_value + realized_pnl
+        # Track daily equity: stock value + idle cash + cumulative overlay P&L.
+        # This is the total portfolio value today (mark-to-market on shares,
+        # plus the leftover cash, plus all net premium income realized so far).
+        # Returns are measured against `capital` (the total committed dollars).
+        stock_value = price * shares
+        equity = stock_value + cash + realized_pnl
         if position is not None:
             days_left = dte - (day_idx - position['entry_idx'])
             T_remaining = max(days_left / 252, 0)
             call_value = bs_price(price, position['strike'], T_remaining, r, iv_estimate, option_type='call')
-            equity += (position['premium_collected'] - call_value) * 100
+            equity += (position['premium_collected'] - call_value) * shares
         daily_equity.append({'date': date, 'equity': round(equity, 2), 'price': price})
     
     # Compute summary stats
-    initial_cost = initial_price * 100  # cost basis of 100 shares
-    final_equity = daily_equity[-1]['equity'] if daily_equity else initial_cost
-    total_return = (final_equity - initial_cost) / initial_cost * 100
-    
+    final_equity = daily_equity[-1]['equity'] if daily_equity else capital
+    total_return = (final_equity - capital) / capital * 100
+
+    # Buy-and-hold benchmark: hold the same `shares` for the whole period
+    # without selling calls. Idle cash sits at 0% in both scenarios so it
+    # cancels in the excess-return comparison.
+    final_price = prices[-1]
+    buy_hold_final = final_price * shares + cash
+    buy_hold_return = (buy_hold_final - capital) / capital * 100
+    excess_return = total_return - buy_hold_return
+
+    # Decompose the overlay's contribution: we collected `total_premium_collected`
+    # in gross premium across all sells, but had to pay it back via buybacks
+    # (early closes at profit target / ITM) and assignment losses (when called
+    # away above strike). The net overlay P&L equals the gap between final
+    # equity and the buy-and-hold final value.
+    net_overlay_pnl = final_equity - buy_hold_final
+    overlay_costs = total_premium_collected - net_overlay_pnl
+    premium_retention = (net_overlay_pnl / total_premium_collected * 100
+                        if total_premium_collected > 0 else 0.0)
+
     # Max drawdown
-    peak = initial_cost
+    peak = capital
     max_dd = 0
     for d in daily_equity:
         if d['equity'] > peak:
@@ -1127,10 +1272,19 @@ def run_cc_overlay(dates, prices, params):
             max_dd = dd
     
     summary = {
-        'initial_cost': round(initial_cost, 2),
+        'capital': round(capital, 2),
+        'num_contracts': num_contracts,
+        'initial_stock_cost': round(initial_stock_cost, 2),
+        'cash': round(cash, 2),
         'final_equity': round(final_equity, 2),
         'total_return_pct': round(total_return, 2),
+        'buy_hold_final': round(buy_hold_final, 2),
+        'buy_hold_return_pct': round(buy_hold_return, 2),
+        'excess_return_pct': round(excess_return, 2),
+        'net_overlay_pnl': round(net_overlay_pnl, 2),
         'total_premium_collected': round(total_premium_collected, 2),
+        'overlay_costs': round(overlay_costs, 2),
+        'premium_retention_pct': round(premium_retention, 1),
         'num_calls_sold': num_calls_sold,
         'wins': wins,
         'losses': losses,
@@ -1236,17 +1390,20 @@ Finally, stitch all testing results together into one equity curve.
 
 ```python
 param_grid = {
-    'put_delta': [-0.15, -0.20, -0.25],
     'call_delta': [0.15, 0.20, 0.25],
     'dte': [21, 30, 45],
     'close_at_pct': [0.50, 0.75, 1.0],
 }
 
 # Why these ranges?
-# put_delta: -0.15 = conservative (rarely assigned), -0.25 = aggressive (often assigned)
 # call_delta: 0.15 = conservative (rarely called away), 0.25 = aggressive (more premium)
 # dte: 21 = fast-moving, frequent sales; 45 = slower, higher premiums
 # close_at_pct: 0.50 = close when 50% of premium captured; 1.0 = hold to expiry
+#
+# Note: put_delta is NOT included here. This is a covered call overlay
+# backtest — we already own the shares and are only selling calls. The
+# put_delta parameter belongs to the CSP (cash-secured put) entry phase
+# of the full wheel strategy, which we aren't testing here.
 
 def param_combinations(grid):
     """
@@ -1258,13 +1415,17 @@ def param_combinations(grid):
              {'call_delta': 0.20, 'dte': 21},
              {'call_delta': 0.20, 'dte': 30}]
     
-    With our grid (3 × 3 × 3 × 3 = 81 combos), this generates all 81
-    parameter sets so the optimizer can try each one.
+    Each factor in the product is the number of options for one parameter:
+      call_delta:   3 choices ([0.15, 0.20, 0.25])
+      dte:          3 choices ([21, 30, 45])
+      close_at_pct: 3 choices ([0.50, 0.75, 1.0])
+    Total: 3 × 3 × 3 = 27 combos. This generates all 27 parameter sets
+    so the optimizer can try each one.
     """
     import itertools
     
-    keys = list(grid.keys())           # ['put_delta', 'call_delta', 'dte', 'close_at_pct']
-    values = list(grid.values())       # [[-0.15, -0.20, -0.25], [0.15, 0.20, 0.25], ...]
+    keys = list(grid.keys())           # ['call_delta', 'dte', 'close_at_pct']
+    values = list(grid.values())       # [[0.15, 0.20, 0.25], [21, 30, 45], ...]
     
     for combo in itertools.product(*values):  # itertools.product gives every combination
         yield dict(zip(keys, combo))          # zip pairs each key with one value from the combo
@@ -1352,7 +1513,8 @@ def walk_forward_optimization(
         for params in param_combinations(param_grid):
             params.update({                    # Fixed params that don't change across combos
                 'risk_free_rate': 0.045,       # Current risk-free rate (~T-bill yield)
-                'iv_multiplier': 1.3,          # IV ≈ 1.3× historical volatility
+                # IV multiplier is now regime-based (detect_regime + estimate_iv),
+                # so we don't need to pass iv_multiplier here.
             })
             
             summary, trades, daily_eq = run_cc_overlay(  # Run backtest with these params
@@ -1649,7 +1811,7 @@ def sensitivity_analysis(dates, prices, base_params, variations=None):
         dates: list of trading dates
         prices: list of closing prices
         base_params: dict like {'call_delta': 0.25, 'close_at_pct': 0.75,
-                     'dte': 21, 'risk_free_rate': 0.045, 'iv_multiplier': 1.3}
+                     'dte': 21, 'risk_free_rate': 0.045}
         variations: dict of offsets to apply to each parameter
                     e.g., {'call_delta': [-0.10, -0.05, 0, 0.05, 0.10]}
     
@@ -1658,7 +1820,6 @@ def sensitivity_analysis(dates, prices, base_params, variations=None):
     """
     if variations is None:
         variations = {
-            'put_delta': [-0.10, -0.05, 0, 0.05, 0.10],
             'call_delta': [-0.10, -0.05, 0, 0.05, 0.10],
             'dte': [-10, -5, 0, 5, 10],
             'close_at_pct': [-0.20, -0.10, 0, 0.10, 0.20]
@@ -1678,8 +1839,6 @@ def sensitivity_analysis(dates, prices, base_params, variations=None):
             test_params[param_name] = base_value + variation
             
             # Skip invalid parameters
-            if param_name == 'put_delta' and test_params[param_name] > 0:
-                continue
             if param_name == 'call_delta' and test_params[param_name] < 0:
                 continue
             if param_name == 'dte' and test_params[param_name] <= 0:
@@ -1871,8 +2030,8 @@ Here's the complete process:
    
 2. CALCULATE ROLLING VOLATILITY
    ↓
-   30-day window, log returns, annualize
-   Apply IV multiplier (1.3 × HV)
+   30-day window, log returns, annualize (ddof=1)
+   Apply regime-based IV multiplier (1.1×/1.3×/1.5× HV)
    
 3. BLACK-SCHOLES PRICING
    ↓
@@ -1927,7 +2086,7 @@ Here's the complete process:
 
 ### The Limitations We Haven't Solved
 
-1. **IV proxy (HV × 1.3):** This is a rough approximation. Real IV can spike 50% in bad news.
+1. **IV proxy (regime-based HV multiplier):** Even with regime switching (1.1×/1.3×/1.5×), this is a rough approximation. Real IV can spike 50%+ on bad news, especially around earnings.
 2. **No gap risk:** We assume you can always close at model prices. Reality: market gaps at open, especially on earnings.
 3. **No dividend handling:** MSFT pays dividends; our model ignores them (small effect, but nonzero).
 4. **No earnings avoidance:** Selling calls into earnings is dangerous (IV crush, whipsaws). We should avoid this.
@@ -1966,7 +2125,7 @@ Here's the complete process:
 | Parameter | Conservative | Balanced | Aggressive |
 | --- | --- | --- | --- |
 | **call_delta** | 0.15–0.20 | 0.25 | 0.30–0.35 |
-| **put_delta** | -0.15 to -0.20 | -0.20 | -0.25 to -0.30 |
+| **put_delta** *(CSP phase only)* | -0.15 to -0.20 | -0.20 | -0.25 to -0.30 |
 | **dte** | 35–45 | 30 | 21 |
 | **close_at_pct** | 0.50 (close early) | 0.75 | 1.00 (hold to expiry) |
 | **Expected assignment freq.** | ~15% | ~25% | ~35% |
@@ -1985,7 +2144,7 @@ Is there an open position?
   │
   └─ NO:
        ├─ CSP phase + downtrend (SMA50 < SMA200)? → WAIT (optional; avoid put assignment into decline)
-       ├─ Calculate rolling vol: σ = 30-day HV × 1.3
+       ├─ Calculate rolling vol: σ = 30-day HV × regime multiplier (1.1/1.3/1.5)
        ├─ Find 0.25Δ strike using grid search
        ├─ Calculate premium using Black-Scholes
        ├─ Apply 3% slippage + $0.65 commission
@@ -2034,14 +2193,20 @@ def normal_pdf(x):
     return math.exp(-x**2 / 2.0) / math.sqrt(2 * math.pi)
 
 def normal_cdf(x):
-    """Standard normal CDF (Abramowitz & Stegun, 1964, Formula 26.2.17)."""
-    b1, b2, b3, b4, b5 = 0.319381530, -0.356563782, 1.781477937, -1.821255978, 1.330274429
-    p = 0.2316419
-    sign = 1 if x >= 0 else -1
-    x_abs = abs(x)
-    t = 1.0 / (1.0 + p * x_abs)
-    y = 1.0 - normal_pdf(x_abs) * (b1*t + b2*t**2 + b3*t**3 + b4*t**4 + b5*t**5)
-    return y if sign == 1 else 1.0 - y
+    """
+    Standard normal CDF Φ(x) — area under the bell curve from -∞ to x.
+
+    Uses the identity Φ(x) = 0.5 · (1 + erf(x/√2)) and delegates to
+    math.erf, which uses the C standard library's optimized rational/
+    Chebyshev approximation (~15-16 decimals, near-machine-precision).
+
+    The educational section above shows the Abramowitz & Stegun 1964
+    polynomial (~7 decimals) so you can see *why* CDF approximations
+    work. In production we prefer math.erf because it's effectively
+    exact: across hundreds of thousands of CDF calls in a backtest,
+    A&S's 8th-decimal error compounds into a few cents of equity drift.
+    """
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2)))
 
 def bs_price(S, K, T, r, sigma, option_type='put'):
     """
@@ -2173,6 +2338,31 @@ def calc_rolling_volatility(prices, window=30):
     
     return np.array(vols)
 
+def detect_regime(rolling_vol):
+    """Classify volatility regime based on current HV level."""
+    if rolling_vol > 0.25:
+        return 'high'
+    elif rolling_vol < 0.15:
+        return 'low'
+    else:
+        return 'normal'
+
+def estimate_iv(rolling_vol, regime='normal'):
+    """
+    Adjust HV to IV estimate based on regime.
+    
+    High vol (>25%) → 1.1× (IV already elevated, won't expand much)
+    Normal (15-25%) → 1.3× (typical HV→IV relationship)
+    Low vol (<15%)  → 1.5× (IV is suppressed, expect mean reversion)
+    """
+    if regime == 'high':
+        multiplier = 1.1
+    elif regime == 'normal':
+        multiplier = 1.3
+    else:  # low
+        multiplier = 1.5
+    return rolling_vol * multiplier
+
 # ====================
 # 3. Overlay Engine (Covered Call)
 # ====================
@@ -2189,7 +2379,12 @@ def run_cc_overlay(dates, prices, params):
             - close_at_pct: close when this % of premium captured (e.g., 0.75)
             - dte: days to expiration when opening position (e.g., 21)
             - risk_free_rate: annual risk-free rate (e.g., 0.045)
-            - iv_multiplier: HV × this = IV estimate (e.g., 1.3)
+            - capital: total dollars committed to the portfolio (default:
+              cost of 1 contract). Sized into whole 100-share contracts;
+              remainder sits as 0%-yield cash.
+        
+        IV estimation uses the regime-based detect_regime() + estimate_iv()
+        functions (multiplier varies: 1.1× in high vol, 1.3× normal, 1.5× low).
     
     Returns:
         (summary, trades, daily_equity)
@@ -2200,16 +2395,33 @@ def run_cc_overlay(dates, prices, params):
     close_at_pct = params.get('close_at_pct', 0.75)
     dte = params.get('dte', 21)
     r = params.get('risk_free_rate', 0.045)
-    iv_mult = params.get('iv_multiplier', 1.3)
+    # Note: iv_multiplier is no longer used here — the regime-based
+    # detect_regime() + estimate_iv() functions handle the HV→IV
+    # adjustment dynamically based on current volatility level.
 
-    
+    initial_price = prices[0]
+    contract_cost = initial_price * 100  # cost of one 100-share contract
+
+    # Size the portfolio. Default: single contract (the original behavior).
+    # Pass capital=100000 to test a $100K portfolio — the engine sizes it
+    # into whole contracts (uninvested remainder sits as 0%-yield cash).
+    capital = float(params.get('capital', contract_cost))
+    num_contracts = int(capital // contract_cost)
+    if num_contracts < 1:
+        raise ValueError(
+            f"Capital ${capital:,.2f} insufficient for 1 contract "
+            f"at ${initial_price:.2f}/share (need ${contract_cost:,.2f})"
+        )
+    shares = 100 * num_contracts                   # total shares held
+    initial_stock_cost = shares * initial_price    # actual capital deployed in stock
+    cash = capital - initial_stock_cost            # leftover, 0% yield
+
     num_days = len(dates)
     trades = []
     daily_equity = []
     
     # State tracking
     position = None  # None or {'strike', 'premium_collected', 'entry_price', 'entry_idx', 'entry_date'}
-    initial_price = prices[0]
     realized_pnl = 0.0  # cumulative premium overlay P&L (excludes stock appreciation)
     num_calls_sold = 0
     total_premium_collected = 0
@@ -2225,7 +2437,7 @@ def run_cc_overlay(dates, prices, params):
         # Math: annualized stdev of daily log returns.
         #   log(prices)           -> log prices
         #   np.diff(...)           -> daily log returns r_t = ln(P_t / P_{t-1})
-        #   np.std(...)            -> daily volatility (stdev of those returns)
+        #   np.std(..., ddof=1)    -> daily volatility (sample stdev of those returns)
         #   * sqrt(252)            -> annualize. Why sqrt and not 252?
         #     Log returns are additive across time: the 252-day log return is
         #     just the sum of 252 daily log returns,
@@ -2252,10 +2464,21 @@ def run_cc_overlay(dates, prices, params):
         # the idiomatic way to say "up through today, inclusive." np.diff then
         # turns N prices into N-1 returns, so a 30-price window yields 29 log
         # returns.
-        if day_idx < 30:
-            # Warmup (day_idx < 30): not enough history yet; use every price we
-            # have so far, from day 0 through today.
-            rolling_vol = np.std(np.diff(np.log(prices[:day_idx+1]))) * np.sqrt(252)
+        if day_idx < 3:
+            # Warmup (day_idx < 3): fewer than 3 prices means 0 or 1 log
+            # returns, so np.std() would return NaN (empty) or 0 (single
+            # value). Neither is useful — NaN crashes Black-Scholes and 0
+            # makes all OTM option prices zero. Fall back to 20% annualized
+            # vol (a reasonable long-run equity estimate) until we have
+            # enough data to compute a real standard deviation.
+            rolling_vol = 0.20
+        elif day_idx < 30:
+            # Early days (3 ≤ day_idx < 30): use all available history.
+            # ddof=1 (Bessel's correction) because these returns are a
+            # sample from the stock's theoretical distribution, not the
+            # entire population — dividing by N-1 avoids underestimating
+            # the true volatility. This matches calc_rolling_volatility().
+            rolling_vol = np.std(np.diff(np.log(prices[:day_idx+1])), ddof=1) * np.sqrt(252)
         else:
             # Steady state: use the last 30 prices, i.e. [day_idx-29, day_idx].
             # Note the `-29`, not `-30`: for a trailing window of size N ending
@@ -2264,10 +2487,20 @@ def run_cc_overlay(dates, prices, params):
             # prices (a 31-day window — off by one). As day_idx advances, the
             # window slides forward by one: it adds today and evicts the
             # oldest price, keeping the size pinned at 30.
-            rolling_vol = np.std(np.diff(np.log(prices[day_idx-29:day_idx+1]))) * np.sqrt(252)
+            #
+            # ddof=1 (Bessel's correction) — same reasoning as early-days
+            # branch above. The standalone calc_rolling_volatility() also
+            # uses ddof=1; we match it here for consistency.
+            rolling_vol = np.std(np.diff(np.log(prices[day_idx-29:day_idx+1])), ddof=1) * np.sqrt(252)
         
-        # IV estimate: HV × multiplier
-        iv_estimate = rolling_vol * iv_mult
+        # IV estimate: use regime-based multiplier.
+        # The detect_regime() and estimate_iv() functions defined earlier
+        # adjust the HV→IV multiplier based on the current vol level:
+        #   high vol (>25%) → 1.1× (IV already elevated, won't expand much)
+        #   normal (15-25%) → 1.3× (typical relationship)
+        #   low vol (<15%)  → 1.5× (IV is suppressed, expect mean reversion)
+        regime = detect_regime(rolling_vol)
+        iv_estimate = estimate_iv(rolling_vol, regime)
         
         # If no position, consider opening
         if position is None:
@@ -2279,6 +2512,14 @@ def run_cc_overlay(dates, prices, params):
             # Apply transaction costs
             net_premium = premium * (1 - 0.03) - 0.0065  # 3% slippage, $0.65 commission
             
+            # Skip if premium is too small after costs — this can happen
+            # during very low volatility periods where the OTM call is nearly
+            # worthless and slippage + commission exceed the gross premium.
+            # Opening a position with zero or negative net premium would lock
+            # us into a guaranteed loss.
+            if net_premium <= 0:
+                continue
+            
             # Open position
             position = {
                 'strike': strike,
@@ -2288,7 +2529,7 @@ def run_cc_overlay(dates, prices, params):
                 'entry_date': date,
             }
             num_calls_sold += 1
-            total_premium_collected += net_premium * 100
+            total_premium_collected += net_premium * shares
             
             trades.append({
                 'date': date,
@@ -2321,14 +2562,35 @@ def run_cc_overlay(dates, prices, params):
             days_left = dte - (day_idx - position['entry_idx'])
             
             if days_left <= 0:
-                # Expiration reached.
-                # Overlay P&L only — stock appreciation is tracked separately.
+                # Expiration reached. Overlay P&L only — stock appreciation
+                # is tracked separately by the daily equity calculation below.
                 if price >= position['strike']:
-                    # Called away: keep premium, but pay to rebuy shares above strike
-                    pnl = (position['premium_collected'] - (price - position['strike'])) * 100
+                    # Called away (assignment): the buyer exercises the call
+                    # and takes our shares at the strike. To stay in the
+                    # overlay business (always own 100 shares), we immediately
+                    # rebuy at the current market price.
+                    #
+                    # Cash flow per share: collect strike, pay current price.
+                    # Net to overlay: premium_collected - (price - strike).
+                    #
+                    # Example (per share):
+                    #   strike = $310, premium = $1.50, market = $325
+                    #   pnl = $1.50 - ($325 - $310) = -$13.50  → assignment loss
+                    # Or if the stock barely closed ITM:
+                    #   strike = $310, premium = $1.50, market = $311
+                    #   pnl = $1.50 - $1.00 = +$0.50  → small win
+                    #
+                    # An assignment is a LOSS for the overlay when the stock
+                    # rallied past `strike + premium` — you collected premium
+                    # but had to pay back the upside above strike. The stock
+                    # appreciation up to `strike` is still kept (it's in the
+                    # daily equity tracking), so you don't lose money overall;
+                    # you just lose the *uncapped* portion of the rally.
+                    pnl = (position['premium_collected'] - (price - position['strike'])) * shares
                 else:
-                    # Expired OTM: keep full premium
-                    pnl = position['premium_collected'] * 100
+                    # Expired OTM: stock closed below strike, call is worthless,
+                    # we keep the full premium and the shares.
+                    pnl = position['premium_collected'] * shares
                 
                 realized_pnl += pnl
                 if pnl >= 0:
@@ -2354,7 +2616,7 @@ def run_cc_overlay(dates, prices, params):
                 # Close if profit target reached (close_at_pct of premium captured)
                 if call_value_today <= position['premium_collected'] * (1 - close_at_pct):
                     # Buy back the call
-                    pnl = (position['premium_collected'] - call_value_today) * 100 - 0.65
+                    pnl = (position['premium_collected'] - call_value_today) * shares - 0.65 * num_contracts
                     realized_pnl += pnl
                     if pnl >= 0:
                         wins += 1
@@ -2373,29 +2635,69 @@ def run_cc_overlay(dates, prices, params):
                     })
                 
                 else:
-                    # Hold
-                    unrealized_pnl = (position['premium_collected'] - call_value_today) * 100
+                    # Check deep ITM: if delta > 0.70, the call is almost
+                    # certainly going to be assigned. Close now to free up
+                    # capital for the next cycle rather than riding gamma
+                    # risk into expiration. This matches the state machine
+                    # diagram and the run_cc_overlay_day() function above.
+                    delta_today = bs_delta(price, position['strike'], T_remaining, r, iv_estimate, option_type='call')
+                    if delta_today > 0.70:
+                        pnl = (position['premium_collected'] - call_value_today) * shares - 0.65 * num_contracts
+                        realized_pnl += pnl
+                        if pnl >= 0:
+                            wins += 1
+                        else:
+                            losses += 1
+                        position = None
+                        
+                        trades.append({
+                            'date': date,
+                            'price': price,
+                            'action': 'close_itm',
+                            'call_value': call_value_today,
+                            'pnl': pnl,
+                            'realized_pnl': realized_pnl,
+                        })
+                # Otherwise: hold — nothing to do today. The daily equity
+                # tracking below will reflect the current unrealized P&L.
         
-        # Track daily equity: stock value (100 shares) + cumulative overlay P&L.
-        # This measures the total value of the covered call position: what the
-        # shares are worth today plus all net premium income earned so far.
-        # Return is measured against initial stock cost, not the capital param.
-        stock_value = price * 100
-        equity = stock_value + realized_pnl
+        # Track daily equity: stock value + idle cash + cumulative overlay P&L.
+        # This is the total portfolio value today (mark-to-market on shares,
+        # plus the leftover cash, plus all net premium income realized so far).
+        # Returns are measured against `capital` (the total committed dollars).
+        stock_value = price * shares
+        equity = stock_value + cash + realized_pnl
         if position is not None:
             days_left = dte - (day_idx - position['entry_idx'])
             T_remaining = max(days_left / 252, 0)
             call_value = bs_price(price, position['strike'], T_remaining, r, iv_estimate, option_type='call')
-            equity += (position['premium_collected'] - call_value) * 100
+            equity += (position['premium_collected'] - call_value) * shares
         daily_equity.append({'date': date, 'equity': round(equity, 2), 'price': price})
     
     # Compute summary stats
-    initial_cost = initial_price * 100  # cost basis of 100 shares
-    final_equity = daily_equity[-1]['equity'] if daily_equity else initial_cost
-    total_return = (final_equity - initial_cost) / initial_cost * 100
-    
+    final_equity = daily_equity[-1]['equity'] if daily_equity else capital
+    total_return = (final_equity - capital) / capital * 100
+
+    # Buy-and-hold benchmark: hold the same `shares` for the whole period
+    # without selling calls. Idle cash sits at 0% in both scenarios so it
+    # cancels in the excess-return comparison.
+    final_price = prices[-1]
+    buy_hold_final = final_price * shares + cash
+    buy_hold_return = (buy_hold_final - capital) / capital * 100
+    excess_return = total_return - buy_hold_return
+
+    # Decompose the overlay's contribution: we collected `total_premium_collected`
+    # in gross premium across all sells, but had to pay it back via buybacks
+    # (early closes at profit target / ITM) and assignment losses (when called
+    # away above strike). The net overlay P&L equals the gap between final
+    # equity and the buy-and-hold final value.
+    net_overlay_pnl = final_equity - buy_hold_final
+    overlay_costs = total_premium_collected - net_overlay_pnl
+    premium_retention = (net_overlay_pnl / total_premium_collected * 100
+                        if total_premium_collected > 0 else 0.0)
+
     # Max drawdown
-    peak = initial_cost
+    peak = capital
     max_dd = 0
     for d in daily_equity:
         if d['equity'] > peak:
@@ -2405,10 +2707,19 @@ def run_cc_overlay(dates, prices, params):
             max_dd = dd
     
     summary = {
-        'initial_cost': round(initial_cost, 2),
+        'capital': round(capital, 2),
+        'num_contracts': num_contracts,
+        'initial_stock_cost': round(initial_stock_cost, 2),
+        'cash': round(cash, 2),
         'final_equity': round(final_equity, 2),
         'total_return_pct': round(total_return, 2),
+        'buy_hold_final': round(buy_hold_final, 2),
+        'buy_hold_return_pct': round(buy_hold_return, 2),
+        'excess_return_pct': round(excess_return, 2),
+        'net_overlay_pnl': round(net_overlay_pnl, 2),
         'total_premium_collected': round(total_premium_collected, 2),
+        'overlay_costs': round(overlay_costs, 2),
+        'premium_retention_pct': round(premium_retention, 1),
         'num_calls_sold': num_calls_sold,
         'wins': wins,
         'losses': losses,
@@ -2436,18 +2747,30 @@ if __name__ == '__main__':
         'close_at_pct': 0.75,
         'dte': 21,
         'risk_free_rate': 0.045,
-        'iv_multiplier': 1.3,
+        'capital': 100_000,  # $100K portfolio (sized into whole contracts)
+        # IV multiplier is now regime-based (detect_regime + estimate_iv)
     }
     
     summary, trades, daily_equity = run_cc_overlay(dates, prices, params)
     
-    print(f"Initial Cost (100 shares): ${summary['initial_cost']:,.2f}")
-    print(f"Final Equity: ${summary['final_equity']:,.2f}")
-    print(f"Total Return: {summary['total_return_pct']:.2f}%")
-    print(f"Total Premium Collected: ${summary['total_premium_collected']:,.2f}")
-    print(f"Calls Sold: {summary['num_calls_sold']}")
-    print(f"Win Rate: {summary['win_rate']:.1f}%")
-    print(f"Max Drawdown: {summary['max_drawdown_pct']:.2f}%")
+    print(f"Capital:                         ${summary['capital']:>12,.2f}")
+    print(f"Contracts (100 shares each):     {summary['num_contracts']:>12}    "
+          f"(${summary['initial_stock_cost']:,.2f} stock + ${summary['cash']:,.2f} cash)")
+    print()
+    print("Returns")
+    print(f"    Buy & Hold Final:            ${summary['buy_hold_final']:>12,.2f}    {summary['buy_hold_return_pct']:>+8.2f}%")
+    print(f"  + Net Overlay P&L:             ${summary['net_overlay_pnl']:>12,.2f}    {summary['excess_return_pct']:>+8.2f} pp")
+    print(f"  = CC Overlay Final:            ${summary['final_equity']:>12,.2f}    {summary['total_return_pct']:>+8.2f}%")
+    print()
+    print("Overlay P&L Breakdown")
+    print(f"    Gross Premium Collected:     ${summary['total_premium_collected']:>12,.2f}    (income from {summary['num_calls_sold']} calls sold)")
+    print(f"  - Buybacks + Assignment Costs: ${summary['overlay_costs']:>12,.2f}    (paid to close ITM calls + capped upside on assignment)")
+    print(f"  = Net Overlay P&L:             ${summary['net_overlay_pnl']:>12,.2f}    ({summary['premium_retention_pct']:.1f}% retained)")
+    print()
+    print("Activity")
+    print(f"    Calls Sold:                   {summary['num_calls_sold']:>12}")
+    print(f"    Win Rate:                     {summary['win_rate']:>12.1f}%")
+    print(f"    Max Drawdown:                 {summary['max_drawdown_pct']:>12.2f}%")
 ```
 
 **To run this:**

@@ -2,3 +2,5 @@ numpy
 yfinance
 pytest
 pytest-cov
+ruff
+pyright

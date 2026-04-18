@@ -1,0 +1,58 @@
+name: CI
+permissions:
+  contents: read
+
+# Triggers:
+#   pull_request — runs on every PR opened, updated, or reopened (any branch)
+#   push to main — runs after a merge to catch any issues on the main branch
+#   workflow_dispatch — lets us trigger a manual run from the Actions tab.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  check:
+    # GitHub spins up a fresh Ubuntu VM for each run. The VM is discarded after.
+    runs-on: ubuntu-latest
+
+    steps:
+      # Clone the repo into the VM. Without this, the VM has no code.
+      # @v4 pins to the latest 4.x release — not a specific patch, not @main.
+      # Dependabot will open a PR when v5 is released.
+      - uses: actions/checkout@v4
+
+      # Install Python 3.12 on the VM. Pins the version so CI matches a known
+      # baseline regardless of what GitHub's default happens to be.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # Install runtime + dev dependencies from requirements.txt.
+      # numpy is needed by cc_backtest.py; pytest/pytest-cov drive the tests;
+      # yfinance is unused by tests but listed for the data downloader;
+      # ruff/pyright are used by the lint and type-check steps below.
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Lint with ruff — catches style issues, unused imports, and common bugs.
+      # Exits non-zero on any violation, which fails the job.
+      - name: Lint
+        run: ruff check .
+
+      # Static type checking with pyright. Checks all three Python source files.
+      - name: Type check
+        run: pyright cc_backtest.py download_prices.py test_cc_backtest.py
+
+      # Unit tests with branch coverage. Runs cc_backtest.py's 54 tests
+      # against the in-memory price fixtures — no network access required.
+      - name: Run tests
+        run: pytest test_cc_backtest.py --cov=. --cov-branch -v
+
+      # Smoke test: run the actual backtest against the committed MSFT CSV
+      # to catch any breakage in the main entry point that the unit tests
+      # might miss (e.g. CSV parsing, __main__ wiring, print formatting).
+      - name: Backtest smoke test
+        run: python cc_backtest.py
