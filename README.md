@@ -41,16 +41,28 @@ Activity
     Calls Sold:                            185
     Win Rate:                             81.0%
     Max Drawdown:                        23.02%
+
+Statistical Significance (H0: overlay adds zero value vs. buy-and-hold)
+    Days in Sample:                      2514    (9.98 years)
+    Annualized Excess Return:          +1.591%
+    Annualized Excess Vol:               9.79%
+    Sharpe of Excess Return:           +0.163
+    t-stat (naive, IID):                +0.51    (assumes independence — inflated for overlays)
+    t-stat (Newey-West, L=8 ):          +0.58    (correct: accounts for position autocorrelation)
+    Clears t=2 bar?                     False    (conventional significance)
+    Clears t=3 bar (HLZ 2016)?          False    (multiple-testing adjusted)
 ```
 
 The portfolio is sized into whole 100-share contracts at the initial price; any leftover (here, $4,426 of $100K with MSFT at ~$48) sits as 0%-yield cash. Returns are measured against `capital`, so the cash drag is included. To run a single-contract simulation, omit `capital` from `params`.
+
+The bottom block tests whether the overlay's excess return over buy-and-hold is statistically distinguishable from zero, using Newey-West HAC standard errors that correct for the autocorrelation introduced by holding the same option position across multiple days. On this MSFT sample the t-stat is 0.58 — well below the conventional significance bar of 2 — meaning the $299K of headline overlay P&L isn't reliably distinguishable from noise. See the [tutorial's Part 5](tutorial_covered_call_backtest.md#part-5-robustness-checks--proving-its-not-luck) for the full reasoning.
 
 For an explanation of each output line — including what "assignment loss" means and why buybacks can dominate the overlay's gross premium income — see the [tutorial](tutorial_covered_call_backtest.md) (its Glossary defines the terms; Part 3 walks through the trade-by-trade math).
 
 ## Tests
 
 ```bash
-pytest test_cc_backtest.py          # all 54 tests
+pytest test_cc_backtest.py          # all 71 tests
 pytest test_cc_backtest.py -v       # verbose
 pytest --cov=. --cov-branch         # with coverage
 ```
@@ -61,11 +73,11 @@ CI runs `ruff`, `pyright`, the test suite, and a backtest smoke test on every PR
 
 | File | What it is |
 | --- | --- |
-| [cc_backtest.py](cc_backtest.py) | Backtest engine: Black-Scholes pricing, rolling vol, regime-based IV, day-by-day overlay state machine |
-| [test_cc_backtest.py](test_cc_backtest.py) | 54 unit + scenario tests |
+| [cc_backtest.py](cc_backtest.py) | Backtest engine: Black-Scholes pricing, rolling vol, regime-based IV, day-by-day overlay state machine, Newey-West t-stat reporting on excess returns |
+| [test_cc_backtest.py](test_cc_backtest.py) | Unit and scenario tests covering pricing, the overlay state machine, and the statistics helper |
 | [download_prices.py](download_prices.py) | yfinance data downloader |
 | [msft_10yr_prices.csv](msft_10yr_prices.csv) | Sample MSFT price data, 2016-04 to 2026-04 |
-| [tutorial_covered_call_backtest.md](tutorial_covered_call_backtest.md) | Long-form tutorial — theory, math, and code walkthrough (~2,600 lines) |
+| [tutorial_covered_call_backtest.md](tutorial_covered_call_backtest.md) | Long-form tutorial — theory, math, code walkthrough, and statistical-significance testing |
 | [requirements.txt](requirements.txt) | Runtime + dev dependencies |
 
 ## Where to look for more details

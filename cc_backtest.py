@@ -190,8 +190,11 @@ def run_cc_overlay(
               whole 100-share contracts at initial_price; any leftover sits
               as uninvested cash (0% yield). Default: cost of 1 contract.
 
-        IV estimation uses the regime-based detect_regime() + estimate_iv()
-        functions (multiplier varies: 1.1× in high vol, 1.3× normal, 1.5× low).
+    IV is *not* a tunable parameter. It is computed internally each day
+    from rolling 30-day historical volatility, then scaled by a
+    regime-based multiplier (1.1× in high-vol regimes, 1.3× in normal,
+    1.5× in low-vol) via detect_regime() and estimate_iv(). Any
+    `iv_multiplier` key in `params` is silently ignored.
 
     Returns:
         (summary, trades, daily_equity)
@@ -459,7 +462,124 @@ def run_cc_overlay(
     return summary, trades, daily_equity
 
 # ====================
-# 4. Main
+# 4. Statistical Significance
+# ====================
+
+def compute_statistics(
+    daily_equity: list[dict[str, Any]],
+    num_contracts: int,
+    cash: float,
+    periods_per_year: int = 252,
+) -> dict[str, Any]:
+    """
+    Test whether the overlay's excess return over buy-and-hold is
+    statistically distinguishable from zero.
+
+    The null hypothesis is: the overlay adds zero value compared to
+    simply holding the stock. We reject (i.e., conclude the overlay
+    does something) when the Newey-West-adjusted t-statistic is large
+    in absolute value.
+
+    Two t-stats are reported:
+
+    - `t_stat_naive` assumes daily excess returns are IID (independent
+      and identically distributed). That assumption is violated for
+      overlay strategies because the same option position drives
+      multiple consecutive days of P&L — so naive standard errors are
+      too small and naive t-stats are inflated.
+
+    - `t_stat_newey_west` uses Newey-West HAC (heteroskedasticity and
+      autocorrelation consistent) standard errors. Lag cutoff
+      L = floor(4 * (n/100)^(2/9)) — the framework is from Andrews
+      (1991); this specific operational formula is from Newey & West
+      (1994). This is the correct statistic for an overlay.
+
+    Interpretation thresholds (Harvey, Liu & Zhu 2016):
+        |t_NW| > 3.0  → likely a real effect after multiple-testing
+                        adjustment for the factor zoo
+        |t_NW| > 2.0  → "significant" by convention, but weak evidence
+                        when many parameter combinations were tested
+        |t_NW| < 2.0  → not reliably different from noise
+
+    Args:
+        daily_equity: output of run_cc_overlay (list of dicts with
+            keys 'date', 'equity', 'price').
+        num_contracts: number of option contracts in the portfolio
+            (each represents 100 shares). From summary['num_contracts'].
+        cash: leftover uninvested cash from initial sizing. From
+            summary['cash'].
+        periods_per_year: annualization factor (252 for daily data).
+
+    Returns:
+        dict with t-stats, annualized excess return, Sharpe ratio, and
+        pass/fail flags for the t=2 and t=3 thresholds.
+    """
+    shares = num_contracts * 100
+
+    # Reconstruct two equity curves from the same daily series.
+    # The overlay curve includes mark-to-market on the short call;
+    # the buy-and-hold curve is just stock value plus idle cash.
+    equity = np.array([d['equity'] for d in daily_equity], dtype=float)
+    prices = np.array([d['price'] for d in daily_equity], dtype=float)
+    bh_equity = shares * prices + cash
+
+    # Daily simple returns on each equity curve
+    overlay_ret = np.diff(equity) / equity[:-1]
+    bh_ret = np.diff(bh_equity) / bh_equity[:-1]
+
+    # Excess returns: the part of return attributable to the overlay
+    # alone (stock drift cancels). This is the series we test.
+    excess = overlay_ret - bh_ret
+
+    n = len(excess)
+    if n < 2:
+        raise ValueError(f"Need at least 2 daily observations, got {n}")
+
+    mean_e = float(np.mean(excess))
+    var_e = float(np.var(excess, ddof=1))
+
+    # Naive t-stat: SE = sigma / sqrt(n). Assumes IID.
+    se_naive = math.sqrt(var_e / n) if var_e > 0 else 0.0
+    t_naive = mean_e / se_naive if se_naive > 0 else 0.0
+
+    # Newey-West: variance of the mean under autocorrelation.
+    #   Var(mean) = (1/n) * [gamma_0 + 2 * sum_{k=1}^{L} w_k * gamma_k]
+    # where gamma_k is the k-th autocovariance and w_k = 1 - k/(L+1)
+    # are the Bartlett weights that enforce positive-definiteness.
+    L = int(4 * (n / 100) ** (2 / 9))
+    nw_sum = 0.0
+    for k in range(1, L + 1):
+        weight = 1.0 - k / (L + 1)
+        # autocovariance at lag k (demeaned)
+        cov_k = float(np.mean((excess[:-k] - mean_e) * (excess[k:] - mean_e)))
+        nw_sum += weight * cov_k
+    var_mean_nw = (var_e + 2 * nw_sum) / n
+    # Newey-West variance can be non-positive at short samples; floor at
+    # zero so se_nw == 0 trips the guard below and we report t_nw = 0.
+    se_nw = math.sqrt(max(var_mean_nw, 0.0))
+    t_nw = mean_e / se_nw if se_nw > 0 else 0.0
+
+    # Annualized context
+    ann_excess_return = mean_e * periods_per_year
+    ann_excess_vol = math.sqrt(var_e * periods_per_year)
+    sharpe_excess = ann_excess_return / ann_excess_vol if ann_excess_vol > 0 else 0.0
+
+    return {
+        'n_days': n,
+        'years_of_data': round(n / periods_per_year, 2),
+        'ann_excess_return_pct': round(ann_excess_return * 100, 3),
+        'ann_excess_vol_pct': round(ann_excess_vol * 100, 2),
+        'sharpe_excess': round(sharpe_excess, 3),
+        't_stat_naive': round(t_naive, 2),
+        't_stat_newey_west': round(t_nw, 2),
+        'nw_lag': L,
+        'passes_t_2': abs(t_nw) > 2.0,
+        'passes_t_3': abs(t_nw) > 3.0,
+    }
+
+
+# ====================
+# 5. Main
 # ====================
 
 if __name__ == '__main__':
@@ -505,3 +625,21 @@ if __name__ == '__main__':
     print(f"    Calls Sold:                   {summary['num_calls_sold']:>12}")
     print(f"    Win Rate:                     {summary['win_rate']:>12.1f}%")
     print(f"    Max Drawdown:                 {summary['max_drawdown_pct']:>12.2f}%")
+    print()
+
+    # Statistical significance of the overlay's excess return over buy-and-hold.
+    # Null hypothesis: the overlay adds zero value vs. simply holding the stock.
+    stats = compute_statistics(
+        daily_equity,
+        num_contracts=summary['num_contracts'],
+        cash=summary['cash'],
+    )
+    print("Statistical Significance (H0: overlay adds zero value vs. buy-and-hold)")
+    print(f"    Days in Sample:              {stats['n_days']:>12}    ({stats['years_of_data']} years)")
+    print(f"    Annualized Excess Return:    {stats['ann_excess_return_pct']:>+12.3f}%")
+    print(f"    Annualized Excess Vol:       {stats['ann_excess_vol_pct']:>12.2f}%")
+    print(f"    Sharpe of Excess Return:     {stats['sharpe_excess']:>+12.3f}")
+    print(f"    t-stat (naive, IID):         {stats['t_stat_naive']:>+12.2f}    (assumes independence — inflated for overlays)")
+    print(f"    t-stat (Newey-West, L={stats['nw_lag']:<2}):   {stats['t_stat_newey_west']:>+12.2f}    (correct: accounts for position autocorrelation)")
+    print(f"    Clears t=2 bar?              {str(stats['passes_t_2']):>12}    (conventional significance)")
+    print(f"    Clears t=3 bar (HLZ 2016)?   {str(stats['passes_t_3']):>12}    (multiple-testing adjusted)")

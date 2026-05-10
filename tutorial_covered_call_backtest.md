@@ -5,7 +5,7 @@
 **For:** Bao, actively learning options trading  
 **Goal:** Understand both the WHY and the HOW of backtesting covered calls  
 **Time to read:** 60 minutes (code walkthrough: another 60)  
-**Last updated:** April 2026
+**Last updated:** May 2026
 
 ---
 
@@ -18,6 +18,10 @@
 5. [Part 5: Robustness Checks — Proving It's Not Luck](#part-5-robustness-checks--proving-its-not-luck)
 6. [Part 6: Putting It All Together](#part-6-putting-it-all-together)
 7. [Part 7: Key Takeaways & Cheat Sheet](#part-7-key-takeaways--cheat-sheet)
+8. [Appendix A: The Code](#appendix-a-the-code)
+9. [Appendix B: Common Pitfalls and How to Avoid Them](#appendix-b-common-pitfalls-and-how-to-avoid-them)
+10. [References](#references)
+11. [Provenance & Disclaimer](#provenance--disclaimer)
 
 ---
 
@@ -32,12 +36,20 @@ Before diving in, here are a few terms you'll see throughout this tutorial:
 - **Closed-form solution:** A formula you can write down using basic math (add, multiply, exponents, etc.) and compute directly — like the area of a circle (πr²). When something has "no closed-form solution," it means you can't write a simple equation for it; you need either calculus or an approximation. The normal CDF has no closed-form, which is why we use a polynomial shortcut.
 - **Delta (Δ):** The probability (roughly) that an option expires in-the-money. A 0.25 delta call means ~25% chance the stock ends above the strike. We use delta to choose how aggressive our covered calls are.
 - **DTE (Days to Expiration):** How many calendar days until the option expires. We use 21 DTE (about 3 weeks) as our default.
+- **Excess Return:** The strategy's return *minus* the benchmark's return on the same day. For a covered call overlay, the relevant excess return is the overlay's daily return minus buy-and-hold's daily return on the same shares. Subtracting the benchmark cancels out the stock's own movement, leaving only the value the overlay adds (or destroys). When testing whether a strategy "works," you almost always want to test excess returns, not raw returns — otherwise you're mostly measuring the underlying market.
 - **Gamma risk:** The risk that your option's delta changes rapidly as the stock moves. Near expiration, small stock moves can cause big swings in an option's value — a "safe" out-of-the-money call can suddenly become in-the-money. This is why we close positions before the last week of expiration.
 - **HV (Historical Volatility):** How much the stock price has actually been bouncing around, measured from past prices.
+- **IID (Independent and Identically Distributed):** Two assumptions baked into most introductory statistics formulas. *Independent* means each observation tells you nothing about any others (like fair coin flips). *Identically distributed* means every observation comes from the same probability distribution (same bag of marbles each draw). Financial returns rarely satisfy either — they cluster in volatility regimes (not identical) and they autocorrelate through position holding (not independent). Naive t-stat formulas assume IID and inflate when it's violated.
 - **IV (Implied Volatility):** What the market thinks future volatility will be, baked into the option price. Since we don't have real IV data, we estimate it using a regime-based multiplier on HV (1.1× in high-vol regimes, 1.3× in normal, 1.5× in low-vol).
+- **Lag:** How many time periods back you look when comparing observations in a time series. "Lag 1" means yesterday's value, "lag 5" means the value from 5 days ago, and so on. The *autocovariance at lag k* measures how much today's observation correlates with the observation `k` periods earlier — at lag 0 this is just the variance (correlation of a value with itself), at lag 1 it's the same-as-yesterday correlation, etc. Newey-West sums weighted autocovariances from lag 0 up to a chosen *lag cutoff* `L`, picked big enough to capture meaningful autocorrelation but small enough to avoid pulling in noisy near-zero terms.
+- **Newey-West HAC (NW):** A correction to standard errors that accounts for autocorrelation and heteroskedasticity in time-series data — both common in financial returns. Often abbreviated **NW** in code and prose. HAC stands for "Heteroskedasticity and Autocorrelation Consistent." *Heteroskedasticity* means the variance changes over time (the stock is calm one week, volatile the next); *autocorrelation* means consecutive observations are correlated (today's value tells you something about tomorrow's). For an overlay strategy, where the same option position drives multiple consecutive days of P&L, naive standard errors are too small (consecutive days aren't independent observations) and naive t-stats are inflated. Newey-West fixes both at once by widening the standard error to reflect the actual independent information in the sample. Lag cutoff in our backtest is `L = floor(4 · (n/100)^(2/9))` — the framework comes from Andrews (1991); the specific operational formula is from Newey & West (1994).
 - **OTM (Out of the Money):** A call option where the strike price is above the current stock price (the buyer wouldn't exercise yet). We sell OTM calls to collect premium while giving the stock room to grow.
 - **PDF (Probability Density Function):** The "height" of the bell curve at a given point. While the CDF measures the area under the curve (a cumulative probability), the PDF measures how tall the curve is at one specific value. We need it inside the CDF approximation formula — the approximation works by multiplying the PDF (height) by a polynomial correction to estimate the CDF (area).
 - **Premium:** The price the option buyer pays you. This is your income as a covered call seller.
+- **Sharpe Ratio:** Annualized return divided by annualized volatility — return per unit of risk. A Sharpe of 1.0 is excellent; most decent strategies sit at 0.4–0.8. Critical caveat: Sharpe assumes normally distributed returns. Strategies with fat left tails (covered calls, short puts, merger arb) look better on Sharpe than they actually are because the metric ignores the asymmetry between small frequent gains and rare large losses.
+- **Standard Error (SE):** How much your *estimate* of a quantity (a mean, a regression coefficient) would wobble if you re-ran the experiment with a fresh sample. Smaller SE = more precise estimate. For the mean of `n` observations with standard deviation `σ`, the textbook formula is `SE = σ/√n` — meaning that to halve your SE you need four times the data. The t-statistic is built on top of SE: `t = estimate / SE`, so the value you compute depends critically on which SE formula you use. Using the wrong SE (naive instead of Newey-West, for instance) produces a wrong t-stat that may look impressive but doesn't survive scrutiny.
+- **T-statistic:** A number that tells you how many standard errors your estimate is away from zero. A t-stat of 2 means there's only a ~5% chance of observing this result if the true effect were zero — Fisher's conventional bar for "statistically significant." For backtests, you want a t-stat well above 2 (Harvey, Liu & Zhu 2016 argue 3 is the honest bar after multiple-testing adjustment) and you want it computed with Newey-West standard errors, not naive ones.
+- **VRP (Volatility Risk Premium):** The systematic gap between options' implied volatility (what option prices imply about future moves) and realized volatility (what actually happens). Across decades and asset classes, IV averages above subsequent realized vol — meaning options are, on average, slightly overpriced. Selling options is the textbook way to harvest the VRP. Our covered call overlay captures only a fraction of it: the call side, only out-of-the-money strikes, only on a single stock. The full premium is much richer at the index level (BXM, PUT indices document this).
 
 ---
 
@@ -106,7 +118,7 @@ If I asked you, "How much should I charge for car insurance for a 25-year-old?" 
 - How much will I earn from interest on the premiums? (interest rate)
 - What's the current car value? (stock price)
 
-The **Black-Scholes model** is exactly that recipe. It takes five ingredients and spits out a fair premium.
+The **Black-Scholes model** ([Black & Scholes, 1973](https://www.jstor.org/stable/1831029)) is exactly that recipe. It takes five ingredients and spits out a fair premium.
 
 For covered calls, we'll use Black-Scholes to *estimate* what an option should cost when we can't buy real option data.
 
@@ -152,7 +164,7 @@ A high σ (volatility) makes the denominator huge, so d₁ stays closer to zero.
 N(d₁) = probability that the stock ends up in-the-money
 ```
 
-This requires the **cumulative normal distribution function (CDF)** — the function that converts a z-score into a probability (see Glossary above). We'll use the Abramowitz & Stegun approximation.
+This requires the **cumulative normal distribution function (CDF)** — the function that converts a z-score into a probability (see Glossary above). We'll use the [Abramowitz & Stegun approximation](https://en.wikipedia.org/wiki/Abramowitz_and_Stegun).
 
 #### Step 3: Calculate the call option price
 
@@ -1015,20 +1027,18 @@ def run_cc_overlay(dates, prices, params):
         #     deviation is the square root of variance, so
         #         stdev(R_year) = sqrt(252) * stdev(r_daily).
         #     That's where the sqrt(252) comes from — it's a direct consequence
-        #     of "variance adds when returns are independent," not an arbitrary
-        #     convention. Caveat: real markets have volatility clustering and
-        #     fat tails, so this understates risk during crises; it's a useful
-        #     first approximation, not ground truth.
+        #     of "variance adds when returns are independent." Caveat: real
+        #     markets have volatility clustering and fat tails, so this
+        #     understates risk during crises; it's a useful first approximation.
         #
         # Indexing: we want the window to END at today (day_idx) and never peek
         # at future prices. Python slicing is "half-open": `prices[a:b]` includes
         # index `a` but EXCLUDES index `b` — the start is closed (included), the
         # end is open (excluded), hence "half-open". So to include today's price
         # at index `day_idx`, we have to write `day_idx + 1` as the stop. That's
-        # why you see the `+1` everywhere below — it's not an off-by-one, it's
-        # the idiomatic way to say "up through today, inclusive." np.diff then
-        # turns N prices into N-1 returns, so a 30-price window yields 29 log
-        # returns.
+        # why you see the `+1` everywhere below — it's the idiomatic way to say
+        # "up through today, inclusive." np.diff then turns N prices into N-1
+        # returns, so a 30-price window yields 29 log returns.
         if day_idx < 3:
             # Warmup (day_idx < 3): fewer than 3 prices means 0 or 1 log
             # returns, so np.std() would return NaN (empty) or 0 (single
@@ -1996,22 +2006,226 @@ If you only backtest on 2016–2021 (a strong bull run), you'll overestimate buy
 - Bear: 2018 (correction), 2022 (rate hike sell-off)
 - Sideways: 2023–2024 (consolidation)
 
+### Statistical Significance: Is the Excess Return Real?
+
+You can have a backtest with massive dollar P&L *and* zero statistical edge. These aren't contradictory — they're often the same result viewed two ways.
+
+Run the MSFT backtest with `capital=$100,000`. The "Net Overlay P&L" line shows roughly **+$299,000** of excess profit over buy-and-hold. That looks great. It is also, statistically, indistinguishable from zero.
+
+The t-statistic is how we settle the question.
+
+#### Why a Headline Number Can Lie
+
+Picture two coin-flippers trying to prove they have an edge. Player A flips 10 coins and gets 7 heads. Player B flips 10,000 coins and gets 5,200 heads. Player A's *rate* (70%) looks more impressive than Player B's (52%), but Player B's *evidence* is much stronger. With 10 flips, 7 heads is well within what luck produces; with 10,000 flips, 5,200 is improbable under fair-coin luck.
+
+The t-statistic formalizes this. It asks: **how many standard errors above zero is my estimate?** The bigger the t-stat, the harder it is to dismiss the result as luck.
+
+Two thresholds to remember:
+
+- **|t| > 2** — Fisher's traditional bar. ~5% chance of occurring under the null. The textbook line for "statistically significant."
+- **|t| > 3** — [Harvey, Liu & Zhu's stricter bar from their 2016 paper](https://academic.oup.com/rfs/article-abstract/29/1/5/1843824). They argue that because finance has tested hundreds of factors, many "significant" |t| ≈ 2 results are just the lucky ones from a wide search. Three is the honest bar once you account for multiple testing.
+
+#### What We're Actually Testing
+
+For a covered call overlay, the relevant null hypothesis is:
+
+> **H₀: The overlay adds zero value compared to simply holding the stock.**
+
+We are *not* testing "does the strategy make money?" That's almost guaranteed because the strategy holds shares of MSFT, which compounded ~27% annualized over our sample. We need to isolate the overlay's contribution.
+
+The clean way to do that is **excess returns**: each day's overlay return minus that day's buy-and-hold return on the same shares. The stock's drift cancels in the subtraction; what's left is the part attributable to selling calls. We then ask whether the *mean* of that excess-return series is reliably different from zero.
+
+#### The IID Trap
+
+Here's where most DIY backtesters get fooled. The standard t-stat formula is:
+
+```text
+t = mean / (std_dev / sqrt(n))
+```
+
+This assumes daily observations are IID — Independent and Identically Distributed. They almost never are for an overlay.
+
+**Independent fails.** When you sell a 21-DTE call, that *same option position* drives daily P&L for up to 21 days. Today's overlay return and tomorrow's overlay return share a common driver. They aren't independent draws — they're samples from one position lifecycle.
+
+**Identically distributed fails.** Your own `detect_regime()` function explicitly classifies returns into low-vol, normal-vol, and high-vol regimes — acknowledging that returns come from *different* distributions depending on which regime we're in.
+
+When IID is violated, the naive formula systematically *understates* the standard error, which inflates the t-stat by 30–100%. You think you have a real edge when you don't.
+
+#### Autocorrelation and Heteroskedasticity: What They Actually Mean
+
+The two IID failures we just named have proper names in the statistics literature, and those names are baked right into "Newey-West **HAC**" (often abbreviated **NW**) — **Heteroskedasticity and Autocorrelation Consistent**. Worth understanding each one before applying the fix, because both are everywhere in financial data and both inflate naive t-stats in slightly different ways.
+
+**Autocorrelation: when today depends on yesterday.**
+
+A series is *autocorrelated* when one observation gives you information about the next. The data has *memory*. Picture the difference between a coin flip and a thermostat-controlled room: the coin has zero memory (yesterday's result tells you nothing about today's), while the room temperature has lots of memory (if it was 72°F a minute ago, it's almost certainly 71–73°F now). Financial returns aren't quite the thermostat, but they're definitely not the coin flip either.
+
+Why this breaks naive t-stats: every t-statistic is `t = estimate / SE`, where SE is the **standard error** — how much your estimate would wobble across different samples. The textbook formula `SE = σ/√n` quietly assumes each observation contributes one full unit of *independent* information. When observations are correlated, that's a lie — your effective sample size is smaller than `n`. The naive formula produces a too-small SE, which produces a too-large t-stat, which makes you believe in edges that aren't there.
+
+In our backtest, autocorrelation enters in three reinforcing ways:
+
+1. **Position lifecycle.** When we sell a 21-DTE call, that *same* option position drives the overlay's P&L for up to 21 days. Day 5 and day 6 aren't two independent draws — they're samples from one shared position.
+2. **Profit-target clustering.** The 75% close threshold tends to fire after stretches of stock-friendly days, which clusters close events and introduces serial correlation in the overlay's daily P&L.
+3. **Underlying market memory.** Returns themselves have mild *momentum* (the tendency of returns to keep moving in the same direction) at short lags. Even before the overlay adds its own correlation, the price series isn't IID.
+
+**Heteroskedasticity: when the variance moves.**
+
+A series is *heteroskedastic* when its variance changes over time. Some periods are calmer; some are wilder. Variance isn't a constant property of the series — it's a moving target. Think of the ocean: waves are a different size on a windy day vs. a calm day. Try to summarize "the ocean's wave height" with one number and you'll be roughly right on average but dramatically wrong about both individual days.
+
+Why this also breaks naive t-stats: a standard error that assumes constant variance is doing exactly the ocean thing — averaging over periods that have genuinely different volatility. The composite SE is biased: too small in calm periods, too big in volatile ones. Across the full sample you can over- or under-state significance depending on how the high-vol periods coincide with your signal.
+
+In our backtest, heteroskedasticity is everywhere. Volatility clusters in equities — a documented stylized fact for at least 50 years ([Engle's 1982 ARCH paper](https://www.jstor.org/stable/1912773), [Mandelbrot's 1963 cotton-prices paper](https://www.jstor.org/stable/2350970)). The MSFT data spans calm 2017, the COVID volatility spike of 2020, the 2022 rate-hike sell-off, and 2024's renewed mega-cap bull run, each with materially different return variance. Our own `detect_regime()` function literally encodes this: it classifies each day as low / normal / high vol, explicitly acknowledging that returns come from different distributions. That classification *is* heteroskedasticity in code form.
+
+**Why it matters that HAC handles both.**
+
+Newey-West is built around *sample autocovariances at each lag* rather than a single global variance assumption. The lag-0 autocovariance — i.e., the variance itself — is estimated directly from the data, so heteroskedasticity in the level of variance is handled by simply not assuming the variance is constant. The lag-1, lag-2, ..., lag-L autocovariances handle the autocorrelation. Two violations, one estimator.
+
+That's the promise of the "C" (consistent) in HAC: **as your sample grows, the HAC standard error gets closer and closer to the truth**. The naive standard error doesn't have this property under autocorrelated data — give it a million more observations and it just becomes more confidently wrong. Picture a pollster using a broken sampling method: with 100 voters their estimate is off, with 10 million voters it's still off by the same amount, just with tighter "confidence" around the wrong answer. That's the naive estimator. HAC is the pollster who fixes the method, so each additional observation actually pulls the estimate toward the right number. At any finite sample (like our 2,500 days) HAC has a small wobble that shrinks as you collect more data; the naive formula has a structural bug that more data can't fix.
+
+This is why HAC is the default standard-error tool in modern empirical finance. Any time-series regression that assumes IID errors is making both these mistakes silently. HAC is what you reach for when you want the t-stat to mean what it claims to mean.
+
+#### The Newey-West Fix
+
+The Newey-West correction widens the standard error to account for autocorrelation:
+
+```text
+Var(mean) = (1/n) · [γ₀ + 2 · Σₖ wₖ · γₖ]
+```
+
+where γₖ is the autocovariance of excess returns at lag k, and wₖ = 1 − k/(L+1) are Bartlett weights — a smoothing kernel that gives lag 0 full weight, then tapers linearly to zero at lag L, ensuring distant noisy lags don't blow up the variance estimate. Intuitively: Newey-West asks "how much *effectively independent* information do I have, given that consecutive observations are correlated?" — then sizes the standard error accordingly.
+
+The lag cutoff follows [Andrews (1991)](https://www.jstor.org/stable/2938229): `L = floor(4 · (n/100)^(2/9))`. For our 10-year MSFT sample (~2,500 days), that's 8 lags.
+
+The constants and exponent in that formula solve a real bias-variance tradeoff in choosing how far back to look for autocorrelation:
+
+- **Bias side.** Set L too small and you cut off lags that still have real autocorrelation. Newey-West then *still* underestimates the variance of the mean — you've fixed the IID assumption only partially.
+- **Variance side.** Set L too large and you start including lags where the *true* autocorrelation is essentially zero, but the *sample estimate* is just noise. Each near-zero noisy autocovariance you add jitters the variance estimator from sample to sample, so your standard error becomes unreliable in a different way.
+
+The optimum sits where the marginal reduction in bias equals the marginal increase in variance. For the Bartlett kernel weights `w_k = 1 − k/(L+1)`, that optimum scales as `n^(2/9)`. Andrews (1991) provided the theoretical framework; [Newey & West (1994)](https://ideas.repec.org/p/att/wimass/9220.html) made it operational with the specific constants `4 · (n/100)^(2/9)`, calibrated to give sensible lag counts across the sample sizes typical in econometrics. The `n/100` term is just a scaling anchor — at n = 100 the formula returns exactly 4, so think of "4 lags at 100 observations" as the calibration point and everything else as a slow extrapolation from there.
+
+The 2/9 exponent is small, so L grows slowly with sample size:
+
+| Sample size n | L = floor(4 · (n/100)^(2/9)) |
+| --- | --- |
+| 100 | 4 |
+| 500 | 5 |
+| 1,000 | 6 |
+| 2,500 | 8 |
+| 10,000 | 11 |
+
+Doubling your sample only buys you ~17% more lags (`2^(2/9) ≈ 1.17`). The formula is telling you that with more data, most of the extra information goes into *refining the autocovariances you're already estimating* — not chasing deeper lags whose estimates would be too noisy to trust. The behavior is also self-floored: at n = 2 (the minimum to have any variance at all) the formula returns 1, so you never need a separate `max(1, ...)` guard.
+
+The intuition transfers nicely. If your data has long memory (momentum factors, volatility clusters, slowly mean-reverting overlay P&L), the formula picks up enough lags to handle it. If the data is nearly IID, the few-lag NW correction barely changes the standard error from the naive version. Either way, it auto-adapts — you don't have to tune the bandwidth by hand for each dataset.
+
+This is the statistic to actually report.
+
+#### The Code
+
+Add to `cc_backtest.py` (the full version is in `compute_statistics`):
+
+```python
+def compute_statistics(daily_equity, num_contracts, cash, periods_per_year=252):
+    shares = num_contracts * 100
+    equity = np.array([d['equity'] for d in daily_equity], dtype=float)
+    prices = np.array([d['price'] for d in daily_equity], dtype=float)
+    bh_equity = shares * prices + cash
+
+    overlay_ret = np.diff(equity) / equity[:-1]
+    bh_ret = np.diff(bh_equity) / bh_equity[:-1]
+    excess = overlay_ret - bh_ret  # overlay's contribution, stock cancels
+
+    n = len(excess)
+    mean_e = float(np.mean(excess))
+    var_e = float(np.var(excess, ddof=1))
+
+    # Naive t-stat: assumes IID — inflated for overlays
+    t_naive = mean_e / math.sqrt(var_e / n)
+
+    # Newey-West HAC: variance of the mean under autocorrelation
+    L = int(4 * (n / 100) ** (2 / 9))
+    nw_sum = 0.0
+    for k in range(1, L + 1):
+        weight = 1.0 - k / (L + 1)
+        cov_k = float(np.mean((excess[:-k] - mean_e) * (excess[k:] - mean_e)))
+        nw_sum += weight * cov_k
+    var_mean_nw = (var_e + 2 * nw_sum) / n
+    se_nw = math.sqrt(max(var_mean_nw, 0.0))  # NW variance can be < 0 at short n
+    t_nw = mean_e / se_nw if se_nw > 0 else 0.0
+
+    return {
+        't_stat_naive': round(t_naive, 2),
+        't_stat_newey_west': round(t_nw, 2),
+        'sharpe_excess': round((mean_e * periods_per_year) /
+                               math.sqrt(var_e * periods_per_year), 3),
+        'passes_t_2': abs(t_nw) > 2.0,
+        'passes_t_3': abs(t_nw) > 3.0,
+    }
+```
+
+#### What MSFT Actually Says
+
+Running this on the bundled 10-year MSFT data:
+
+```text
+Annualized Excess Return:          +1.591%
+Annualized Excess Vol:               9.79%
+Sharpe of Excess Return:           +0.163
+t-stat (naive, IID):                +0.51
+t-stat (Newey-West, L=8 ):          +0.58
+Clears t=2 bar?                     False
+Clears t=3 bar (HLZ 2016)?          False
+```
+
+The +$299K headline P&L is real money in dollar terms, but **it's not statistically distinguishable from buy-and-hold noise**. With a Sharpe of 0.163 and 10 years of data, we'd need ~150 years of comparable data to clear the t = 2 bar at this effect size.
+
+There's a useful shortcut buried in the math: **t-stat ≈ Sharpe × √(years)**. You can sanity-check the relationship in one line: 0.163 × √10 ≈ 0.52, almost exactly what `compute_statistics` returns. If your Sharpe and your sample length don't multiply to a healthy t-stat, no amount of fiddling with the strategy will rescue it — you need a bigger effect or more data.
+
+#### Why Naive Is *Smaller* Than Newey-West Here
+
+Usually Newey-West shrinks the t-stat — that's the whole point of the correction. In our case, naive (0.51) is slightly *smaller* than NW (0.58). What gives?
+
+Newey-West can move the t-stat in either direction depending on the *sign* of short-lag autocovariances. If consecutive excess returns are positively correlated (a position held across days produces correlated P&L), NW shrinks the t-stat. If they're *negatively* correlated — *mean reversion*, the tendency for returns to bounce back toward their average — NW *inflates* the t-stat because the data has more "effective" sample than a naive count of days suggests.
+
+Our excess returns show mild day-to-day mean reversion — likely from the way profit-target closes and position re-opens introduce alternation between premium-collection days and gap days. Either way the conclusion stands: t = 0.58 is firmly below any meaningful threshold.
+
+#### Why Is This Lower Than the Volatility Risk Premium Literature?
+
+The academic VRP literature ([Bakshi-Kapadia 2003](https://academic.oup.com/rfs/article-abstract/16/2/527/1605194), [Coval-Shumway 2001](https://onlinelibrary.wiley.com/doi/10.1111/0022-1082.00352), the [BXM whitepapers](https://www.cboe.com/us/indices/dashboard/BXM/)) reports t-statistics in the range of **5–8**. So why does our well-built MSFT backtest produce 0.58?
+
+The papers test a different null hypothesis. They compare a short-vol portfolio's return to **cash** (the risk-free rate). We compare the overlay's return to **buy-and-hold of the same stock**. Both questions are valid; they isolate different things.
+
+When you compare to buy-and-hold, the stock's own return cancels and you're left measuring just the net premium contribution after assignments and buybacks. That's a small number with substantial noise — especially when your underlying is MSFT during a 10-year bull run that maximized assignment costs. When you compare to cash, you measure the *full* combined return of equity exposure plus premium income, which is much larger relative to its noise.
+
+Three other compounding factors:
+
+1. **Index VRP > single-stock VRP.** SPX options have structural insurance demand from institutional hedgers that single names lack. [Israelov & Nielsen (2015)](https://rpc.cfainstitute.org/research/financial-analysts-journal/2015/covered-calls-uncovered) found single-stock CC strategies underperform index CCs on a risk-adjusted basis.
+2. **Covered calls capture only one side.** The richest part of the equity vol surface is *put* premium (skew). Our overlay sells only OTM calls — roughly 30–40% of the full one-leg VRP.
+3. **Modeled IV vs. market IV.** Our backtest derives premiums from `HV × multiplier`, which is an *assumed* VRP, not a *measured* one. The academic numbers come from real market option prices spanning decades.
+
+The right way to engage with this gap is to add a parallel test against cash, on an index ETF, with longer data. That comparison isn't built into this backtester yet — see "What We'd Add Next."
+
+#### Common Mistake: Treating Dollar P&L as Evidence of Edge
+
+A backtest that shows "+$299K excess profit" sounds like a win. It is also perfectly consistent with the strategy adding zero value — just lucky enough to land on the positive side of the noise distribution given a single 10-year sample. Without a t-statistic, you can't distinguish a real $299K edge from a zero-edge strategy that happened to flip 10 lucky coins in a row.
+
+Always report the t-stat. Always compute it with Newey-West if you have any time-series data. And always benchmark against the question you actually care about (overlay vs. buy-and-hold *or* strategy vs. cash) — they answer different questions and produce different t-stats.
+
 ### Beyond Walk-Forward: The Full Anti-Overfitting Toolkit
 
 Monte Carlo, sensitivity analysis, and regime testing (above) are the robustness checks we implemented in code. But there are several more tools worth knowing about — think of them as layers of defense, not a single wall:
 
 | Layer | What It Catches | How It Works |
 | --- | --- | --- |
-| **Walk-forward** (Part 4) | Parameter overfitting | Train on one period, test on a different one, roll forward |
-| **Parameter stability** (sensitivity analysis above) | Fragile strategies | Check that nearby parameters give similar results — look for a "plateau" of good performance, not a single lucky peak |
-| **Monte Carlo shuffle** (above) | Sequence-dependent luck | Randomize the order of daily returns, rebuild price paths, see if strategy still works |
-| **Deflated Sharpe Ratio** | Multiple-testing bias | Adjusts your Sharpe ratio for how many strategies you tried. If you tested 120 parameter combos, the best one will look great by pure chance — even on random data, the luckiest combo will have a high Sharpe (same reason flipping 120 coins, at least one lands heads 7+ times in a row). The Deflated Sharpe corrects by asking: "Given N strategies tested, what's the probability my best Sharpe is just the expected maximum of N random trials?" It penalizes based on: (1) how many strategies tested — more trials → higher penalty, (2) variance of Sharpe ratios across trials — wider spread → best is more likely an outlier, (3) skewness/kurtosis of returns — fat tails make lucky outliers more likely. If your adjusted Sharpe is still significant after this penalty, the strategy has genuine edge — not just "I picked the luckiest coin out of 120." Key reference: Marcos López de Prado's work on this |
-| **Multi-asset testing** | Stock-specific luck | Run the same strategy on MSFT, AAPL, SPY, QQQ, etc. A strategy that works across many tickers is capturing a real market dynamic, not a quirk of one stock |
-| **Regime analysis** (above) | Fair-weather strategies | Verify the strategy works in bull, bear, and sideways markets — not just the regime you happened to backtest on |
-| **Final holdout set** | All-of-the-above leakage | Reserve the last 1–2 years of data and *never touch it* until you're completely done designing and tuning. One shot, no do-overs. **How is this different from walk-forward's test set?** Walk-forward prevents the *code* from peeking at future data, but *you* still see the walk-forward results and make decisions based on them (e.g., "1,047% looks good, let's keep this approach"). That's information leakage through the human. The holdout prevents that second layer — data you literally never look at during the entire design process. No tuning, no validation, no "let me just check." After you've finalized everything, you run it once on the holdout. That result is your most honest estimate of real-world performance |
-| **Paper trading** | Everything historical testing can't | Run the strategy live with fake money for 3–6 months. No amount of historical testing substitutes for this |
+| **Walk-forward** (Part 4) | Parameter overfitting | Train on one period, test on a different one, roll forward. |
+| **Parameter stability** (sensitivity analysis above) | Fragile strategies | Check that nearby parameters give similar results — look for a "plateau" of good performance, not a single lucky peak. |
+| **Monte Carlo shuffle** (above) | Sequence-dependent luck | Randomize the order of daily returns, rebuild price paths, see if strategy still works. |
+| **Deflated Sharpe Ratio** | Multiple-testing bias | Adjusts your Sharpe ratio for how many strategies you tried. If you tested 120 parameter combos, the best one will look great by pure chance — even on random data, the luckiest combo will have a high Sharpe (same reason flipping 120 coins, at least one lands heads 7+ times in a row). The Deflated Sharpe corrects by asking: "Given N strategies tested, what's the probability my best Sharpe is just the expected maximum of N random trials?" It penalizes based on: (1) how many strategies tested — more trials → higher penalty, (2) variance of Sharpe ratios across trials — wider spread → best is more likely an outlier, (3) skewness/kurtosis of returns — fat tails make lucky outliers more likely. If your adjusted Sharpe is still significant after this penalty, the strategy has genuine edge — not just "I picked the luckiest coin out of 120." Key reference: Marcos López de Prado's work on this. |
+| **Newey-West t-stat** (above) | Excess returns indistinguishable from zero | Compute the t-statistic of daily excess returns (overlay minus benchmark) using Newey-West standard errors that correct for the autocorrelation introduced by holding the same option position across multiple days. Conventional bar `\|t\| > 2`; stricter HLZ bar `\|t\| > 3`. Pairs naturally with Deflated Sharpe: t-stat tests whether the strategy's edge survives the *autocorrelation* of its own returns; deflated Sharpe tests whether it survives *multiple-testing bias* across the parameter grid. |
+| **Multi-asset testing** | Stock-specific luck | Run the same strategy on MSFT, AAPL, SPY, QQQ, etc. A strategy that works across many tickers is capturing a real market dynamic, not a quirk of one stock. |
+| **Regime analysis** (above) | Fair-weather strategies | Verify the strategy works in bull, bear, and sideways markets — not just the regime you happened to backtest on. |
+| **Final holdout set** | All-of-the-above leakage | Reserve the last 1–2 years of data and *never touch it* until you're completely done designing and tuning. One shot, no do-overs. **How is this different from walk-forward's test set?** Walk-forward prevents the *code* from peeking at future data, but *you* still see the walk-forward results and make decisions based on them (e.g., "1,047% looks good, let's keep this approach"). That's information leakage through the human. The holdout prevents that second layer — data you literally never look at during the entire design process. No tuning, no validation, no "let me just check." After you've finalized everything, you run it once on the holdout. That result is your most honest estimate of real-world performance. |
+| **Paper trading** | Everything historical testing can't | Run the strategy live with fake money for 3–6 months. No amount of historical testing substitutes for this. |
 
-**The key insight:** No single check is enough. The more layers that agree your strategy works, the more confident you can be that you've found something real rather than a pattern in noise. Our backtest uses the first five layers (walk-forward, parameter stability, Monte Carlo, regime analysis, and sensitivity). Adding multi-asset testing and paper trading is the next step before risking real money.
+**The key insight:** No single check is enough. The more layers that agree your strategy works, the more confident you can be that you've found something real rather than a pattern in noise. Our backtest uses six of these layers (walk-forward, parameter stability, Monte Carlo, regime analysis, sensitivity, and the Newey-West t-stat on excess returns). Adding multi-asset testing and paper trading is the next step before risking real money.
 
 > **Rule of thumb:** If your strategy survives walk-forward + Monte Carlo + parameter stability + at least two different tickers, you have something worth paper trading. If it survives 3–6 months of paper trading, you have something worth deploying with small real capital.
 
@@ -2055,7 +2269,8 @@ Here's the complete process:
 6. ROBUSTNESS CHECKS
    ├─ Monte Carlo: Shuffle daily returns, rebuild price paths, check percentile
    ├─ Sensitivity: Vary each parameter ±offset, check stability
-   └─ Regime: Split by volatility regime (low/normal/high vol)
+   ├─ Regime: Split by volatility regime (low/normal/high vol)
+   └─ Statistical Significance: Newey-West t-stat on excess returns vs. buy-and-hold
 ```
 
 ### How to Interpret Results Honestly
@@ -2067,6 +2282,7 @@ Here's the complete process:
 - Sensitivity: nearby parameters give similar results (not overfit)
 - Works in all regimes (not just bull markets)
 - Sharpe ratio > 0.8 (good risk-adjusted returns)
+- Newey-West t-stat on excess returns > 2 (>3 if you tested many parameter combos)
 
 **Red flags:**
 
@@ -2075,6 +2291,7 @@ Here's the complete process:
 - Sensitivity shows wildly different results for small tweaks (unstable)
 - Only works in one market regime (not generalizable)
 - Sharpe < 0.3 (returns don't justify the risk)
+- Newey-West t-stat < 2 even though dollar P&L looks positive (the apparent edge is noise)
 
 **Our strategy:**
 
@@ -2083,6 +2300,7 @@ Here's the complete process:
 - ✅ Sensitivity: 1035–1055% range for close_at_pct (stable across params)
 - ✅ All regimes: bull, bear, sideways all profitable
 - ✅ Sharpe ratio: ~0.89–0.90 (reasonable; risk-adjusted returns positive)
+- ⚠️ **Newey-West t-stat on excess returns: 0.58** (overlay's *excess* over buy-and-hold is not statistically distinguishable from zero on this single-stock 10-year sample; see Part 5). The dollar P&L is real, but the evidence for "the overlay specifically is adding value beyond holding MSFT" doesn't clear the statistical bar. This is what the literature on single-stock CC underperformance vs. index CC predicts.
 
 ### The Limitations We Haven't Solved
 
@@ -2103,12 +2321,23 @@ Here's the complete process:
 4. **Rolling logic:** Model rolling ITM calls for credits, not just buying back
 5. **Portfolio optimization:** Test on 10–20 stocks, optimize correlation effects
 6. **Slippage modeling:** Account for bid-ask widening on high-volatility days
+7. **Strategy-vs-cash significance test:** Add a second mode to `compute_statistics` that benchmarks the CC strategy's *total* return against the risk-free rate (not against buy-and-hold). This is the comparison the academic VRP literature reports, and it's the right way to put our backtest on equal footing with published BXM/PUT t-stats
+8. **Index ETF test:** Run the same strategy on SPY or QQQ. Single-stock VRP is structurally weaker than index VRP because index options have richer insurance demand. If the t-stat moves substantially toward the academic range when we switch underlyings, that confirms the gap was about *what* we backtested, not *how* we backtested
+9. **Risk-managed (delta-hedged) covered call mode:** Add a `delta_hedge` flag to `params` that, when enabled, buys or sells underlying shares each day to keep the portfolio's net delta pinned at `base_shares` — regardless of where the short call's delta sits. *Delta-hedging* is the practice of continuously trading the underlying to neutralize an option's directional exposure. Conceptual basis in the callout below. Costs ~25–30% more capital (you're holding extra shares to offset the call's negative delta) but produces a meaningfully cleaner test of whether the volatility risk premium is actually being captured
+
+> **Lessons from Israelov & Nielsen (2015), "Covered Calls Uncovered"** ([CFA Institute](https://rpc.cfainstitute.org/research/financial-analysts-journal/2015/covered-calls-uncovered))
+>
+> A covered call's return decomposes exactly into three parts: (1) passive equity exposure, (2) short volatility exposure — the VRP, and (3) a hidden *equity-timing* exposure that nobody explicitly chose. The third one is mechanical: as the stock rallies, the short call's delta rises and your *effective* stock exposure shrinks; as the stock sells off, delta falls and your effective exposure grows. You're being forced to lighten up into rallies and add into selloffs, on autopilot.
+>
+> Components 1 and 2 are real, persistent, harvestable premiums. Component 3 is essentially zero in expectation but adds substantial variance — it's a coin flip you didn't sign up for. The paper's prescriptive fix is the **risk-managed covered call**: dynamically rebalance the underlying share position so the portfolio's net delta stays pinned at the buy-and-hold equivalent (e.g., 100 shares for a 1-contract position). Same equity exposure as buy-and-hold, plus the vol premium, minus the equity-timing wiggle.
+>
+> The implementation is one extra block in the daily loop: compute `target_shares = base_shares + abs(call_delta) * 100 * num_contracts`, then buy or sell shares to match. The expected effect on our backtest is **a higher Sharpe of excess returns and a higher Newey-West t-stat — not because alpha (excess return beyond what the benchmark explains) increases, but because we've stopped measuring an exposure that contributes variance without contributing return**. That's the cleanest way to test whether the VRP is showing up on this underlying. Item 9 above operationalizes it.
 
 ---
 
 ## Part 7: Key Takeaways & Cheat Sheet
 
-### The 5 Most Important Lessons
+### The 6 Most Important Lessons
 
 1. **Covered calls are income, not capital appreciation.** Sell 0.25–0.30Δ calls and be happy when they're exercised. The premium is your profit, not the stock appreciation.
 
@@ -2119,6 +2348,8 @@ Here's the complete process:
 4. **Transaction costs are real.** Commission + slippage eat 3–5% of premium. Don't ignore them.
 
 5. **Robustness beats optimization.** A strategy that works in bulls, bears, and sideways is better than one that's tuned perfectly for one regime.
+
+6. **Dollar P&L is not the same as statistical edge.** A backtest can show massive excess profits *and* a Newey-West t-stat below 2 on excess returns — meaning the apparent edge is within what noise produces over the sample. Always report the t-stat alongside the dollar P&L, and always compute it on excess returns over a benchmark you actually care about (overlay vs. buy-and-hold answers a different question than strategy vs. cash). Use Newey-West standard errors when the data has time-series autocorrelation, which yours always does.
 
 ### Parameter Cheat Sheet
 
@@ -2172,612 +2403,28 @@ Is there an open position?
 
 ---
 
-## Appendix A: Full Code Example (Minimal Working Example)
+## Appendix A: The Code
 
-> **How this relates to the scripts in `/scripts/`:** The code below is a simplified, self-contained version that matches the scripts' APIs and approach. It uses the same function signatures (`bs_price`, `bs_delta`, `find_strike_for_delta` with `option_type` parameter), the same params-dict API for `run_cc_overlay`, the same two-phase wheel state machine (CSP → CC), and the same Black-Scholes math with identical CDF coefficients. The scripts have additional features (trade logging, buy-and-hold comparison, more detailed summary stats) but the core logic is identical.
+The full implementation lives in this repository. Each file is the source of truth — the snippets and pseudocode in the body of this tutorial are explanatory excerpts, not the canonical implementation.
 
-Here's a complete, runnable Python script to backtest a covered call strategy:
+| File | What it contains |
+| --- | --- |
+| [`cc_backtest.py`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py) | Black-Scholes pricing, rolling-volatility helpers, the `run_cc_overlay` engine, and `compute_statistics` for Newey-West t-stats |
+| [`test_cc_backtest.py`](https://github.com/l3a0/covered-call-backtesting/blob/main/test_cc_backtest.py) | Pytest suite covering pricing primitives, the overlay state machine, scenario tests, and the statistics helper |
+| [`download_prices.py`](https://github.com/l3a0/covered-call-backtesting/blob/main/download_prices.py) | Fetches historical daily closes via yfinance |
+| [`msft_10yr_prices.csv`](https://github.com/l3a0/covered-call-backtesting/blob/main/msft_10yr_prices.csv) | Bundled 10-year MSFT daily-close dataset used in the worked examples |
+| [`requirements.txt`](https://github.com/l3a0/covered-call-backtesting/blob/main/requirements.txt) | Pinned dependencies |
+| [`README.md`](https://github.com/l3a0/covered-call-backtesting/blob/main/README.md) | Quick-start instructions and project summary |
 
-```python
-import math
-import numpy as np
-import csv
-import random
+**To run it locally:**
 
-# ====================
-# 1. Black-Scholes
-# ====================
-
-def normal_pdf(x):
-    """The height of the bell curve at point x."""
-    return math.exp(-x**2 / 2.0) / math.sqrt(2 * math.pi)
-
-def normal_cdf(x):
-    """
-    Standard normal CDF Φ(x) — area under the bell curve from -∞ to x.
-
-    Uses the identity Φ(x) = 0.5 · (1 + erf(x/√2)) and delegates to
-    math.erf, which uses the C standard library's optimized rational/
-    Chebyshev approximation (~15-16 decimals, near-machine-precision).
-
-    The educational section above shows the Abramowitz & Stegun 1964
-    polynomial (~7 decimals) so you can see *why* CDF approximations
-    work. In production we prefer math.erf because it's effectively
-    exact: across hundreds of thousands of CDF calls in a backtest,
-    A&S's 8th-decimal error compounds into a few cents of equity drift.
-    """
-    return 0.5 * (1.0 + math.erf(x / math.sqrt(2)))
-
-def bs_price(S, K, T, r, sigma, option_type='put'):
-    """
-    Black-Scholes option price.
-    
-    Args:
-        S: stock price
-        K: strike price
-        T: time to expiration (years)
-        r: risk-free rate
-        sigma: volatility (annualized)
-        option_type: 'put' or 'call' (default: 'put')
-    
-    Returns:
-        price: option premium
-    """
-    d1 = (math.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * math.sqrt(T))
-    d2 = d1 - sigma * math.sqrt(T)
-    
-    N_d1 = normal_cdf(d1)
-    N_d2 = normal_cdf(d2)
-    
-    if option_type == 'put':
-        price = K * math.exp(-r * T) * (1 - N_d2) - S * (1 - N_d1)
-    else:  # call
-        price = S * N_d1 - K * math.exp(-r * T) * N_d2
-    
-    return price
-
-def bs_delta(S, K, T, r, sigma, option_type='put'):
-    """
-    Black-Scholes delta (probability of ITM at expiration).
-    
-    Args:
-        option_type: 'put' or 'call' (default: 'put')
-    
-    Returns:
-        delta: -1 to 0 for puts, 0 to 1 for calls
-    """
-    d1 = (math.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * math.sqrt(T))
-    
-    if option_type == 'put':
-        delta = normal_cdf(d1) - 1
-    else:  # call
-        delta = normal_cdf(d1)
-    
-    return delta
-
-def find_strike_for_delta(S, T, r, sigma, target_delta, option_type='put'):
-    """
-    Grid search to find the whole-dollar strike with delta closest to target.
-    
-    Real option chains use whole-dollar strikes (e.g., $370, $375, $380).
-    Grid search naturally produces whole-dollar results because it checks
-    every integer in the range.
-    
-    Returns:
-        float: strike price (whole dollar amount)
-    """
-    best_strike = S
-    best_diff = float('inf')
-    
-    if option_type == 'put':
-        start = int(S * 0.80)
-        end = int(S * 1.02)
-    else:  # call
-        start = int(S * 0.98)
-        end = int(S * 1.25)
-    
-    for k in range(start, end + 1):
-        K = float(k)
-        delta = bs_delta(S, K, T, r, sigma, option_type=option_type)
-        diff = abs(delta - target_delta)
-        if diff < best_diff:
-            best_diff = diff
-            best_strike = K
-    
-    return best_strike
-
-# ====================
-# 2. Volatility
-# ====================
-
-def calc_rolling_volatility(prices, window=30):
-    """
-    Calculate rolling historical volatility.
-    
-    Args:
-        prices: array of daily closing prices
-        window: lookback (default 30 days)
-    
-    Returns:
-        vols: array of annualized volatilities
-    """
-    # Log returns: ln(price_t / price_{t-1})
-    # How: np.log(prices) logs every price, then np.diff subtracts
-    # adjacent elements. This works because ln(a) - ln(b) = ln(a/b),
-    # so diff(log(prices)) = ln(price_t / price_{t-1}).
-    # Why log returns: they're additive across days (can sum them for
-    # multi-day returns) and symmetric (+5% then -5% nets to zero).
-    log_returns = np.diff(np.log(prices))
-    
-    # Standard deviation over rolling window
-    vols = []
-    for i in range(len(log_returns)):
-        if i < window - 1:
-            # Not enough prior data points to fill the window yet (e.g., with a
-            # 30-day window, we need at least 30 returns before we can compute
-            # the first volatility). Append NaN to keep vols[] aligned index-
-            # for-index with log_returns[] so downstream lookups stay correct.
-            vols.append(np.nan)
-        else:
-            # Slice the last `window` returns ending at i. Both +1s compensate
-            # for Python's exclusive right bound: i+1 ensures i is included,
-            # and i-window+1 shifts the start right by 1 so the slice contains
-            # exactly `window` items. E.g., window=30, i=35 →
-            # log_returns[6:36] = indices 6..35 = 30 values.
-            window_returns = log_returns[i-window+1:i+1]
-
-            # Sample std dev (ddof=1 = Bessel's correction) because these
-            # returns are a sample from the stock's theoretical distribution,
-            # not the entire population. Dividing by N-1 avoids underestimating.
-            std_dev = np.std(window_returns, ddof=1)
-
-            # Annualize: σ_annual = σ_daily × √252
-            # Std devs scale with square root of time, NOT linearly.
-            annualized = std_dev * np.sqrt(252)
-            vols.append(annualized)
-    
-    return np.array(vols)
-
-def detect_regime(rolling_vol):
-    """Classify volatility regime based on current HV level."""
-    if rolling_vol > 0.25:
-        return 'high'
-    elif rolling_vol < 0.15:
-        return 'low'
-    else:
-        return 'normal'
-
-def estimate_iv(rolling_vol, regime='normal'):
-    """
-    Adjust HV to IV estimate based on regime.
-    
-    High vol (>25%) → 1.1× (IV already elevated, won't expand much)
-    Normal (15-25%) → 1.3× (typical HV→IV relationship)
-    Low vol (<15%)  → 1.5× (IV is suppressed, expect mean reversion)
-    """
-    if regime == 'high':
-        multiplier = 1.1
-    elif regime == 'normal':
-        multiplier = 1.3
-    else:  # low
-        multiplier = 1.5
-    return rolling_vol * multiplier
-
-# ====================
-# 3. Overlay Engine (Covered Call)
-# ====================
-
-def run_cc_overlay(dates, prices, params):
-    """
-    Simulate a covered call overlay strategy from start to finish.
-    
-    Args:
-        dates: array of datetime objects
-        prices: array of daily closing prices
-        params: dict with keys:
-            - call_delta: target delta for strike selection (e.g., 0.25)
-            - close_at_pct: close when this % of premium captured (e.g., 0.75)
-            - dte: days to expiration when opening position (e.g., 21)
-            - risk_free_rate: annual risk-free rate (e.g., 0.045)
-            - capital: total dollars committed to the portfolio (default:
-              cost of 1 contract). Sized into whole 100-share contracts;
-              remainder sits as 0%-yield cash.
-        
-        IV estimation uses the regime-based detect_regime() + estimate_iv()
-        functions (multiplier varies: 1.1× in high vol, 1.3× normal, 1.5× low).
-    
-    Returns:
-        (summary, trades, daily_equity)
-    """
-    
-    # Extract parameters from dict (matches cc_overlay_engine.py)
-    call_delta = params.get('call_delta', 0.25)
-    close_at_pct = params.get('close_at_pct', 0.75)
-    dte = params.get('dte', 21)
-    r = params.get('risk_free_rate', 0.045)
-    # Note: iv_multiplier is no longer used here — the regime-based
-    # detect_regime() + estimate_iv() functions handle the HV→IV
-    # adjustment dynamically based on current volatility level.
-
-    initial_price = prices[0]
-    contract_cost = initial_price * 100  # cost of one 100-share contract
-
-    # Size the portfolio. Default: single contract (the original behavior).
-    # Pass capital=100000 to test a $100K portfolio — the engine sizes it
-    # into whole contracts (uninvested remainder sits as 0%-yield cash).
-    capital = float(params.get('capital', contract_cost))
-    num_contracts = int(capital // contract_cost)
-    if num_contracts < 1:
-        raise ValueError(
-            f"Capital ${capital:,.2f} insufficient for 1 contract "
-            f"at ${initial_price:.2f}/share (need ${contract_cost:,.2f})"
-        )
-    shares = 100 * num_contracts                   # total shares held
-    initial_stock_cost = shares * initial_price    # actual capital deployed in stock
-    cash = capital - initial_stock_cost            # leftover, 0% yield
-
-    num_days = len(dates)
-    trades = []
-    daily_equity = []
-    
-    # State tracking
-    position = None  # None or {'strike', 'premium_collected', 'entry_price', 'entry_idx', 'entry_date'}
-    realized_pnl = 0.0  # cumulative premium overlay P&L (excludes stock appreciation)
-    num_calls_sold = 0
-    total_premium_collected = 0
-    wins = 0
-    losses = 0
-    
-    for day_idx in range(num_days):
-        date = dates[day_idx]
-        price = prices[day_idx]
-        
-        # Calculate rolling historical volatility over a 30-day window.
-        #
-        # Math: annualized stdev of daily log returns.
-        #   log(prices)           -> log prices
-        #   np.diff(...)           -> daily log returns r_t = ln(P_t / P_{t-1})
-        #   np.std(..., ddof=1)    -> daily volatility (sample stdev of those returns)
-        #   * sqrt(252)            -> annualize. Why sqrt and not 252?
-        #     Log returns are additive across time: the 252-day log return is
-        #     just the sum of 252 daily log returns,
-        #         R_year = r_1 + r_2 + ... + r_252.
-        #     If we assume daily returns are independent and identically
-        #     distributed (the standard random-walk assumption), then variance
-        #     of a sum of independent variables is the sum of their variances:
-        #         Var(R_year) = Var(r_1) + ... + Var(r_252) = 252 * Var(r_daily).
-        #     Covariance terms vanish because of independence. Standard
-        #     deviation is the square root of variance, so
-        #         stdev(R_year) = sqrt(252) * stdev(r_daily).
-        #     That's where the sqrt(252) comes from — it's a direct consequence
-        #     of "variance adds when returns are independent," not an arbitrary
-        #     convention. Caveat: real markets have volatility clustering and
-        #     fat tails, so this understates risk during crises; it's a useful
-        #     first approximation, not ground truth.
-        #
-        # Indexing: we want the window to END at today (day_idx) and never peek
-        # at future prices. Python slicing is "half-open": `prices[a:b]` includes
-        # index `a` but EXCLUDES index `b` — the start is closed (included), the
-        # end is open (excluded), hence "half-open". So to include today's price
-        # at index `day_idx`, we have to write `day_idx + 1` as the stop. That's
-        # why you see the `+1` everywhere below — it's not an off-by-one, it's
-        # the idiomatic way to say "up through today, inclusive." np.diff then
-        # turns N prices into N-1 returns, so a 30-price window yields 29 log
-        # returns.
-        if day_idx < 3:
-            # Warmup (day_idx < 3): fewer than 3 prices means 0 or 1 log
-            # returns, so np.std() would return NaN (empty) or 0 (single
-            # value). Neither is useful — NaN crashes Black-Scholes and 0
-            # makes all OTM option prices zero. Fall back to 20% annualized
-            # vol (a reasonable long-run equity estimate) until we have
-            # enough data to compute a real standard deviation.
-            rolling_vol = 0.20
-        elif day_idx < 30:
-            # Early days (3 ≤ day_idx < 30): use all available history.
-            # ddof=1 (Bessel's correction) because these returns are a
-            # sample from the stock's theoretical distribution, not the
-            # entire population — dividing by N-1 avoids underestimating
-            # the true volatility. This matches calc_rolling_volatility().
-            rolling_vol = np.std(np.diff(np.log(prices[:day_idx+1])), ddof=1) * np.sqrt(252)
-        else:
-            # Steady state: use the last 30 prices, i.e. [day_idx-29, day_idx].
-            # Note the `-29`, not `-30`: for a trailing window of size N ending
-            # inclusively at day_idx, we want exactly N prices, which spans
-            # indices [day_idx-(N-1), day_idx]. Using `-30` would give 31
-            # prices (a 31-day window — off by one). As day_idx advances, the
-            # window slides forward by one: it adds today and evicts the
-            # oldest price, keeping the size pinned at 30.
-            #
-            # ddof=1 (Bessel's correction) — same reasoning as early-days
-            # branch above. The standalone calc_rolling_volatility() also
-            # uses ddof=1; we match it here for consistency.
-            rolling_vol = np.std(np.diff(np.log(prices[day_idx-29:day_idx+1])), ddof=1) * np.sqrt(252)
-        
-        # IV estimate: use regime-based multiplier.
-        # The detect_regime() and estimate_iv() functions defined earlier
-        # adjust the HV→IV multiplier based on the current vol level:
-        #   high vol (>25%) → 1.1× (IV already elevated, won't expand much)
-        #   normal (15-25%) → 1.3× (typical relationship)
-        #   low vol (<15%)  → 1.5× (IV is suppressed, expect mean reversion)
-        regime = detect_regime(rolling_vol)
-        iv_estimate = estimate_iv(rolling_vol, regime)
-        
-        # If no position, consider opening
-        if position is None:
-            # Sell a call
-            T = dte / 252
-            strike = find_strike_for_delta(price, T, r, iv_estimate, call_delta, option_type='call')
-            premium = bs_price(price, strike, T, r, iv_estimate, option_type='call')
-            
-            # Apply transaction costs
-            net_premium = premium * (1 - 0.03) - 0.0065  # 3% slippage, $0.65 commission
-            
-            # Skip if premium is too small after costs — this can happen
-            # during very low volatility periods where the OTM call is nearly
-            # worthless and slippage + commission exceed the gross premium.
-            # Opening a position with zero or negative net premium would lock
-            # us into a guaranteed loss.
-            if net_premium <= 0:
-                continue
-            
-            # Open position
-            position = {
-                'strike': strike,
-                'premium_collected': net_premium,
-                'entry_price': price,
-                'entry_idx': day_idx,
-                'entry_date': date,
-            }
-            num_calls_sold += 1
-            total_premium_collected += net_premium * shares
-            
-            trades.append({
-                'date': date,
-                'price': price,
-                'action': 'sell',
-                'premium': net_premium,
-                'strike': strike,
-                'pnl': 0,
-                'realized_pnl': realized_pnl,
-            })
-        
-        else:
-            # Position is open; check conditions.
-            #
-            # days_left = how many trading days remain until this option
-            # expires. We sold it with `dte` days of life (e.g. 21), and
-            # (day_idx - entry_idx) counts how many days have elapsed since we
-            # opened the trade.
-            #
-            #   days_left = original_lifetime - days_elapsed_since_entry
-            #             = dte - (day_idx - entry_idx)
-            #
-            # Example: we sold a 21 DTE call on day 100 (entry_idx=100, dte=21).
-            #   Today is day 105 → days_elapsed = 105 - 100 = 5
-            #                    → days_left = 21 - 5 = 16
-            #   Today is day 121 → days_elapsed = 21
-            #                    → days_left = 0  (expiration, handled below)
-            #   Today is day 122 → days_left = -1 (past expiration; the
-            #                    `<= 0` branch below still catches it)
-            days_left = dte - (day_idx - position['entry_idx'])
-            
-            if days_left <= 0:
-                # Expiration reached. Overlay P&L only — stock appreciation
-                # is tracked separately by the daily equity calculation below.
-                if price >= position['strike']:
-                    # Called away (assignment): the buyer exercises the call
-                    # and takes our shares at the strike. To stay in the
-                    # overlay business (always own 100 shares), we immediately
-                    # rebuy at the current market price.
-                    #
-                    # Cash flow per share: collect strike, pay current price.
-                    # Net to overlay: premium_collected - (price - strike).
-                    #
-                    # Example (per share):
-                    #   strike = $310, premium = $1.50, market = $325
-                    #   pnl = $1.50 - ($325 - $310) = -$13.50  → assignment loss
-                    # Or if the stock barely closed ITM:
-                    #   strike = $310, premium = $1.50, market = $311
-                    #   pnl = $1.50 - $1.00 = +$0.50  → small win
-                    #
-                    # An assignment is a LOSS for the overlay when the stock
-                    # rallied past `strike + premium` — you collected premium
-                    # but had to pay back the upside above strike. The stock
-                    # appreciation up to `strike` is still kept (it's in the
-                    # daily equity tracking), so you don't lose money overall;
-                    # you just lose the *uncapped* portion of the rally.
-                    pnl = (position['premium_collected'] - (price - position['strike'])) * shares
-                else:
-                    # Expired OTM: stock closed below strike, call is worthless,
-                    # we keep the full premium and the shares.
-                    pnl = position['premium_collected'] * shares
-                
-                realized_pnl += pnl
-                if pnl >= 0:
-                    wins += 1
-                else:
-                    losses += 1
-                position = None
-                
-                trades.append({
-                    'date': date,
-                    'price': price,
-                    'action': 'expiration',
-                    'pnl': pnl,
-                    'realized_pnl': realized_pnl,
-                })
-            
-            else:
-                # Check profit target or early close
-                T_remaining = days_left / 252
-                call_value_today = bs_price(price, position['strike'], T_remaining, r, iv_estimate, option_type='call')
-                profit_pct = (position['premium_collected'] - call_value_today) / position['premium_collected']
-                
-                # Close if profit target reached (close_at_pct of premium captured)
-                if call_value_today <= position['premium_collected'] * (1 - close_at_pct):
-                    # Buy back the call
-                    pnl = (position['premium_collected'] - call_value_today) * shares - 0.65 * num_contracts
-                    realized_pnl += pnl
-                    if pnl >= 0:
-                        wins += 1
-                    else:
-                        losses += 1
-                    position = None
-                    
-                    trades.append({
-                        'date': date,
-                        'price': price,
-                        'action': 'close',
-                        'call_value': call_value_today,
-                        'profit_pct': profit_pct,
-                        'pnl': pnl,
-                        'realized_pnl': realized_pnl,
-                    })
-                
-                else:
-                    # Check deep ITM: if delta > 0.70, the call is almost
-                    # certainly going to be assigned. Close now to free up
-                    # capital for the next cycle rather than riding gamma
-                    # risk into expiration. This matches the state machine
-                    # diagram and the run_cc_overlay_day() function above.
-                    delta_today = bs_delta(price, position['strike'], T_remaining, r, iv_estimate, option_type='call')
-                    if delta_today > 0.70:
-                        pnl = (position['premium_collected'] - call_value_today) * shares - 0.65 * num_contracts
-                        realized_pnl += pnl
-                        if pnl >= 0:
-                            wins += 1
-                        else:
-                            losses += 1
-                        position = None
-                        
-                        trades.append({
-                            'date': date,
-                            'price': price,
-                            'action': 'close_itm',
-                            'call_value': call_value_today,
-                            'pnl': pnl,
-                            'realized_pnl': realized_pnl,
-                        })
-                # Otherwise: hold — nothing to do today. The daily equity
-                # tracking below will reflect the current unrealized P&L.
-        
-        # Track daily equity: stock value + idle cash + cumulative overlay P&L.
-        # This is the total portfolio value today (mark-to-market on shares,
-        # plus the leftover cash, plus all net premium income realized so far).
-        # Returns are measured against `capital` (the total committed dollars).
-        stock_value = price * shares
-        equity = stock_value + cash + realized_pnl
-        if position is not None:
-            days_left = dte - (day_idx - position['entry_idx'])
-            T_remaining = max(days_left / 252, 0)
-            call_value = bs_price(price, position['strike'], T_remaining, r, iv_estimate, option_type='call')
-            equity += (position['premium_collected'] - call_value) * shares
-        daily_equity.append({'date': date, 'equity': round(equity, 2), 'price': price})
-    
-    # Compute summary stats
-    final_equity = daily_equity[-1]['equity'] if daily_equity else capital
-    total_return = (final_equity - capital) / capital * 100
-
-    # Buy-and-hold benchmark: hold the same `shares` for the whole period
-    # without selling calls. Idle cash sits at 0% in both scenarios so it
-    # cancels in the excess-return comparison.
-    final_price = prices[-1]
-    buy_hold_final = final_price * shares + cash
-    buy_hold_return = (buy_hold_final - capital) / capital * 100
-    excess_return = total_return - buy_hold_return
-
-    # Decompose the overlay's contribution: we collected `total_premium_collected`
-    # in gross premium across all sells, but had to pay it back via buybacks
-    # (early closes at profit target / ITM) and assignment losses (when called
-    # away above strike). The net overlay P&L equals the gap between final
-    # equity and the buy-and-hold final value.
-    net_overlay_pnl = final_equity - buy_hold_final
-    overlay_costs = total_premium_collected - net_overlay_pnl
-    premium_retention = (net_overlay_pnl / total_premium_collected * 100
-                        if total_premium_collected > 0 else 0.0)
-
-    # Max drawdown
-    peak = capital
-    max_dd = 0
-    for d in daily_equity:
-        if d['equity'] > peak:
-            peak = d['equity']
-        dd = (peak - d['equity']) / peak * 100
-        if dd > max_dd:
-            max_dd = dd
-    
-    summary = {
-        'capital': round(capital, 2),
-        'num_contracts': num_contracts,
-        'initial_stock_cost': round(initial_stock_cost, 2),
-        'cash': round(cash, 2),
-        'final_equity': round(final_equity, 2),
-        'total_return_pct': round(total_return, 2),
-        'buy_hold_final': round(buy_hold_final, 2),
-        'buy_hold_return_pct': round(buy_hold_return, 2),
-        'excess_return_pct': round(excess_return, 2),
-        'net_overlay_pnl': round(net_overlay_pnl, 2),
-        'total_premium_collected': round(total_premium_collected, 2),
-        'overlay_costs': round(overlay_costs, 2),
-        'premium_retention_pct': round(premium_retention, 1),
-        'num_calls_sold': num_calls_sold,
-        'wins': wins,
-        'losses': losses,
-        'win_rate': round(wins / max(wins + losses, 1) * 100, 1),
-        'max_drawdown_pct': round(max_dd, 2),
-    }
-    
-    return summary, trades, daily_equity
-
-# ====================
-# 4. Example Usage
-# ====================
-
-if __name__ == '__main__':
-    # Load price data (expects CSV with 'date' and 'close' columns)
-    with open('msft_10yr_prices.csv') as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
-    
-    dates = [r['date'] for r in rows]
-    prices = [float(r['close']) for r in rows]
-    
-    params = {
-        'call_delta': 0.25,
-        'close_at_pct': 0.75,
-        'dte': 21,
-        'risk_free_rate': 0.045,
-        'capital': 100_000,  # $100K portfolio (sized into whole contracts)
-        # IV multiplier is now regime-based (detect_regime + estimate_iv)
-    }
-    
-    summary, trades, daily_equity = run_cc_overlay(dates, prices, params)
-    
-    print(f"Capital:                         ${summary['capital']:>12,.2f}")
-    print(f"Contracts (100 shares each):     {summary['num_contracts']:>12}    "
-          f"(${summary['initial_stock_cost']:,.2f} stock + ${summary['cash']:,.2f} cash)")
-    print()
-    print("Returns")
-    print(f"    Buy & Hold Final:            ${summary['buy_hold_final']:>12,.2f}    {summary['buy_hold_return_pct']:>+8.2f}%")
-    print(f"  + Net Overlay P&L:             ${summary['net_overlay_pnl']:>12,.2f}    {summary['excess_return_pct']:>+8.2f} pp")
-    print(f"  = CC Overlay Final:            ${summary['final_equity']:>12,.2f}    {summary['total_return_pct']:>+8.2f}%")
-    print()
-    print("Overlay P&L Breakdown")
-    print(f"    Gross Premium Collected:     ${summary['total_premium_collected']:>12,.2f}    (income from {summary['num_calls_sold']} calls sold)")
-    print(f"  - Buybacks + Assignment Costs: ${summary['overlay_costs']:>12,.2f}    (paid to close ITM calls + capped upside on assignment)")
-    print(f"  = Net Overlay P&L:             ${summary['net_overlay_pnl']:>12,.2f}    ({summary['premium_retention_pct']:.1f}% retained)")
-    print()
-    print("Activity")
-    print(f"    Calls Sold:                   {summary['num_calls_sold']:>12}")
-    print(f"    Win Rate:                     {summary['win_rate']:>12.1f}%")
-    print(f"    Max Drawdown:                 {summary['max_drawdown_pct']:>12.2f}%")
+```bash
+git clone https://github.com/l3a0/covered-call-backtesting.git
+cd covered-call-backtesting
+pip install -r requirements.txt
+python cc_backtest.py            # runs the backtest on bundled MSFT data
+pytest                           # runs the test suite
 ```
-
-**To run this:**
-
-1. Save as `cc_backtest.py`
-2. Place `msft_10yr_prices.csv` in the same directory (CSV with `date,close` columns)
-3. Run: `python cc_backtest.py` (requires `numpy`; install with `pip install numpy`)
 
 ---
 
@@ -2795,6 +2442,8 @@ if __name__ == '__main__':
 | **Ignoring dividends** | You didn't account for dividend yield | For MSFT, add ~0.7–1% annual yield to returns |
 | **Wrong delta interpretation** | You think 0.50Δ = 50% probability of profit | Delta = probability of being ITM at expiration (mathematically) or equivalent stock hedge (practically) |
 | **Holding too long (close_at_pct too high)** | You set close_at_pct=1.0 (hold to expiry); miss early profit opportunities | Use close_at_pct of 0.50–0.75; capture most of the premium decay without waiting for expiration risk |
+| **Confusing dollar P&L with edge** | Backtest shows "+$299K excess profit"; strategy is actually statistically indistinguishable from buy-and-hold | Compute Newey-West t-stat on daily excess returns (overlay minus benchmark). Aim for `\|t\| > 2` (conventional) or `\|t\| > 3` (Harvey-Liu-Zhu adjusted for multiple testing). Use the `compute_statistics()` helper and read the t-stat alongside the dollar P&L — not in isolation |
+| **Naive t-stat on autocorrelated returns** | You compute t = mean / (std/√n) and get an inflated number that disappears in live trading | Always use Newey-West HAC standard errors when measuring t-stats on overlay or any held-position strategy. Same formula otherwise undersizes the standard error by 30–100% because consecutive-day P&Ls share a common driver (the open option position) |
 
 ---
 
@@ -2806,6 +2455,7 @@ After reading this tutorial, you understand:
 - ✅ **How** to price them (Black-Scholes)
 - ✅ **How** to simulate them (overlay engine)
 - ✅ **How** to validate them (walk-forward, robustness)
+- ✅ **How** to assess if the result is real (Newey-West t-statistic on excess returns)
 - ✅ **What can go wrong** (limitations, pitfalls)
 
 **Next steps:**
@@ -2820,6 +2470,48 @@ Good luck. Covered call trading is not exciting, but it's one of the most reliab
 
 ---
 
-**Acknowledgments:** This tutorial synthesizes best practices from QuantConnect, CBOE education, and quantitative finance textbooks. All code examples are original.
+## References
 
-**Last updated:** April 2026
+Academic papers cited or built on in this tutorial. URLs link to the publishers' canonical landing pages where I'm reasonably sure of the exact URL; for the rest, the citation alone should be enough to find the paper on Google Scholar.
+
+### Option pricing
+
+- Black, F. & Scholes, M. (1973). "The Pricing of Options and Corporate Liabilities." *Journal of Political Economy*, 81(3), 637–654. ([JSTOR](https://www.jstor.org/stable/1831029))
+
+### Numerical methods
+
+- Abramowitz, M. & Stegun, I. A. (eds.) (1964). *Handbook of Mathematical Functions with Formulas, Graphs, and Mathematical Tables*. National Bureau of Standards. Source of the polynomial CDF approximation (Formula 26.2.17) used in the educational version of `normal_cdf`. ([Wikipedia](https://en.wikipedia.org/wiki/Abramowitz_and_Stegun))
+
+### Volatility risk premium
+
+- Bakshi, G. & Kapadia, N. (2003). "Delta-Hedged Gains and the Negative Market Volatility Risk Premium." *Review of Financial Studies*, 16(2), 527–566. ([Oxford Academic](https://academic.oup.com/rfs/article-abstract/16/2/527/1605194))
+- Coval, J. D. & Shumway, T. (2001). "Expected Option Returns." *Journal of Finance*, 56(3), 983–1009. ([Wiley](https://onlinelibrary.wiley.com/doi/10.1111/0022-1082.00352))
+- Israelov, R. & Nielsen, L. N. (2015). "Covered Calls Uncovered." *Financial Analysts Journal*, 71(6). ([CFA Institute](https://rpc.cfainstitute.org/research/financial-analysts-journal/2015/covered-calls-uncovered))
+
+### Heteroskedasticity and volatility clustering
+
+- Engle, R. F. (1982). "Autoregressive Conditional Heteroskedasticity with Estimates of the Variance of United Kingdom Inflation." *Econometrica*, 50(4), 987–1007. ([JSTOR](https://www.jstor.org/stable/1912773))
+- Mandelbrot, B. (1963). "The Variation of Certain Speculative Prices." *Journal of Business*, 36(4), 394–419. ([JSTOR](https://www.jstor.org/stable/2350970))
+
+### HAC standard errors and t-statistics
+
+- Andrews, D. W. K. (1991). "Heteroskedasticity and Autocorrelation Consistent Covariance Matrix Estimation." *Econometrica*, 59(3), 817–858. ([JSTOR](https://www.jstor.org/stable/2938229))
+- Newey, W. K. & West, K. D. (1987). "A Simple, Positive Semi-Definite, Heteroskedasticity and Autocorrelation Consistent Covariance Matrix." *Econometrica*, 55(3), 703–708. ([JSTOR](https://www.jstor.org/stable/1913610))
+- Newey, W. K. & West, K. D. (1994). "Automatic Lag Selection in Covariance Matrix Estimation." *Review of Economic Studies*, 61(4), 631–653. ([RePEc](https://ideas.repec.org/p/att/wimass/9220.html))
+- Harvey, C. R., Liu, Y. & Zhu, H. (2016). "...and the Cross-Section of Expected Returns." *Review of Financial Studies*, 29(1), 5–68. ([Oxford Academic](https://academic.oup.com/rfs/article-abstract/29/1/5/1843824))
+
+### Indices and benchmarks
+
+- CBOE S&P 500 BuyWrite Index (BXM). ([cboe.com](https://www.cboe.com/us/indices/dashboard/BXM/))
+- CBOE S&P 500 PutWrite Index (PUT). ([cboe.com](https://www.cboe.com/us/indices/dashboard/PUT/))
+- CBOE S&P 500 30-Delta BuyWrite Index (BXMD). ([cboe.com](https://www.cboe.com/us/indices/dashboard/BXMD/))
+
+For textbooks (Hull, Natenberg, Taleb) and educational platforms (QuantConnect, OptionMetrics, CBOE), see the "Resources for Further Learning" section in Part 7.
+
+## Provenance & Disclaimer
+
+This tutorial was drafted in collaboration with Claude (Anthropic) — the prose, structure, and code in `cc_backtest.py` and `test_cc_backtest.py` were generated through extended back-and-forth between the author and the model. The code is unit-tested and runs correctly on the bundled MSFT data, but you should still review it before relying on it for real money: both for correctness on your own data and for whether the modeling choices baked in (Black-Scholes pricing instead of market quotes, regime-based IV multipliers instead of measured IV, fixed slippage and commission assumptions) match your actual broker, instruments, and tolerance for tail risk. AI-generated citations and derivations occasionally drift from the primary sources, so treat everything here as a starting point rather than gospel. The references above are the original published papers — those are what any claim in this tutorial should be checked against.
+
+The author is a learner working through these ideas, not a credentialed quant or financial advisor. Nothing in this tutorial is investment advice.
+
+**Last updated:** May 2026

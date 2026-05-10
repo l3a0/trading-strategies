@@ -13,6 +13,7 @@ from cc_backtest import (
     bs_delta,
     bs_price,
     calc_rolling_volatility,
+    compute_statistics,
     find_strike_for_delta,
     normal_cdf,
     normal_pdf,
@@ -294,7 +295,6 @@ class TestRunCcOverlay:
             'close_at_pct': 0.75,
             'dte': 21,
             'risk_free_rate': 0.045,
-            'iv_multiplier': 1.3,
         }
 
     def test_returns_three_items(self, rising_market: tuple[list[str], np.ndarray[Any, np.dtype[np.float64]]], default_params: dict[str, float]) -> None:  # pyright: ignore[reportUnknownParameterType]
@@ -481,7 +481,6 @@ class TestScenarioFlatMarket:
             'close_at_pct': 0.75,
             'dte': 21,
             'risk_free_rate': 0.045,
-            'iv_multiplier': 1.3,
         }
         return dates, prices, params
 
@@ -530,7 +529,7 @@ class TestScenarioCalledAway:
         dates = _fake_dates(len(prices))
         params: dict[str, float] = {
             'call_delta': 0.25, 'close_at_pct': 0.75, 'dte': 21,
-            'risk_free_rate': 0.045, 'iv_multiplier': 1.3,
+            'risk_free_rate': 0.045,
         }
         _, trades, _ = run_cc_overlay(dates, prices, params)
 
@@ -558,7 +557,7 @@ class TestScenarioProfitTargetClose:
         dates = _fake_dates(len(prices))
         params: dict[str, float] = {
             'call_delta': 0.25, 'close_at_pct': 0.75, 'dte': 21,
-            'risk_free_rate': 0.045, 'iv_multiplier': 1.3,
+            'risk_free_rate': 0.045,
         }
         _, trades, _ = run_cc_overlay(dates, prices, params)
 
@@ -582,7 +581,7 @@ class TestScenarioMultipleCycles:
         dates = _fake_dates(100)
         params: dict[str, float] = {
             'call_delta': 0.25, 'close_at_pct': 0.75, 'dte': 21,
-            'risk_free_rate': 0.045, 'iv_multiplier': 1.3,
+            'risk_free_rate': 0.045,
         }
         summary, trades, _ = run_cc_overlay(dates, prices, params)
 
@@ -608,7 +607,7 @@ class TestScenarioPnlAccumulation:
         dates = _fake_dates(80)
         params: dict[str, float] = {
             'call_delta': 0.25, 'close_at_pct': 0.75, 'dte': 21,
-            'risk_free_rate': 0.045, 'iv_multiplier': 1.3,
+            'risk_free_rate': 0.045,
         }
         _, trades, _ = run_cc_overlay(dates, prices, params)
 
@@ -630,7 +629,7 @@ class TestScenarioEquityFinalState:
         dates = _fake_dates(60)
         params: dict[str, float] = {
             'call_delta': 0.25, 'close_at_pct': 0.75, 'dte': 21,
-            'risk_free_rate': 0.045, 'iv_multiplier': 1.3,
+            'risk_free_rate': 0.045,
         }
         summary, trades, daily_equity = run_cc_overlay(dates, prices, params)
 
@@ -654,3 +653,187 @@ class TestScenarioEquityFinalState:
 
         # daily_equity[-1] equity should match summary
         assert daily_equity[-1]['equity'] == summary['final_equity']
+
+
+# ====================
+# compute_statistics
+# ====================
+
+def _build_daily_equity(
+    equity_series: list[float],
+    price_series: list[float],
+) -> list[dict[str, Any]]:
+    """Build a daily_equity payload in the shape compute_statistics expects."""
+    dates = _fake_dates(len(equity_series))
+    return [
+        {'date': d, 'equity': e, 'price': p}
+        for d, e, p in zip(dates, equity_series, price_series)
+    ]
+
+
+class TestComputeStatistics:
+    """Statistical significance of the overlay vs. buy-and-hold."""
+
+    def test_zero_excess_returns_give_zero_t_stat(self) -> None:
+        """When overlay equity tracks buy-and-hold exactly, t-stat = 0."""
+        # Flat prices @ $100 for 50 days. With num_contracts=1, cash=0,
+        # bh_equity = 100 shares * $100 = $10,000 flat. Set overlay
+        # equity to also be $10,000 flat → excess returns are all zero.
+        prices = [100.0] * 50
+        equity = [10_000.0] * 50
+        daily_equity = _build_daily_equity(equity, prices)
+
+        stats = compute_statistics(daily_equity, num_contracts=1, cash=0.0)
+
+        assert stats['t_stat_naive'] == pytest.approx(0.0, abs=1e-9)
+        assert stats['t_stat_newey_west'] == pytest.approx(0.0, abs=1e-9)
+        assert stats['ann_excess_return_pct'] == pytest.approx(0.0, abs=1e-9)
+        assert stats['passes_t_2'] is False
+        assert stats['passes_t_3'] is False
+
+    def test_constant_nonzero_excess_yields_zero_t_stat(self) -> None:
+        """When excess returns are constant and non-zero, var = 0 → t_nw = 0.
+
+        NOT redundant with test_zero_excess_returns_give_zero_t_stat: there,
+        mean_e = 0 makes t_nw = 0 / se_nw = 0 regardless of se_nw, so the
+        floor doesn't matter. Here mean_e ≠ 0, so se_nw is what determines
+        the result. A previous implementation floored var_mean_nw at 1e-20,
+        which gave se_nw = 1e-10 and t_nw = mean / 1e-10 (huge garbage).
+        With the floor at 0, the se_nw > 0 guard correctly returns 0.
+        """
+        # Doubling each day → np.diff/equity[:-1] = 1.0 exactly (mul by 2
+        # is bit-exact in float64), so excess = 1.0 every day → var_e = 0
+        # exactly (no float noise). Flat prices → bh_ret = 0.
+        n = 30
+        prices = [100.0] * n
+        equity = [float(2 ** i) for i in range(n)]
+        daily_equity = _build_daily_equity(equity, prices)
+
+        stats = compute_statistics(daily_equity, num_contracts=1, cash=0.0)
+
+        assert stats['t_stat_naive'] == pytest.approx(0.0, abs=1e-9)
+        assert stats['t_stat_newey_west'] == pytest.approx(0.0, abs=1e-9)
+        assert math.isfinite(stats['t_stat_newey_west'])
+
+    def test_consistent_positive_excess_produces_positive_t_stat(self) -> None:
+        """A consistent overlay advantage should produce a positive, large t-stat."""
+        # Flat prices → bh_ret = 0 every day → excess = overlay_ret directly.
+        # Build overlay equity that grows at a noisy positive rate.
+        np.random.seed(42)
+        n = 500
+        prices = [100.0] * n
+        daily_excess = 0.0005 + np.random.normal(0, 0.0003, n - 1)  # +5 bps/day noisy
+        equity = [10_000.0]
+        for r in daily_excess:
+            equity.append(equity[-1] * (1 + r))
+        daily_equity = _build_daily_equity(equity, prices)
+
+        stats = compute_statistics(daily_equity, num_contracts=1, cash=0.0)
+
+        # With 500 days of +5 bps mean and 3 bps noise, t-stat should be very large
+        assert stats['t_stat_naive'] > 10.0
+        assert stats['t_stat_newey_west'] > 5.0  # NW slightly smaller due to any autocorrelation
+        assert stats['ann_excess_return_pct'] > 10.0  # ~12.6% annualized
+        assert stats['passes_t_2'] is True
+        assert stats['passes_t_3'] is True
+
+    def test_naive_t_stat_matches_formula(self) -> None:
+        """t_naive should equal mean / (std / sqrt(n)) computed directly."""
+        # Build a deterministic series with known mean and std
+        np.random.seed(7)
+        n = 252
+        prices = [100.0] * n
+        excess_returns = np.random.normal(0.0001, 0.001, n - 1)
+        equity = [10_000.0]
+        for r in excess_returns:
+            equity.append(equity[-1] * (1 + r))
+        daily_equity = _build_daily_equity(equity, prices)
+
+        stats = compute_statistics(daily_equity, num_contracts=1, cash=0.0)
+
+        # Independently reconstruct excess returns and compute naive t-stat
+        equity_arr = np.array(equity)
+        overlay_ret = np.diff(equity_arr) / equity_arr[:-1]
+        bh_ret = np.zeros_like(overlay_ret)  # flat prices
+        excess = overlay_ret - bh_ret
+        expected_t_naive = float(np.mean(excess)) / (float(np.std(excess, ddof=1)) / math.sqrt(len(excess)))
+
+        assert stats['t_stat_naive'] == pytest.approx(expected_t_naive, abs=0.02)
+
+    def test_passes_flags_reflect_newey_west_t_stat(self) -> None:
+        """passes_t_2 and passes_t_3 should consistently reflect t_stat_newey_west."""
+        np.random.seed(1)
+        n = 1000
+        prices = [100.0] * n
+        excess = 0.001 + np.random.normal(0, 0.0002, n - 1)
+        equity = [10_000.0]
+        for r in excess:
+            equity.append(equity[-1] * (1 + r))
+        dail = _build_daily_equity(equity, prices)
+        stats_strong = compute_statistics(dail, num_contracts=1, cash=0.0)
+
+        assert stats_strong['passes_t_2'] == (abs(stats_strong['t_stat_newey_west']) > 2.0)
+        assert stats_strong['passes_t_3'] == (abs(stats_strong['t_stat_newey_west']) > 3.0)
+
+    def test_newey_west_lag_follows_andrews_rule(self) -> None:
+        """NW lag should follow L = floor(4 * (n/100)^(2/9))."""
+        n_equity = 2514
+        prices = [100.0] * n_equity
+        equity = [10_000.0 + i * 0.1 for i in range(n_equity)]
+        daily_equity = _build_daily_equity(equity, prices)
+
+        stats = compute_statistics(daily_equity, num_contracts=1, cash=0.0)
+
+        # n=2513 excess returns (one less than daily_equity length)
+        n_returns = n_equity - 1
+        expected_L = int(4 * (n_returns / 100) ** (2 / 9))
+        assert stats['nw_lag'] == expected_L
+
+    def test_raises_when_too_few_observations(self) -> None:
+        """Need at least 2 daily returns (i.e., 3 equity points) for variance."""
+        # Only 1 equity point → 0 returns → should raise
+        daily_equity = _build_daily_equity([10_000.0], [100.0])
+        with pytest.raises(ValueError, match="at least 2"):
+            compute_statistics(daily_equity, num_contracts=1, cash=0.0)
+
+    def test_includes_all_expected_keys(self) -> None:
+        """Return dict should include all metrics the caller needs."""
+        daily_equity = _build_daily_equity(
+            [10_000.0 + i for i in range(100)],
+            [100.0] * 100,
+        )
+        stats = compute_statistics(daily_equity, num_contracts=1, cash=0.0)
+
+        expected_keys = {
+            'n_days', 'years_of_data',
+            'ann_excess_return_pct', 'ann_excess_vol_pct', 'sharpe_excess',
+            't_stat_naive', 't_stat_newey_west', 'nw_lag',
+            'passes_t_2', 'passes_t_3',
+        }
+        assert set(stats.keys()) == expected_keys
+
+    def test_integrates_with_run_cc_overlay(self) -> None:
+        """compute_statistics should consume run_cc_overlay output directly."""
+        # 60 days of mild oscillation — generates real overlay activity
+        prices = np.array(
+            [100.0 + (0.5 if i % 2 == 0 else -0.5) for i in range(60)],
+            dtype=np.float64,
+        )
+        dates = _fake_dates(60)
+        params: dict[str, float] = {
+            'call_delta': 0.25, 'close_at_pct': 0.75, 'dte': 21,
+            'risk_free_rate': 0.045, 'capital': 100_000,
+        }
+        summary, _, daily_equity = run_cc_overlay(dates, prices, params)
+
+        stats = compute_statistics(
+            daily_equity,
+            num_contracts=summary['num_contracts'],
+            cash=summary['cash'],
+        )
+
+        # Basic sanity: all numeric outputs are finite
+        assert math.isfinite(stats['t_stat_naive'])
+        assert math.isfinite(stats['t_stat_newey_west'])
+        assert math.isfinite(stats['sharpe_excess'])
+        assert stats['n_days'] == len(daily_equity) - 1
