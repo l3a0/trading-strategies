@@ -31,9 +31,10 @@ jobs:
           cache: pip
 
       # Install runtime + dev dependencies from requirements.txt.
-      # numpy is needed by cc_backtest.py; pytest/pytest-cov drive the tests;
-      # yfinance is unused by tests but listed for the data downloader;
-      # ruff/pyright are used by the lint and type-check steps below.
+      # numpy is needed by cc_backtest.py; matplotlib by make_figures.py;
+      # pytest/pytest-cov drive the tests; yfinance is unused by tests but
+      # listed for the data downloader; ruff/pyright are used by the lint
+      # and type-check steps below.
       - name: Install dependencies
         run: pip install -r requirements.txt
 
@@ -42,12 +43,12 @@ jobs:
       - name: Lint
         run: ruff check .
 
-      # Static type checking with pyright. Checks all three Python source files.
+      # Static type checking with pyright. Checks all four Python source files.
       - name: Type check
-        run: pyright cc_backtest.py download_prices.py test_cc_backtest.py
+        run: pyright cc_backtest.py download_prices.py make_figures.py test_cc_backtest.py
 
-      # Unit tests with branch coverage. Runs cc_backtest.py's 54 tests
-      # against the in-memory price fixtures — no network access required.
+      # Unit tests with branch coverage. Runs the test suite against the
+      # in-memory price fixtures — no network access required.
       - name: Run tests
         run: pytest test_cc_backtest.py --cov=. --cov-branch -v
 
@@ -56,3 +57,26 @@ jobs:
       # might miss (e.g. CSV parsing, __main__ wiring, print formatting).
       - name: Backtest smoke test
         run: python cc_backtest.py
+
+      # Figure regeneration check: ensure the figure-building pipeline still
+      # works end-to-end (data parse + backtest + stats + matplotlib). We
+      # don't byte-compare against the committed PNGs because matplotlib's
+      # rendering can vary subtly across machine fonts and versions; instead
+      # we assert the script runs cleanly and produces four non-trivial PNGs.
+      # Anyone changing figure code or inputs should run `make_figures.py`
+      # locally and commit the updated outputs.
+      - name: Verify tutorial figures regenerate
+        run: |
+          python make_figures.py
+          for f in docs/figures/01_equity_curves.png \
+                   docs/figures/02_excess_histogram.png \
+                   docs/figures/03_bias_variance.png \
+                   docs/figures/04_t_stat_vs_years.png; do
+            if [ ! -s "$f" ]; then
+              echo "Missing or empty: $f"; exit 1
+            fi
+            size=$(stat -c%s "$f")
+            if [ "$size" -lt 10000 ]; then
+              echo "Suspiciously small (<10KB): $f at $size bytes"; exit 1
+            fi
+          done

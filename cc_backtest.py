@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import csv
+import itertools
 import math
 from typing import Any
 
 import numpy as np
+import pandas as pd
 from numpy.typing import NDArray
 
 # ====================
@@ -96,15 +98,21 @@ def find_strike_for_delta(
     best_diff = float('inf')
 
     if option_type == 'put':
+        # Puts: search below spot (80% to 102%) — puts are OTM when strike < spot.
         start = int(S * 0.80)
         end = int(S * 1.02)
-    else:  # call
+    else:
+        # Calls: search above spot (98% to 125%) — calls are OTM when strike > spot.
         start = int(S * 0.98)
         end = int(S * 1.25)
 
     for k in range(start, end + 1):
-        K = float(k)
+        K = float(k)  # Each k is already a whole dollar; cast for downstream math
         delta = bs_delta(S, K, T, r, sigma, option_type=option_type)
+
+        # Track which strike has delta closest to target. abs() handles both
+        # signs (put delta is negative, call delta positive); we minimize the
+        # absolute gap so the comparison works for either option type.
         diff = abs(delta - target_delta)
         if diff < best_diff:
             best_diff = diff
@@ -127,15 +135,45 @@ def calc_rolling_volatility(prices: NDArray[np.floating[Any]], window: int = 30)
     Returns:
         vols: array of annualized volatilities
     """
+    # Log returns: ln(price_t / price_{t-1})
+    # How: np.log(prices) logs every price, then np.diff subtracts
+    # adjacent elements. This works because ln(a) - ln(b) = ln(a/b),
+    # so diff(log(prices)) = ln(price_t / price_{t-1}).
+    # Why log returns: they're additive across days (can sum them for
+    # multi-day returns) and symmetric (+5% then -5% nets to zero).
+    # NOTE: order matters — log(diff(prices)) is NOT the same thing
+    # and will break on negative price changes.
     log_returns = np.diff(np.log(prices))
 
+    # Standard deviation over rolling window
     vols: list[float] = []
     for i in range(len(log_returns)):
         if i < window - 1:
+            # Not enough prior data points to fill the window yet (e.g., with a
+            # 30-day window, we need at least 30 returns before we can compute
+            # the first volatility). Append NaN to keep vols[] aligned index-
+            # for-index with log_returns[] so downstream lookups stay correct.
             vols.append(float('nan'))
         else:
+            # Slice the last `window` returns ending at i. Both +1s compensate
+            # for Python's exclusive right bound: i+1 ensures i is included,
+            # and i-window+1 shifts the start right by 1 so the slice contains
+            # exactly `window` items. E.g., window=30, i=35 →
+            # log_returns[6:36] = indices 6..35 = 30 values.
             window_returns = log_returns[i-window+1:i+1]
+
+            # Sample std dev (ddof=1 = Bessel's correction) because these
+            # returns are a sample from the stock's theoretical distribution,
+            # not the entire population. Dividing by N-1 avoids underestimating.
             std_dev = float(np.std(window_returns, ddof=1))
+
+            # Annualize: variance (σ²) is additive over independent periods,
+            # so annual variance = daily variance × 252:
+            #   σ²_annual = σ²_daily × 252
+            # Taking the square root of both sides to get std dev (volatility):
+            #   σ_annual = √(σ²_daily × 252) = σ_daily × √252
+            # This is why we multiply by √252, NOT 252 — std devs don't add
+            # linearly, they scale with the square root of time.
             annualized = std_dev * math.sqrt(252)
             vols.append(annualized)
 
@@ -150,14 +188,25 @@ def detect_regime(rolling_vol: float) -> str:
     else:
         return 'normal'
 
-def estimate_iv(rolling_vol: float, regime: str = 'normal') -> float:
+def estimate_iv(rolling_vol: float, regime: str | None = None) -> float:
     """
-    Adjust HV to IV estimate based on regime.
+    Apply a regime-based multiplier to convert HV → IV estimate.
 
-    High vol (>25%) → 1.1× (IV already elevated, won't expand much)
+    High vol (>25%) → 1.1× (IV already elevated; further expansion is limited)
     Normal (15-25%) → 1.3× (typical HV→IV relationship)
-    Low vol (<15%)  → 1.5× (IV is suppressed, expect mean reversion)
+    Low vol (<15%)  → 1.5× (IV is suppressed; expect mean reversion to higher values)
+
+    Args:
+        rolling_vol: historical volatility (annualized) for the latest window.
+        regime: optional pre-classified regime ('high', 'normal', or 'low').
+            If omitted, `detect_regime(rolling_vol)` is called internally so
+            callers only need to pass the vol.
+
+    Returns:
+        iv: estimated implied volatility.
     """
+    if regime is None:
+        regime = detect_regime(rolling_vol)
     if regime == 'high':
         multiplier = 1.1
     elif regime == 'normal':
@@ -252,9 +301,9 @@ def run_cc_overlay(
         if math.isnan(rolling_vol) or rolling_vol <= 0:
             continue
 
-        # IV estimate: regime-based multiplier (1.1× high, 1.3× normal, 1.5× low)
-        regime = detect_regime(rolling_vol)
-        iv_estimate = estimate_iv(rolling_vol, regime)
+        # IV estimate: regime-based multiplier (1.1× high, 1.3× normal, 1.5× low).
+        # estimate_iv() calls detect_regime() internally when no regime is passed.
+        iv_estimate = estimate_iv(rolling_vol)
 
         # If no position, consider opening
         if position is None:
@@ -579,7 +628,340 @@ def compute_statistics(
 
 
 # ====================
-# 5. Main
+# 5. Regime Analysis
+# ====================
+
+def classify_regime(
+    prices: NDArray[np.floating[Any]] | list[float],
+    window: int = 200,
+    threshold: float = 0.05,
+) -> str:
+    """
+    Classify the market regime at the *end* of `prices` based on where
+    the last price sits relative to its trailing-`window` simple moving
+    average:
+
+      - "bull"     if last price > SMA × (1 + threshold)
+      - "bear"     if last price < SMA × (1 − threshold)
+      - "sideways" if last price is within ±threshold of the SMA
+      - "unknown"  if there are fewer than `window` observations
+
+    Args:
+        prices: array of closing prices (chronological).
+        window: SMA lookback in trading days (default 200, roughly one
+            calendar year).
+        threshold: fractional band around the SMA that counts as
+            "sideways" (default 0.05 = ±5%).
+
+    Returns:
+        One of 'bull', 'bear', 'sideways', 'unknown'.
+    """
+    if len(prices) < window:
+        return 'unknown'
+    prices_arr = np.asarray(prices, dtype=float)
+    sma = float(prices_arr[-window:].mean())
+    recent = float(prices_arr[-1])
+    if recent > sma * (1.0 + threshold):
+        return 'bull'
+    if recent < sma * (1.0 - threshold):
+        return 'bear'
+    return 'sideways'
+
+
+def regime_analysis(
+    dates: list[str] | NDArray[Any],
+    prices: NDArray[np.floating[Any]] | list[float],
+    trades: list[dict[str, Any]],
+    window: int = 200,
+    threshold: float = 0.05,
+) -> dict[str, dict[str, float | int]]:
+    """
+    Aggregate the overlay's realized P&L by market regime.
+
+    For each day i, classifies the regime using `prices[:i]` only —
+    strictly past prices, no peeking at today's close. For each closed
+    trade, looks up the regime on the trade's close date and adds that
+    trade's P&L to the matching regime bucket. The first `window` days
+    are classified as "unknown" because the SMA needs `window`
+    observations to compute.
+
+    Args:
+        dates: chronological list of date labels matching `prices`.
+        prices: chronological array of closing prices.
+        trades: list of trade dicts from `run_cc_overlay`, each with
+            at least 'date' and 'pnl' keys. Only trades with non-zero
+            pnl contribute (i.e., close/expiration/close_itm events).
+        window: SMA lookback for regime classification (default 200).
+        threshold: ±-band around the SMA for "sideways" (default 0.05).
+
+    Returns:
+        Dict keyed by 'bull', 'bear', 'sideways', 'unknown' with:
+          - days: number of days classified as this regime
+          - total_pnl: sum of trade pnls that closed in this regime
+          - avg_pnl_per_day: total_pnl / days (0 if days == 0)
+    """
+    prices_arr = np.asarray(prices, dtype=float)
+    n = len(prices_arr)
+
+    # Classify the regime at each day using only data up to that day (no
+    # future peeking). regimes[i] = regime on day i, based on prices[:i].
+    #
+    # Examples:
+    #   i=0:   prices[:0]   = []            → "unknown" (no data)
+    #   i=50:  prices[:50]  = first 50 days  → "unknown" (need 200 for SMA200)
+    #   i=199: prices[:199] = first 199 days → "unknown" (still 1 short)
+    #   i=200: prices[:200] = first 200 days → "bull"/"bear"/"sideways"
+    #                                          (first real classification)
+    #   i=500: prices[:500] = first 500 days → uses last 200 of those to classify
+    #
+    # The first `window` entries (i = 0..window-1) will always be "unknown"
+    # since classify_regime returns "unknown" when it has fewer than `window`
+    # prices to compute the SMA.
+    regimes = [
+        classify_regime(prices_arr[:i], window, threshold) for i in range(n)
+    ]
+
+    day_counts: dict[str, int] = {'bull': 0, 'bear': 0, 'sideways': 0, 'unknown': 0}
+    for r in regimes:
+        day_counts[r] += 1
+
+    # Map each date to its index in the price series so we can look up the
+    # regime on a given trade's close date.
+    date_to_idx = {d: i for i, d in enumerate(dates)}
+    regime_pnl: dict[str, float] = {
+        'bull': 0.0, 'bear': 0.0, 'sideways': 0.0, 'unknown': 0.0,
+    }
+    # Bucket each closed trade's pnl into the regime active on its close date.
+    # Trades with pnl == 0 (open events with no realized P&L yet) are skipped.
+    # e.g., trade on a 'bull'-classified day with pnl=$120 →
+    #   regime_pnl['bull'] += 120
+    for trade in trades:
+        pnl = trade.get('pnl', 0)
+        if not pnl:
+            continue
+        idx = date_to_idx.get(trade['date'])
+        if idx is None:
+            continue
+        regime_pnl[regimes[idx]] += float(pnl)
+
+    # Dict comprehension: loop over each regime and compute summary stats.
+    # e.g., day_counts={'bull': 1690, ...}, regime_pnl={'bull': 17875.84, ...}
+    #   → {'bull': {'days': 1690, 'total_pnl': 17875.84, 'avg_pnl_per_day': 10.58},
+    #      ...}
+    # avg_pnl_per_day guards against division-by-zero for any empty regime.
+    return {
+        regime: {
+            'days': day_counts[regime],
+            'total_pnl': round(regime_pnl[regime], 2),
+            'avg_pnl_per_day': round(
+                regime_pnl[regime] / day_counts[regime]
+                if day_counts[regime] > 0
+                else 0.0,
+                2,
+            ),
+        }
+        for regime in ('bull', 'bear', 'sideways', 'unknown')
+    }
+
+
+# ====================
+# 6. Walk-Forward Optimization
+# ====================
+
+def _param_combinations(grid: dict[str, list[float]]) -> list[dict[str, float]]:
+    """Cartesian product of a parameter grid.
+
+    Input:  {'call_delta': [0.15, 0.25], 'dte': [21, 30]}
+    Output: [{'call_delta': 0.15, 'dte': 21},
+             {'call_delta': 0.15, 'dte': 30},
+             {'call_delta': 0.25, 'dte': 21},
+             {'call_delta': 0.25, 'dte': 30}]
+    """
+    keys = list(grid.keys())
+    values = [grid[k] for k in keys]
+    return [dict(zip(keys, combo)) for combo in itertools.product(*values)]
+
+
+def walk_forward_optimization(
+    dates: list[str],
+    prices: NDArray[np.floating[Any]] | list[float],
+    param_grid: dict[str, list[float]],
+    fixed_params: dict[str, float] | None = None,
+    train_years: int = 2,
+    test_months: int = 6,
+    roll_months: int = 6,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """
+    Walk-forward optimization for the covered-call overlay strategy.
+
+    Args:
+        dates: chronological list of 'YYYY-MM-DD' date strings.
+        prices: chronological array of closing prices matching `dates`.
+        param_grid: dict of parameter combinations to test, e.g.
+            `{'call_delta': [0.15, 0.20, 0.25], 'dte': [21, 30, 45],
+              'close_at_pct': [0.50, 0.75, 1.0]}`.
+        fixed_params: parameters held constant across every combo
+            (default: `{'risk_free_rate': 0.045, 'capital': 100_000}`).
+        train_years: in-sample training window length in years
+            (default 2).
+        test_months: out-of-sample test window length in months
+            (default 6).
+        roll_months: how far to advance between iterations in months
+            (default 6, i.e. non-overlapping test windows).
+
+    Returns:
+        oos_equity: stitched out-of-sample equity curve as a list of
+            `{'date', 'equity', 'price'}` dicts, one per test-window
+            day across all iterations.
+        period_records: list of dicts describing each iteration —
+            train/test bounds (ISO date strings), the chosen
+            `best_params`, and the in-sample `train_sharpe` that won.
+    """
+    if fixed_params is None:
+        fixed_params = {'risk_free_rate': 0.045, 'capital': 100_000}
+
+    # Convert to pandas for easier date slicing.
+    df = pd.DataFrame({'date': dates, 'price': np.asarray(prices, dtype=float)})
+    df['date'] = pd.to_datetime(df['date'])
+
+    all_results: list[dict[str, Any]] = []
+    best_params_per_period: list[dict[str, Any]] = []
+
+    # First date in dataset (e.g., Apr 2014)
+    start_date = df['date'].min()
+    # Last date in dataset (e.g., Apr 2026)
+    end_date = df['date'].max()
+    # The "knife" between train and test.
+    # We start train_years in so there's enough history for the first training window.
+    # Example: start_date = Apr 2014, train_years = 2 → current_date = Apr 2016
+    current_date = start_date + pd.DateOffset(years=train_years)
+
+    # Keep rolling as long as there's enough data left for a complete test window.
+    # If the test window would run past end_date, stop — no partial test periods.
+    while current_date + pd.DateOffset(months=test_months) <= end_date:
+
+        # current_date carves out two non-overlapping windows each iteration:
+        #   train_start ←— train_years —→ train_end/test_start ←— test_months —→ test_end
+        #                                       ↑ current_date
+        #
+        # Iter 1: [Apr 2014 – Apr 2016] train → [Apr 2016 – Oct 2016] test
+        # Iter 2: [Oct 2014 – Oct 2016] train → [Oct 2016 – Apr 2017] test
+        # Iter 3: [Apr 2015 – Apr 2017] train → [Apr 2017 – Oct 2017] test
+
+        # Look BACKWARD
+        train_start = current_date - pd.DateOffset(years=train_years)
+        train_end = current_date
+        # Look FORWARD
+        test_start = current_date
+        test_end = current_date + pd.DateOffset(months=test_months)
+        # train_end == test_start: windows touch but never overlap.
+        # This is the key guarantee — we never test on data we trained on.
+
+        # Slice the dataframe into train/test sets using boolean indexing:
+        #   df['date'] >= train_start  → True/False for every row (is this date on or after start?)
+        #   df['date'] < train_end     → True/False for every row (is this date before end?)
+        #   &                          → combine: only rows where BOTH are True
+        #   df[...]                    → keep only those True rows
+        #
+        # We use >= (inclusive) on the left and < (exclusive) on the right so that
+        # the boundary date (current_date) belongs to the TEST set, not both.
+        # Example: if current_date = Apr 2016, then Apr 2016 data goes to test_df,
+        #          not train_df. No row appears in both sets.
+        train_df = df[(df['date'] >= train_start) & (df['date'] < train_end)]
+        test_df = df[(df['date'] >= test_start) & (df['date'] < test_end)]
+
+        # Skip windows that don't have enough data to backtest meaningfully
+        # (e.g., a calendar window that lands during a market closure).
+        if len(train_df) < 30 or len(test_df) < 5:
+            current_date += pd.DateOffset(months=roll_months)
+            continue
+
+        # === Step 1: OPTIMIZE on training data ("study for the test") ===
+        best_sharpe = -float('inf')  # Initialize to negative infinity so any real Sharpe beats it
+        best_params: dict[str, float] | None = None
+
+        for combo in _param_combinations(param_grid):
+            # Merge in the fixed params that don't change across combos
+            # (risk_free_rate, capital). IV multiplier is regime-based
+            # (detect_regime + estimate_iv), so we don't pass iv_multiplier.
+            params = {**fixed_params, **combo}
+
+            try:
+                summary, trades, daily_eq = run_cc_overlay(  # Run backtest with these params
+                    list(train_df['date'].dt.strftime('%Y-%m-%d')),
+                    np.asarray(train_df['price'].values, dtype=float),
+                    params,
+                )
+            except Exception:
+                continue
+
+            returns: list[float] = []
+            for i in range(1, len(daily_eq)):
+                daily_return = (daily_eq[i]['equity'] - daily_eq[i - 1]['equity']) / daily_eq[i - 1]['equity']
+                returns.append(daily_return)
+
+            if returns:
+                # 1. Average daily return: sum all daily returns, divide by count
+                avg_return = sum(returns) / len(returns)
+
+                # 2. Standard deviation (how bumpy the ride is), built inside-out:
+                #    (r - avg_return)          → each day's deviation from the mean
+                #    (r - avg_return) ** 2     → square it (so negatives don't cancel positives)
+                #    sum(...)                  → total squared deviation
+                #    / max(1, len(returns)-1)  → divide by N-1 (Bessel's correction: less biased
+                #                                estimate from a sample vs. full population;
+                #                                max(1,...) is a safety net against dividing by 0)
+                #    math.sqrt(...)            → undo the squaring, back to return-sized units
+                std_dev = math.sqrt(
+                    sum((r - avg_return) ** 2 for r in returns) / max(1, len(returns) - 1)
+                )
+
+                # 3. Sharpe ratio: reward per unit of risk, annualized
+                #    avg_return / std_dev      → daily Sharpe (return per unit of bumpiness)
+                #    * math.sqrt(252)          → annualize it. Returns scale with time, but
+                #                                volatility scales with sqrt(time), so
+                #                                daily Sharpe × √252 = annual Sharpe.
+                #    Sharpe guide: <0 losing money, 0.5–1.0 decent, 1.0–2.0 strong, >2.0 suspicious
+                sharpe = (avg_return / std_dev) * math.sqrt(252) if std_dev > 0 else 0
+            else:
+                sharpe = -float('inf')  # No returns data → treat as worst possible
+
+            if sharpe > best_sharpe:  # Keep the best-performing parameter set
+                best_sharpe = sharpe
+                best_params = combo
+
+        if best_params is None:
+            current_date += pd.DateOffset(months=roll_months)
+            continue
+
+        best_params_per_period.append({  # Record what the optimizer chose for this period
+            'train_start': train_start.date().isoformat(),
+            'train_end': train_end.date().isoformat(),
+            'test_start': test_start.date().isoformat(),
+            'test_end': test_end.date().isoformat(),
+            'best_params': best_params,
+            'train_sharpe': round(best_sharpe, 3),
+        })
+
+        # === Step 2: TEST on out-of-sample data (rules are LOCKED — no re-tuning) ===
+        test_params = {**fixed_params, **best_params}  # Same params from training — this is the honest score
+        summary, trades, daily_eq = run_cc_overlay(
+            list(test_df['date'].dt.strftime('%Y-%m-%d')),
+            np.asarray(test_df['price'].values, dtype=float),
+            test_params,
+        )
+
+        all_results.extend(daily_eq)  # Collect OOS equity curves to stitch together later
+
+        # === Step 3: ROLL FORWARD ===
+        current_date += pd.DateOffset(months=roll_months)  # Slide both windows forward
+        # Next iteration trains on newer data and tests on the next unseen chunk
+
+    return all_results, best_params_per_period
+
+
+# ====================
+# 7. Main
 # ====================
 
 if __name__ == '__main__':

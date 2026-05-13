@@ -1,6 +1,9 @@
 numpy
+pandas
+matplotlib
 yfinance
 pytest
 pytest-cov
 ruff
 pyright
+pandas-stubs

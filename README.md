@@ -62,7 +62,7 @@ For an explanation of each output line — including what "assignment loss" mean
 ## Tests
 
 ```bash
-pytest test_cc_backtest.py          # all 71 tests
+pytest test_cc_backtest.py          # run the full test suite
 pytest test_cc_backtest.py -v       # verbose
 pytest --cov=. --cov-branch         # with coverage
 ```
@@ -76,8 +76,10 @@ CI runs `ruff`, `pyright`, the test suite, and a backtest smoke test on every PR
 | [cc_backtest.py](cc_backtest.py) | Backtest engine: Black-Scholes pricing, rolling vol, regime-based IV, day-by-day overlay state machine, Newey-West t-stat reporting on excess returns |
 | [test_cc_backtest.py](test_cc_backtest.py) | Unit and scenario tests covering pricing, the overlay state machine, and the statistics helper |
 | [download_prices.py](download_prices.py) | yfinance data downloader |
+| [make_figures.py](make_figures.py) | Regenerates the four educational figures embedded in the tutorial into `docs/figures/` |
 | [msft_10yr_prices.csv](msft_10yr_prices.csv) | Sample MSFT price data, 2016-04 to 2026-04 |
 | [tutorial_covered_call_backtest.md](tutorial_covered_call_backtest.md) | Long-form tutorial — theory, math, code walkthrough, and statistical-significance testing |
+| [docs/figures/](docs/figures/) | Generated PNGs embedded in the tutorial; regenerable from `make_figures.py` |
 | [requirements.txt](requirements.txt) | Runtime + dev dependencies |
 
 ## Where to look for more details
