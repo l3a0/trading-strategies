@@ -846,6 +846,229 @@ class TestComputeStatistics:
 
 
 # ====================
+# Risk-managed (delta-hedged) covered call — Israelov & Nielsen (2015)
+# ====================
+
+
+class TestRiskManagedCoveredCall:
+    """The `delta_hedge=True` mode adds extra long stock each day to keep the portfolio's net
+    delta pinned at the buy-and-hold equivalent, stripping out the equity-timing exposure.
+    Conceptually it should:
+      - leave the trade flow unchanged (same calls sold, same premium collected),
+      - shrink excess-return variance materially (the variance source is exactly what we
+        hedged out), and
+      - reduce to the naive backtest when the flag is False or absent.
+    """
+
+    @pytest.fixture()
+    def rising_market(self) -> tuple[list[str], np.ndarray[Any, np.dtype[np.float64]]]:  # pyright: ignore[reportUnknownParameterType]
+        """A steadily rising market over 500 days (mirrors TestRunCcOverlay's fixture)."""
+        dates = _fake_dates(500)
+        np.random.seed(1)
+        daily_returns = np.random.normal(0.001, 0.01, 499)
+        prices = np.zeros(500)
+        prices[0] = 50.0
+        for i in range(1, 500):
+            prices[i] = prices[i - 1] * (1 + daily_returns[i - 1])
+        return dates, prices
+
+    @pytest.fixture()
+    def base_params(self) -> dict[str, float]:
+        return {
+            'call_delta': 0.25,
+            'close_at_pct': 0.75,
+            'dte': 21,
+            'risk_free_rate': 0.045,
+            'capital': 100_000,
+        }
+
+    def test_default_is_naive(
+        self,
+        rising_market: tuple[list[str], np.ndarray[Any, np.dtype[np.float64]]],  # pyright: ignore[reportUnknownParameterType]
+        base_params: dict[str, float],
+    ) -> None:
+        """Omitting the flag must produce the exact naive trajectory — pure backwards compat."""
+        dates, prices = rising_market
+        no_flag, _, eq_no_flag = run_cc_overlay(dates, prices, base_params)
+        explicit_off, _, eq_off = run_cc_overlay(dates, prices, {**base_params, 'delta_hedge': 0.0})
+        assert no_flag['final_equity'] == pytest.approx(explicit_off['final_equity'], abs=0.01)
+        assert no_flag['total_premium_collected'] == pytest.approx(
+            explicit_off['total_premium_collected'], abs=0.01
+        )
+        # And the daily equity curves must match day for day.
+        assert (eq_no_flag['equity'].to_numpy() == eq_off['equity'].to_numpy()).all()
+
+    def test_trade_flow_identical_to_naive(
+        self,
+        rising_market: tuple[list[str], np.ndarray[Any, np.dtype[np.float64]]],  # pyright: ignore[reportUnknownParameterType]
+        base_params: dict[str, float],
+    ) -> None:
+        """Hedging shares does NOT change which calls get sold or when they close — only the
+        equity curve. Same calls sold, same gross premium, same closes/expirations."""
+        dates, prices = rising_market
+        naive_summary, naive_trades, _ = run_cc_overlay(dates, prices, base_params)
+        hedge_summary, hedge_trades, _ = run_cc_overlay(
+            dates, prices, {**base_params, 'delta_hedge': 1.0}
+        )
+
+        assert hedge_summary['num_calls_sold'] == naive_summary['num_calls_sold']
+        assert hedge_summary['total_premium_collected'] == pytest.approx(
+            naive_summary['total_premium_collected'], abs=0.01
+        )
+        # Trade sequence (actions, strikes, dates) must match — the call leg is unchanged.
+        naive_actions = [(t['date'], t['action'], t.get('strike')) for t in naive_trades]
+        hedge_actions = [(t['date'], t['action'], t.get('strike')) for t in hedge_trades]
+        assert naive_actions == hedge_actions
+
+    def test_summary_cash_is_initial_not_working(
+        self,
+        rising_market: tuple[list[str], np.ndarray[Any, np.dtype[np.float64]]],  # pyright: ignore[reportUnknownParameterType]
+        base_params: dict[str, float],
+    ) -> None:
+        """summary['cash'] must report the *initial* idle cash even under delta_hedge=True so
+        compute_statistics' buy-and-hold reconstruction (shares × prices + cash) stays correct."""
+        dates, prices = rising_market
+        naive_summary, _, _ = run_cc_overlay(dates, prices, base_params)
+        hedge_summary, _, _ = run_cc_overlay(dates, prices, {**base_params, 'delta_hedge': 1.0})
+        # Both should report the same initial leftover cash.
+        assert hedge_summary['cash'] == pytest.approx(naive_summary['cash'], abs=0.01)
+
+    def test_excess_variance_shrinks_under_hedge(
+        self,
+        rising_market: tuple[list[str], np.ndarray[Any, np.dtype[np.float64]]],  # pyright: ignore[reportUnknownParameterType]
+        base_params: dict[str, float],
+    ) -> None:
+        """The whole point: hedging out the call's delta should cut excess-return variance.
+        If this test fails the hedge isn't actually pinning net delta."""
+        dates, prices = rising_market
+        naive_summary, _, naive_eq = run_cc_overlay(dates, prices, base_params)
+        hedge_summary, _, hedge_eq = run_cc_overlay(
+            dates, prices, {**base_params, 'delta_hedge': 1.0}
+        )
+        naive_stats = compute_statistics(
+            naive_eq, num_contracts=naive_summary['num_contracts'], cash=naive_summary['cash']
+        )
+        hedge_stats = compute_statistics(
+            hedge_eq, num_contracts=hedge_summary['num_contracts'], cash=hedge_summary['cash']
+        )
+        # Excess vol should drop substantially — the variance source we hedged away is large
+        # relative to whatever variance remains (theta plus residual gamma).
+        assert hedge_stats['ann_excess_vol_pct'] < 0.75 * naive_stats['ann_excess_vol_pct']
+
+    def test_hedge_curve_differs_from_naive(
+        self,
+        rising_market: tuple[list[str], np.ndarray[Any, np.dtype[np.float64]]],  # pyright: ignore[reportUnknownParameterType]
+        base_params: dict[str, float],
+    ) -> None:
+        """A whole-market backtest with delta_hedge=True must produce a different equity curve
+        than the naive run — proves the hedge actually moved money."""
+        dates, prices = rising_market
+        _, _, naive_eq = run_cc_overlay(dates, prices, base_params)
+        _, _, hedge_eq = run_cc_overlay(dates, prices, {**base_params, 'delta_hedge': 1.0})
+
+        # Curves should differ on most days. Tolerate a few coincidences (e.g. days with no
+        # open position) but require substantial divergence overall.
+        diffs = np.abs(naive_eq['equity'].to_numpy() - hedge_eq['equity'].to_numpy())
+        assert (diffs > 0.01).sum() > 0.5 * len(diffs)
+
+
+class TestMsftRiskManagedRegression:
+    """Pin the headline numbers the tutorial quotes for the risk-managed MSFT backtest.
+
+    Locks the side-by-side comparison that appears in Part 5's risk-managed subsection so any
+    engine change that would silently shift those numbers surfaces in CI.
+    """
+
+    @pytest.fixture(scope='class')
+    def data(self) -> tuple[list[str], np.ndarray[Any, np.dtype[np.float64]]]:
+        return _load_msft_csv()
+
+    @pytest.fixture(scope='class')
+    def result(
+        self, data: tuple[list[str], np.ndarray[Any, np.dtype[np.float64]]]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        dates, prices = data
+        hedge_params: dict[str, float] = {**_TUTORIAL_PARAMS, 'delta_hedge': 1.0}
+        summary, _, daily_equity = run_cc_overlay(dates, prices, hedge_params)
+        stats = compute_statistics(
+            daily_equity, num_contracts=summary['num_contracts'], cash=summary['cash']
+        )
+        return summary, stats
+
+    def test_capital_sizing_matches_naive(
+        self, result: tuple[dict[str, Any], dict[str, Any]]
+    ) -> None:
+        """Base position is unchanged by hedging: same $100K → 20 contracts, same idle cash.
+
+        The hedge adds *extra* shares funded by the working cash account; the buy-and-hold
+        baseline (base shares + initial cash) is identical to the naive run, which is why
+        summary['cash'] still reports the initial $4,426.45 leftover.
+        """
+        summary, _ = result
+        assert summary['num_contracts'] == 20
+        assert summary['initial_stock_cost'] == pytest.approx(95_573.55, abs=0.5)
+        assert summary['cash'] == pytest.approx(4_426.45, abs=0.5)
+        assert summary['buy_hold_final'] == pytest.approx(746_166.44, abs=1.0)
+        assert summary['buy_hold_return_pct'] == pytest.approx(646.17, abs=0.05)
+
+    def test_returns_breakdown(self, result: tuple[dict[str, Any], dict[str, Any]]) -> None:
+        """Hedged dollar uplift: net overlay $304K (vs naive $268K) → overlay $1.050M (+950%).
+
+        Same buy-and-hold $746K base, but stripping the equity-timing wiggle lifts net
+        overlay P&L from $268,424.87 (naive) to $303,717.73 and the overlay's total return
+        from +914.59% to +949.88%.
+        """
+        summary, _ = result
+        assert summary['net_overlay_pnl'] == pytest.approx(303_717.73, abs=2.0)
+        assert summary['excess_return_pct'] == pytest.approx(303.72, abs=0.05)
+        assert summary['final_equity'] == pytest.approx(1_049_884.17, abs=2.0)
+        assert summary['total_return_pct'] == pytest.approx(949.88, abs=0.05)
+
+    def test_overlay_pnl_breakdown(
+        self, result: tuple[dict[str, Any], dict[str, Any]]
+    ) -> None:
+        """Gross premium is unchanged ($998K) but net costs fall to ~$695K (naive ~$730K).
+
+        Same calls sold means identical gross premium; the hedge captures the call's delta
+        so less of that premium is paid back through the equity-timing exposure, lifting
+        premium retention from 26.9% (naive) to 30.4%.
+        """
+        summary, _ = result
+        assert summary['total_premium_collected'] == pytest.approx(998_518.91, abs=5.0)
+        assert summary['overlay_costs'] == pytest.approx(694_801.18, abs=5.0)
+        assert summary['premium_retention_pct'] == pytest.approx(30.4, abs=0.1)
+
+    def test_activity(self, result: tuple[dict[str, Any], dict[str, Any]]) -> None:
+        """~81% win rate (unchanged — same trade outcomes), ~30% max drawdown.
+
+        Max drawdown is *higher* than the naive 22.86%: the hedge holds extra long stock
+        funded by a negative cash balance, so the levered position drops harder in
+        selloffs even though excess-return *vol* is lower (drawdown is a path statistic on
+        total equity, not a dispersion measure on excess returns).
+        """
+        summary, _ = result
+        assert summary['num_calls_sold'] == 181
+        assert summary['win_rate'] == pytest.approx(81.1, abs=0.1)
+        assert summary['max_drawdown_pct'] == pytest.approx(30.25, abs=0.05)
+
+    def test_significance_uplift(self, result: tuple[dict[str, Any], dict[str, Any]]) -> None:
+        """Risk-managed: Sharpe 0.462, NW t-stat 1.63 vs. naive's 0.126 / 0.46.
+
+        Removing the equity-timing wiggle ~halves excess vol (9.90% → 5.39%) and ~doubles
+        annualized excess return (+1.249% → +2.492%), pushing the t-stat from 0.46 → 1.63 —
+        roughly 3.5× — without changing which calls were sold. Still below the t=2 bar
+        because single-stock VRP on MSFT is structurally weak (see tutorial Part 5).
+        """
+        _, stats = result
+        assert stats['ann_excess_return_pct'] == pytest.approx(2.492, abs=0.005)
+        assert stats['ann_excess_vol_pct'] == pytest.approx(5.39, abs=0.02)
+        assert stats['sharpe_excess'] == pytest.approx(0.462, abs=0.005)
+        assert stats['t_stat_newey_west'] == pytest.approx(1.63, abs=0.02)
+        assert stats['passes_t_2'] is False
+        assert stats['passes_t_3'] is False
+
+
+# ====================
 # Regression: bundled MSFT 10-year backtest
 # ====================
 

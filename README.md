@@ -90,7 +90,7 @@ CI runs `ruff`, `pyright`, the test suite, and a backtest smoke test on every PR
 
 ## Strategy parameters
 
-Edit the `params` dict at the bottom of [cc_backtest.py](cc_backtest.py#L1058):
+Edit the `params` dict at the bottom of [cc_backtest.py](cc_backtest.py#L1118):
 
 | Param | Default | Meaning |
 | --- | --- | --- |

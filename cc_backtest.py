@@ -217,6 +217,15 @@ def run_cc_overlay(
             - capital: total dollars committed to the portfolio. Sized into
               whole 100-share contracts at initial_price; any leftover sits
               as uninvested cash (0% yield). Default: cost of 1 contract.
+            - delta_hedge: when True, run the Israelov-Nielsen risk-managed
+              covered call. Each day, hold extra shares equal to the short
+              call's current delta × base shares so the portfolio's net
+              delta stays pinned at the buy-and-hold equivalent. Strips out
+              the equity-timing exposure that adds variance without adding
+              return. Default: False (naive covered call). Hedge purchases
+              draw from `cash` (which may go negative — a zero-interest
+              financing simplification; in practice you would post margin).
+              No transaction costs are modeled on hedge trades.
 
     IV is *not* a tunable parameter. It is computed internally each day
     from rolling 30-day historical volatility, then scaled by a
@@ -237,6 +246,7 @@ def run_cc_overlay(
     close_at_pct = params.get('close_at_pct', 0.75)
     dte = params.get('dte', 21)
     r = params.get('risk_free_rate', 0.045)
+    delta_hedge = bool(params.get('delta_hedge', False))
 
     initial_price = float(prices[0])
     contract_cost = initial_price * 100  # cost of one 100-share contract
@@ -249,9 +259,20 @@ def run_cc_overlay(
             f"Capital ${capital:,.2f} insufficient for 1 contract "
             f"at ${initial_price:.2f}/share (need ${contract_cost:,.2f})"
         )
-    shares = 100 * num_contracts                   # total shares held
+    shares = 100 * num_contracts                   # base shares held (covers the short calls)
     initial_stock_cost = shares * initial_price    # actual capital deployed in stock
-    cash = capital - initial_stock_cost            # leftover, 0% yield
+    initial_cash = capital - initial_stock_cost    # leftover at t=0, 0% yield. Pinned for the
+                                                   # buy-and-hold benchmark; compute_statistics
+                                                   # reconstructs BH equity from
+                                                   # shares × prices + initial_cash.
+    current_cash = initial_cash                    # working cash account; drained/refilled by
+                                                   # delta-hedge share trades when delta_hedge=True.
+
+    # Risk-managed CC state. hedge_shares is the extra long-stock position held to offset the
+    # short call's negative delta. When delta_hedge=False, both stay at 0 and the loop is the
+    # naive covered call. Per Israelov & Nielsen (2015), this strips out the equity-timing
+    # exposure that adds variance without adding return.
+    hedge_shares = 0
 
     num_days = len(dates)
     trades: list[dict[str, Any]] = []
@@ -440,16 +461,47 @@ def run_cc_overlay(
                             'realized_pnl': realized_pnl,
                         })
 
-        # Track daily equity: stock value + idle cash + cumulative overlay P&L.
-        # This is the total portfolio value today (mark-to-market on shares,
-        # plus the leftover cash, plus all net premium income realized so far).
+        # === Risk-managed (delta-hedged) rebalance ===
+        # When delta_hedge=True, hold extra long-stock equal to the call's current delta times
+        # base shares so net portfolio delta stays pinned at `shares` (the buy-and-hold target).
+        # This is the Israelov-Nielsen fix: strip out the equity-timing exposure that adds
+        # variance without contributing return. When delta_hedge=False, the target stays at 0
+        # and nothing trades — the loop reduces to the naive covered call.
+        if delta_hedge and position is not None:
+            days_left_h = dte - (day_idx - position['entry_idx'])
+            if days_left_h > 0:
+                T_remaining_h = days_left_h / 252
+                call_delta_today = bs_delta(
+                    price, position['strike'], T_remaining_h, r, iv_estimate, option_type='call'
+                )
+                target_hedge_shares = int(round(call_delta_today * shares))
+            else:
+                # Position settled this iteration (expiration branch zeroed `position` only on
+                # the close path — but if we got here, `position is not None`, so days_left_h
+                # > 0 must hold). Defensive: fall back to no hedge.
+                target_hedge_shares = 0
+        else:
+            target_hedge_shares = 0
+
+        hedge_trade = target_hedge_shares - hedge_shares
+        if hedge_trade != 0:
+            # Buy (trade > 0) or sell (trade < 0) at the current market price. Cash absorbs the
+            # cost; cash may go negative (zero-interest financing simplification, no slippage
+            # or commission modeled on hedge trades — share legs are highly liquid).
+            current_cash -= hedge_trade * price
+            hedge_shares = target_hedge_shares
+
+        # Track daily equity: total stock value + working cash + cumulative overlay P&L.
+        # total_shares includes hedge_shares when delta_hedge=True; otherwise it's just `shares`.
         # Returns are measured against `capital` (the total committed dollars).
-        stock_value = price * shares
-        equity = stock_value + cash + realized_pnl
+        total_shares = shares + hedge_shares
+        stock_value = price * total_shares
+        equity = stock_value + current_cash + realized_pnl
         if position is not None:
             days_left = dte - (day_idx - position['entry_idx'])
             T_remaining = max(days_left / 252, 0)
             call_value = bs_price(price, position['strike'], T_remaining, r, iv_estimate, option_type='call')
+            # The short call covers `shares` base shares (one contract per 100 base shares).
             equity += (position['premium_collected'] - call_value) * shares
         daily_rows.append({'date': date, 'equity': round(equity, 2), 'price': price})
 
@@ -471,10 +523,12 @@ def run_cc_overlay(
     total_return = (final_equity - capital) / capital * 100
 
     # Buy-and-hold benchmark: hold the same `shares` for the whole period
-    # without selling calls. Idle cash sits at 0% in both scenarios so it
-    # cancels in the excess-return comparison.
+    # without selling calls (and without any delta hedge). Initial idle cash
+    # sits at 0% in both scenarios so it cancels in the excess-return
+    # comparison. We use `initial_cash` (not `current_cash`) so the benchmark
+    # is unaffected by hedge-trade cash flows under delta_hedge=True.
     final_price = float(prices[-1])
-    buy_hold_final = final_price * shares + cash
+    buy_hold_final = final_price * shares + initial_cash
     buy_hold_return = (buy_hold_final - capital) / capital * 100
     excess_return = total_return - buy_hold_return
 
@@ -515,7 +569,11 @@ def run_cc_overlay(
         'capital': round(capital, 2),
         'num_contracts': num_contracts,
         'initial_stock_cost': round(initial_stock_cost, 2),
-        'cash': round(cash, 2),
+        # Initial leftover cash, NOT the working balance — compute_statistics rebuilds the
+        # buy-and-hold curve from `shares × prices + cash`, which only makes sense with the
+        # constant initial cash. Under delta_hedge=True the working cash drifts as hedge
+        # trades execute; that drift shows up in `final_equity` via the daily equity series.
+        'cash': round(initial_cash, 2),
         'final_equity': round(final_equity, 2),
         'total_return_pct': round(total_return, 2),
         'buy_hold_final': round(buy_hold_final, 2),
@@ -1103,3 +1161,27 @@ if __name__ == '__main__':
     print(f"    t-stat (Newey-West, L={stats['nw_lag']:<2}):   {stats['t_stat_newey_west']:>+12.2f}    (correct: accounts for position autocorrelation)")
     print(f"    Clears t=2 bar?              {str(stats['passes_t_2']):>12}    (conventional significance)")
     print(f"    Clears t=3 bar (HLZ 2016)?   {str(stats['passes_t_3']):>12}    (multiple-testing adjusted)")
+    print()
+
+    # Risk-managed (delta-hedged) variant: Israelov & Nielsen (2015). Same params, but each
+    # day we hold extra long-stock equal to the call's current delta × base shares, pinning
+    # net portfolio delta at the buy-and-hold equivalent. This strips out the equity-timing
+    # exposure that adds variance without contributing return — yielding a cleaner test of
+    # whether the volatility risk premium itself is showing up on this underlying.
+    hedge_params: dict[str, float] = {**params, 'delta_hedge': 1.0}
+    hedge_summary, _, hedge_daily_equity = run_cc_overlay(date_list, prices_arr, hedge_params)
+    hedge_stats = compute_statistics(
+        hedge_daily_equity,
+        num_contracts=hedge_summary['num_contracts'],
+        cash=hedge_summary['cash'],
+    )
+
+    print("Risk-Managed (Delta-Hedged) vs. Naive Covered Call  —  Israelov & Nielsen (2015)")
+    print(f"    {'Metric':<32}{'Naive':>15}{'Risk-Managed':>15}")
+    print(f"    {'-' * 32}{'-' * 15}{'-' * 15}")
+    print(f"    {'Excess Return / yr':<32}{stats['ann_excess_return_pct']:>+14.3f}%{hedge_stats['ann_excess_return_pct']:>+14.3f}%")
+    print(f"    {'Excess Vol / yr':<32}{stats['ann_excess_vol_pct']:>14.2f}%{hedge_stats['ann_excess_vol_pct']:>14.2f}%")
+    print(f"    {'Sharpe of Excess':<32}{stats['sharpe_excess']:>+15.3f}{hedge_stats['sharpe_excess']:>+15.3f}")
+    print(f"    {'t-stat (Newey-West)':<32}{stats['t_stat_newey_west']:>+15.2f}{hedge_stats['t_stat_newey_west']:>+15.2f}")
+    print(f"    {'Clears t=2 bar?':<32}{str(stats['passes_t_2']):>15}{str(hedge_stats['passes_t_2']):>15}")
+    print(f"    {'Clears t=3 bar?':<32}{str(stats['passes_t_3']):>15}{str(hedge_stats['passes_t_3']):>15}")

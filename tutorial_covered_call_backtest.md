@@ -838,7 +838,7 @@ def param_combinations(grid):
 
 ### How to Stitch Out-of-Sample Results into a Single Equity Curve
 
-The implementation is [`cc_backtest.py::walk_forward_optimization`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L827). Signature:
+The implementation is [`cc_backtest.py::walk_forward_optimization`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L887). Signature:
 
 ```python
 def walk_forward_optimization(
@@ -861,7 +861,7 @@ What it does per iteration:
 3. Run those locked params on the out-of-sample test window. Append the resulting daily equity to the stitched curve.
 4. Advance `current_date` by `roll_months` and repeat until the next test window would run past `end_date`.
 
-The production implementation in [`cc_backtest.py::walk_forward_optimization`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L827) is heavily commented — it carries the teaching content (window arithmetic diagram, boolean-indexing explainer, Sharpe-built-inside-out walkthrough, Bessel's correction, √252 annualization derivation, "rules are LOCKED — no re-tuning" emphasis) right next to the code that does the work. The fixing test [`test_cc_backtest.py::TestMsftTenYearRegression::test_walk_forward_optimization`](https://github.com/l3a0/covered-call-backtesting/blob/main/test_cc_backtest.py#L1214) pins the 15 walk-forward periods, the most-chosen parameters, and the cumulative OOS compound return on the bundled MSFT data.
+The production implementation in [`cc_backtest.py::walk_forward_optimization`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L887) is heavily commented — it carries the teaching content (window arithmetic diagram, boolean-indexing explainer, Sharpe-built-inside-out walkthrough, Bessel's correction, √252 annualization derivation, "rules are LOCKED — no re-tuning" emphasis) right next to the code that does the work. The fixing test [`test_cc_backtest.py::TestMsftTenYearRegression::test_walk_forward_optimization`](https://github.com/l3a0/covered-call-backtesting/blob/main/test_cc_backtest.py#L1387) pins the 15 walk-forward periods, the most-chosen parameters, and the cumulative OOS compound return on the bundled MSFT data.
 
 ### What the Optimizer Chose
 
@@ -956,7 +956,7 @@ If no → the strategy exploits a specific *sequence* of returns (could be luck)
 
 **Why this works:** Real prices have a specific order — trends, mean-reversion, volatility clusters. Shuffling destroys that order while keeping the exact same set of daily returns (same mean, same volatility, same distribution). So if your strategy profits on both real and shuffled paths, it's capturing **statistical properties** of the returns (e.g., collecting premium in a volatile market) — those survive shuffling. But if it only works on the real path, it was exploiting the **specific sequence** — like selling calls right before drops and not selling before rallies. That pattern won't repeat, so it's likely overfitting or luck. Think of it like poker: if you win with many random deals, you have real skill. If you only win with the exact hand order you practiced on, you just memorized that deck.
 
-The reference implementation lives in [`test_cc_backtest.py::TestMsftTenYearRegression::test_monte_carlo_shuffle`](https://github.com/l3a0/covered-call-backtesting/blob/main/test_cc_backtest.py#L1029) — a test that re-runs the full shuffle on the bundled MSFT data (500 paths, `seed=42`, `__main__` params) and pins the resulting percentile, MC mean, and best-shuffled return. The algorithm in one line: compute daily returns from the real prices, shuffle their order with a fixed seed, rebuild a synthetic price path from each shuffled sequence, run the overlay backtest on each synthetic path, then compare the real ordered path's total return against the distribution.
+The reference implementation lives in [`test_cc_backtest.py::TestMsftTenYearRegression::test_monte_carlo_shuffle`](https://github.com/l3a0/covered-call-backtesting/blob/main/test_cc_backtest.py#L1202) — a test that re-runs the full shuffle on the bundled MSFT data (500 paths, `seed=42`, `__main__` params) and pins the resulting percentile, MC mean, and best-shuffled return. The algorithm in one line: compute daily returns from the real prices, shuffle their order with a fixed seed, rebuild a synthetic price path from each shuffled sequence, run the overlay backtest on each synthetic path, then compare the real ordered path's total return against the distribution.
 
 **Our result (`__main__` params on the bundled MSFT data, 500 shuffles, seed=42):**
 
@@ -971,7 +971,7 @@ The reference implementation lives in [`test_cc_backtest.py::TestMsftTenYearRegr
 
 **Idea:** Unlike a grid search (which tries many combinations to find the *best* params), sensitivity analysis starts from already-chosen params and nudges *one at a time* to check *stability*. Grid search answers "what's optimal?" — sensitivity analysis answers "how fragile is that optimum?" If returns change drastically from a small tweak, you're overfitting that parameter. A robust strategy should stay in a similar range across small perturbations.
 
-The reference implementation lives in [`test_cc_backtest.py::TestMsftTenYearRegression::test_sensitivity_perturbations`](https://github.com/l3a0/covered-call-backtesting/blob/main/test_cc_backtest.py#L977) — a parameterized test that sweeps `call_delta` and `close_at_pct` at ±0.05 / ±0.10 / ±0.20 offsets from base and pins each variant's total return, plus asserts the worst drop from base stays under 10% (the "robust" verdict). The algorithm: hold all params fixed except one, vary that one by a small offset in both directions, measure each variant's total return, then compute the worst drop from base and the full-range swing.
+The reference implementation lives in [`test_cc_backtest.py::TestMsftTenYearRegression::test_sensitivity_perturbations`](https://github.com/l3a0/covered-call-backtesting/blob/main/test_cc_backtest.py#L1150) — a parameterized test that sweeps `call_delta` and `close_at_pct` at ±0.05 / ±0.10 / ±0.20 offsets from base and pins each variant's total return, plus asserts the worst drop from base stays under 10% (the "robust" verdict). The algorithm: hold all params fixed except one, vary that one by a small offset in both directions, measure each variant's total return, then compute the worst drop from base and the full-range swing.
 
 **Example output** (`__main__` params on the bundled MSFT data, run against the current engine):
 
@@ -1013,7 +1013,7 @@ Math behind the close_at_pct sensitivity:
 
 **Idea:** Classify each day as bull, bear, or sideways, then bucket the overlay's trade P&L by regime. If most of the income comes from one regime, the strategy isn't actually market-neutral.
 
-The implementations are [`cc_backtest.py::classify_regime`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L666) and [`::regime_analysis`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L713). `classify_regime` looks at where the last price sits relative to its trailing 200-day SMA — `bull` if it's >5% above, `bear` if >5% below, `sideways` if within the band, `unknown` for the first 199 days when there aren't enough observations yet. `regime_analysis` runs the classifier at each day (using only past prices — no future peeking) and sums each closed trade's P&L into the regime active on its close date.
+The implementations are [`cc_backtest.py::classify_regime`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L724) and [`::regime_analysis`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L771). `classify_regime` looks at where the last price sits relative to its trailing 200-day SMA — `bull` if it's >5% above, `bear` if >5% below, `sideways` if within the band, `unknown` for the first 199 days when there aren't enough observations yet. `regime_analysis` runs the classifier at each day (using only past prices — no future peeking) and sums each closed trade's P&L into the regime active on its close date.
 
 **Our result** (`__main__` params on the bundled MSFT data, pinned by `test_regime_analysis`):
 
@@ -1154,7 +1154,7 @@ The intuition transfers nicely. If your data has long memory (momentum factors, 
 
 #### The Code
 
-The full implementation is [`cc_backtest.py::compute_statistics`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L541). Signature:
+The full implementation is [`cc_backtest.py::compute_statistics`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L599). Signature:
 
 ```python
 def compute_statistics(
@@ -1249,6 +1249,34 @@ Three other compounding factors:
 3. **Modeled IV vs. market IV.** Our backtest derives premiums from `HV × multiplier`, which is an *assumed* VRP, not a *measured* one. The academic numbers come from real market option prices spanning decades.
 
 The right way to engage with this gap is to add a parallel test against cash, on an index ETF, with longer data. That comparison isn't built into this backtester yet — see "What We'd Add Next."
+
+#### Risk-Managed Covered Calls: Stripping Out the Equity-Timing Wiggle
+
+There is one more thing we can do without changing markets, sample length, or which calls we sell. The naive covered call quietly carries an exposure no one explicitly chose, and that exposure adds variance without adding return. Strip it out and the same trade flow produces a meaningfully cleaner test.
+
+> **Lessons from Israelov & Nielsen (2015), "Covered Calls Uncovered"** ([CFA Institute](https://rpc.cfainstitute.org/research/financial-analysts-journal/2015/covered-calls-uncovered))
+>
+> A covered call's return decomposes exactly into three parts: (1) passive equity exposure, (2) short volatility exposure — the VRP, and (3) a hidden *equity-timing* exposure that nobody explicitly chose. The third one is mechanical: as the stock rallies, the short call's delta rises and your *effective* stock exposure shrinks; as the stock sells off, delta falls and your effective exposure grows. You're being forced to lighten up into rallies and add into selloffs, on autopilot.
+>
+> Components 1 and 2 are real, persistent, harvestable premiums. Component 3 is essentially zero in expectation but adds substantial variance — it's a coin flip you didn't sign up for. The paper's prescriptive fix is the **risk-managed covered call**: dynamically rebalance the underlying share position so the portfolio's net delta stays pinned at the buy-and-hold equivalent (e.g., 100 shares for a 1-contract position). Same equity exposure as buy-and-hold, plus the vol premium, minus the equity-timing wiggle.
+
+The implementation is one extra block in [`cc_backtest.py::run_cc_overlay`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L201). Each day with an open call, compute `target_extra = round(call_delta_today × base_shares)`, then buy or sell shares to match. The hedge trades come out of `cash` (which may go negative — a zero-interest financing simplification we'd refine in production). Set `delta_hedge: True` in `params` to enable. No transaction costs are modeled on the share legs; in liquid names that's defensible at daily rebalance frequency, but it's a place a real production model would tighten.
+
+Running the bundled MSFT backtest in both modes:
+
+| Metric | Naive CC | Risk-Managed CC |
+| --- | ---: | ---: |
+| Annualized excess return | +1.249% | +2.492% |
+| Annualized excess vol | 9.90% | 5.39% |
+| Sharpe of excess return | +0.126 | +0.462 |
+| t-stat (Newey-West) | +0.46 | +1.63 |
+| Clears t = 2 bar? | False | False |
+
+Same calls, same premium, same buybacks and assignments — the *only* difference is that we held an extra ~25 shares per contract on average to hedge the call's negative delta. That single change cuts excess vol by ~45% and roughly doubles annualized excess return, lifting the Newey-West t-stat from 0.46 to 1.63 — about a 3.5× improvement.
+
+The t-stat still doesn't clear the t = 2 bar. That's not a backtest bug; it's the single-stock VRP weakness from the previous section reasserting itself. The risk-managed version is the correct *measurement* of whether the volatility risk premium is showing up; on MSFT it's showing up, just not at index-CC magnitudes. The honest path from here is what the academic literature already does: same risk-managed framework, run on SPX or SPY, over decades.
+
+The general lesson is one we'll keep meeting in backtesting: **the way you construct the benchmark determines what your t-stat is actually measuring**. Naive CC vs. buy-and-hold measures premium income *minus* the equity-timing wiggle. Risk-managed CC vs. buy-and-hold measures the premium income alone. When the wiggle dominates the signal, only the second comparison tells you what you wanted to know.
 
 #### Common Mistake: Treating Dollar P&L as Evidence of Edge
 
@@ -1374,16 +1402,9 @@ Here's the complete process:
 6. **Slippage modeling:** Account for bid-ask widening on high-volatility days
 7. **Strategy-vs-cash significance test:** Add a second mode to `compute_statistics` that benchmarks the CC strategy's *total* return against the risk-free rate (not against buy-and-hold). This is the comparison the academic VRP literature reports, and it's the right way to put our backtest on equal footing with published BXM/PUT t-stats
 8. **Index ETF test:** Run the same strategy on SPY or QQQ. Single-stock VRP is structurally weaker than index VRP because index options have richer insurance demand. If the t-stat moves substantially toward the academic range when we switch underlyings, that confirms the gap was about *what* we backtested, not *how* we backtested
-9. **Risk-managed (delta-hedged) covered call mode:** Add a `delta_hedge` flag to `params` that, when enabled, buys or sells underlying shares each day to keep the portfolio's net delta pinned at `base_shares` — regardless of where the short call's delta sits. *Delta-hedging* is the practice of continuously trading the underlying to neutralize an option's directional exposure. Conceptual basis in the callout below. Costs ~25–30% more capital (you're holding extra shares to offset the call's negative delta) but produces a meaningfully cleaner test of whether the volatility risk premium is actually being captured
-10. **7-DTE close rule:** Close any open position when fewer than 7 days remain to expiration, regardless of profit target or delta. The current engine triggers on expiration itself, profit-target, or deep ITM (`delta > 0.70`) — so a position that drifts into the gamma-heavy final week without hitting either still has to ride through it. Adding a `min_dte_to_close` parameter (e.g., default 7) is the conventional fix and matches the *Gamma risk* warning in the glossary. Effect on results is probably small on bullish underlyings like MSFT (the delta-0.70 trigger already catches most of these positions early) but would be more visible on volatile or sideways tickers where positions can sit near-ATM into the final week without becoming deep ITM
+9. **7-DTE close rule:** Close any open position when fewer than 7 days remain to expiration, regardless of profit target or delta. The current engine triggers on expiration itself, profit-target, or deep ITM (`delta > 0.70`) — so a position that drifts into the gamma-heavy final week without hitting either still has to ride through it. Adding a `min_dte_to_close` parameter (e.g., default 7) is the conventional fix and matches the *Gamma risk* warning in the glossary. Effect on results is probably small on bullish underlyings like MSFT (the delta-0.70 trigger already catches most of these positions early) but would be more visible on volatile or sideways tickers where positions can sit near-ATM into the final week without becoming deep ITM
 
-> **Lessons from Israelov & Nielsen (2015), "Covered Calls Uncovered"** ([CFA Institute](https://rpc.cfainstitute.org/research/financial-analysts-journal/2015/covered-calls-uncovered))
->
-> A covered call's return decomposes exactly into three parts: (1) passive equity exposure, (2) short volatility exposure — the VRP, and (3) a hidden *equity-timing* exposure that nobody explicitly chose. The third one is mechanical: as the stock rallies, the short call's delta rises and your *effective* stock exposure shrinks; as the stock sells off, delta falls and your effective exposure grows. You're being forced to lighten up into rallies and add into selloffs, on autopilot.
->
-> Components 1 and 2 are real, persistent, harvestable premiums. Component 3 is essentially zero in expectation but adds substantial variance — it's a coin flip you didn't sign up for. The paper's prescriptive fix is the **risk-managed covered call**: dynamically rebalance the underlying share position so the portfolio's net delta stays pinned at the buy-and-hold equivalent (e.g., 100 shares for a 1-contract position). Same equity exposure as buy-and-hold, plus the vol premium, minus the equity-timing wiggle.
->
-> The implementation is one extra block in the daily loop: compute `target_shares = base_shares + abs(call_delta) * 100 * num_contracts`, then buy or sell shares to match. The expected effect on our backtest is **a higher Sharpe of excess returns and a higher Newey-West t-stat — not because alpha (excess return beyond what the benchmark explains) increases, but because we've stopped measuring an exposure that contributes variance without contributing return**. That's the cleanest way to test whether the VRP is showing up on this underlying. Item 9 above operationalizes it.
+The Israelov & Nielsen (2015) risk-managed covered call used to live here as item 9; it's now built and measured in [Part 5's risk-managed subsection](#risk-managed-covered-calls-stripping-out-the-equity-timing-wiggle) — set `delta_hedge: True` in `params` to run it.
 
 ---
 
@@ -1462,7 +1483,7 @@ The full implementation lives in this repository. Each file is the source of tru
 
 | File | What it contains |
 | --- | --- |
-| [`cc_backtest.py`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L201) | Black-Scholes pricing, rolling-volatility helpers, the [`run_cc_overlay`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L201) engine, and [`compute_statistics`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L541) for Newey-West t-stats |
+| [`cc_backtest.py`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L201) | Black-Scholes pricing, rolling-volatility helpers, the [`run_cc_overlay`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L201) engine, and [`compute_statistics`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L599) for Newey-West t-stats |
 | [`test_cc_backtest.py`](https://github.com/l3a0/covered-call-backtesting/blob/main/test_cc_backtest.py#L474) | Pytest suite covering pricing primitives, the overlay state machine, scenario tests, and the statistics helper |
 | [`download_prices.py`](https://github.com/l3a0/covered-call-backtesting/blob/main/download_prices.py#L11) | Fetches historical daily closes via yfinance |
 | [`msft_10yr_prices.csv`](https://github.com/l3a0/covered-call-backtesting/blob/main/msft_10yr_prices.csv) | Bundled 10-year MSFT daily-close dataset used in the worked examples |
