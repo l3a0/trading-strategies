@@ -10,6 +10,7 @@ import random
 from typing import Any
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from cc_backtest import (
@@ -657,8 +658,8 @@ class TestScenarioEquityFinalState:
             expected_equity = final_stock_value + realized
             assert summary['final_equity'] == pytest.approx(expected_equity, abs=0.01)
 
-        # daily_equity[-1] equity should match summary
-        assert daily_equity[-1]['equity'] == summary['final_equity']
+        # daily_equity's final row equity should match summary
+        assert daily_equity['equity'].iloc[-1] == summary['final_equity']
 
 
 # ====================
@@ -668,13 +669,12 @@ class TestScenarioEquityFinalState:
 def _build_daily_equity(
     equity_series: list[float],
     price_series: list[float],
-) -> list[dict[str, Any]]:
+) -> pd.DataFrame:
     """Build a daily_equity payload in the shape compute_statistics expects."""
     dates = _fake_dates(len(equity_series))
-    return [
-        {'date': d, 'equity': e, 'price': p}
-        for d, e, p in zip(dates, equity_series, price_series)
-    ]
+    return pd.DataFrame(
+        {'date': dates, 'equity': equity_series, 'price': price_series}
+    )
 
 
 class TestComputeStatistics:
@@ -917,39 +917,39 @@ class TestMsftTenYearRegression:
         assert summary['cash'] == pytest.approx(4_426.45, abs=0.5)
 
     def test_returns_breakdown(self, result: tuple[dict[str, Any], dict[str, Any]]) -> None:
-        """Buy-and-hold $746K (+646%) + net overlay $299K = overlay $1.045M (+945%)."""
+        """Buy-and-hold $746K (+646%) + net overlay $268K = overlay $1.015M (+915%)."""
         summary, _ = result
         assert summary['buy_hold_final'] == pytest.approx(746_166.44, abs=1.0)
         assert summary['buy_hold_return_pct'] == pytest.approx(646.17, abs=0.05)
-        assert summary['net_overlay_pnl'] == pytest.approx(298_947.87, abs=1.0)
-        assert summary['excess_return_pct'] == pytest.approx(298.95, abs=0.05)
-        assert summary['final_equity'] == pytest.approx(1_045_114.31, abs=1.0)
-        # The tutorial's headline "~945% total return on the bundled $100K config".
-        assert summary['total_return_pct'] == pytest.approx(945.11, abs=0.05)
+        assert summary['net_overlay_pnl'] == pytest.approx(268_424.87, abs=1.0)
+        assert summary['excess_return_pct'] == pytest.approx(268.42, abs=0.05)
+        assert summary['final_equity'] == pytest.approx(1_014_591.31, abs=1.0)
+        # The tutorial's headline "~915% total return on the bundled $100K config".
+        assert summary['total_return_pct'] == pytest.approx(914.59, abs=0.05)
 
     def test_overlay_pnl_breakdown(self, result: tuple[dict[str, Any], dict[str, Any]]) -> None:
-        """185 calls sold; ~$1.025M premium gross, ~$726K paid back in costs."""
+        """181 calls sold; ~$999K premium gross, ~$730K paid back in costs."""
         summary, _ = result
-        assert summary['num_calls_sold'] == 185
-        assert summary['total_premium_collected'] == pytest.approx(1_025_092.00, abs=5.0)
-        assert summary['overlay_costs'] == pytest.approx(726_144.12, abs=5.0)
+        assert summary['num_calls_sold'] == 181
+        assert summary['total_premium_collected'] == pytest.approx(998_518.91, abs=5.0)
+        assert summary['overlay_costs'] == pytest.approx(730_094.04, abs=5.0)
 
     def test_activity(self, result: tuple[dict[str, Any], dict[str, Any]]) -> None:
         """~81% win rate, ~23% max drawdown."""
         summary, _ = result
-        assert summary['win_rate'] == pytest.approx(81.0, abs=0.1)
-        assert summary['max_drawdown_pct'] == pytest.approx(23.02, abs=0.05)
+        assert summary['win_rate'] == pytest.approx(81.1, abs=0.1)
+        assert summary['max_drawdown_pct'] == pytest.approx(22.86, abs=0.05)
 
     def test_significance(self, result: tuple[dict[str, Any], dict[str, Any]]) -> None:
-        """Sharpe 0.163, naive t=0.51, NW t=0.58 at L=8 — clears neither bar."""
+        """Sharpe 0.126, naive t=0.40, NW t=0.46 at L=8 — clears neither bar."""
         _, stats = result
         assert stats['n_days'] == 2514
         assert stats['years_of_data'] == pytest.approx(9.98, abs=0.005)
-        assert stats['ann_excess_return_pct'] == pytest.approx(1.591, abs=0.001)
-        assert stats['ann_excess_vol_pct'] == pytest.approx(9.79, abs=0.01)
-        assert stats['sharpe_excess'] == pytest.approx(0.163, abs=0.001)
-        assert stats['t_stat_naive'] == pytest.approx(0.51, abs=0.005)
-        assert stats['t_stat_newey_west'] == pytest.approx(0.58, abs=0.005)
+        assert stats['ann_excess_return_pct'] == pytest.approx(1.249, abs=0.001)
+        assert stats['ann_excess_vol_pct'] == pytest.approx(9.90, abs=0.01)
+        assert stats['sharpe_excess'] == pytest.approx(0.126, abs=0.001)
+        assert stats['t_stat_naive'] == pytest.approx(0.40, abs=0.005)
+        assert stats['t_stat_newey_west'] == pytest.approx(0.46, abs=0.005)
         assert stats['nw_lag'] == 8
         assert stats['passes_t_2'] is False
         assert stats['passes_t_3'] is False
@@ -958,19 +958,19 @@ class TestMsftTenYearRegression:
         ('param', 'offsets_and_returns'),
         [
             # call_delta sweep: base 0.25 ± offset → total_return_pct.
-            # Tutorial (rounded for display): -0.10:882%  -0.05:861%  base:945%
-            #                                 +0.05:925%  +0.10:899%
+            # Tutorial (rounded for display): -0.10:837%  -0.05:827%  base:915%
+            #                                 +0.05:900%  +0.10:904%
             (
                 'call_delta',
-                [(-0.10, 881.53), (-0.05, 861.36), (0.0, 945.11),
-                 (0.05, 925.27), (0.10, 898.97)],
+                [(-0.10, 836.93), (-0.05, 827.23), (0.0, 914.59),
+                 (0.05, 900.20), (0.10, 903.82)],
             ),
             # close_at_pct sweep: base 0.75 ± offset → total_return_pct.
-            # Tutorial: -0.20:882%  -0.10:984%  base:945%  +0.10:965%  +0.20:895%
+            # Tutorial: -0.20:946%  -0.10:956%  base:915%  +0.10:857%  +0.20:902%
             (
                 'close_at_pct',
-                [(-0.20, 882.29), (-0.10, 984.25), (0.0, 945.11),
-                 (0.10, 965.33), (0.20, 895.26)],
+                [(-0.20, 945.77), (-0.10, 956.38), (0.0, 914.59),
+                 (0.10, 856.57), (0.20, 901.52)],
             ),
         ],
     )
@@ -1050,8 +1050,8 @@ class TestMsftTenYearRegression:
         the specific *sequence* — overfitting or luck.
 
         On the bundled MSFT data the real ordered path beats every
-        shuffled path (percentile 100), with mc_mean ~654% and the best
-        shuffled path ~934% — the overlay exploits real price structure,
+        shuffled path (percentile 100), with mc_mean ~657% and the best
+        shuffled path ~870% — the overlay exploits real price structure,
         not just the return distribution. This is the slowest test in
         the suite (~500 backtests, a couple of seconds).
         """
@@ -1117,7 +1117,7 @@ class TestMsftTenYearRegression:
         # Percentile: what % of random shuffles did our real strategy beat?
         #
         # Step 1: count how many MC returns are worse than the real return.
-        #   e.g., real_return=945, mc_returns=[800, 900, 1100, 700, 850]
+        #   e.g., real_return=915, mc_returns=[800, 900, 1100, 700, 850]
         #   worse = 4 (we beat 800, 900, 700, 850 — all except 1100)
         #
         # Step 2: convert to a percentile.
@@ -1131,10 +1131,10 @@ class TestMsftTenYearRegression:
         percentile = int(100 * worse / len(mc_returns))
         mc_mean = sum(mc_returns) / len(mc_returns)
 
-        assert real_return == pytest.approx(945.11, abs=0.05)
+        assert real_return == pytest.approx(914.59, abs=0.05)
         assert percentile == 100  # real path beats every shuffle
-        assert mc_mean == pytest.approx(654.0, abs=2.0)
-        assert max(mc_returns) == pytest.approx(934.0, abs=2.0)
+        assert mc_mean == pytest.approx(656.8, abs=2.0)
+        assert max(mc_returns) == pytest.approx(870.1, abs=2.0)
 
     def test_classify_regime_thresholds(self) -> None:
         """classify_regime returns the right label at each band edge.
@@ -1148,18 +1148,22 @@ class TestMsftTenYearRegression:
 
         The edge case 'price exactly equal to threshold' stays
         sideways (strict inequalities for bull/bear).
+
+        classify_regime returns a Series of per-index labels; the
+        scalar "regime at the end" is `.iloc[-1]`.
         """
         base = [100.0] * 200
 
-        assert classify_regime(base + [106.0]) == 'bull'
-        assert classify_regime(base + [94.0]) == 'bear'
-        assert classify_regime(base + [100.0]) == 'sideways'
+        assert classify_regime(base + [106.0]).iloc[-1] == 'bull'
+        assert classify_regime(base + [94.0]).iloc[-1] == 'bear'
+        assert classify_regime(base + [100.0]).iloc[-1] == 'sideways'
         # Boundary: strict inequalities, so equal-to-threshold stays sideways
-        assert classify_regime(base + [105.0]) == 'sideways'
-        assert classify_regime(base + [95.0]) == 'sideways'
-        # Insufficient history
-        assert classify_regime([100.0] * 50) == 'unknown'
-        assert classify_regime([]) == 'unknown'
+        assert classify_regime(base + [105.0]).iloc[-1] == 'sideways'
+        assert classify_regime(base + [95.0]).iloc[-1] == 'sideways'
+        # Insufficient history: SMA undefined, label stays 'unknown'
+        assert classify_regime([100.0] * 50).iloc[-1] == 'unknown'
+        # Empty input: empty Series, no label to take
+        assert classify_regime([]).empty
 
     def test_regime_analysis(
         self, data: tuple[list[str], np.ndarray[Any, np.dtype[np.float64]]]
@@ -1174,8 +1178,8 @@ class TestMsftTenYearRegression:
         Empirical observation on the bundled MSFT data: most of the
         overlay's premium income comes from days the SMA classifies
         as *bear* or *sideways*, not bull. Bull days dominate the
-        day count (1,690 of 2,515) but contribute only ~$18K of
-        trade pnl; bear days are ~280 but contribute ~$152K, because
+        day count (1,690 of 2,515) but contribute only ~$39K of
+        trade pnl; bear days are ~280 but contribute ~$85K, because
         premium is richest where volatility is highest.
         """
         dates, prices = data
@@ -1195,14 +1199,14 @@ class TestMsftTenYearRegression:
         assert total_days == len(prices)
 
         # Per-regime trade PnL — the tutorial's headline empirical claim.
-        assert result['bull']['total_pnl'] == pytest.approx(57976.42, abs=5.0)
-        assert result['bear']['total_pnl'] == pytest.approx(96619.30, abs=5.0)
-        assert result['sideways']['total_pnl'] == pytest.approx(139165.45, abs=5.0)
-        assert result['unknown']['total_pnl'] == pytest.approx(5456.15, abs=5.0)
+        assert result['bull']['total_pnl'] == pytest.approx(38916.76, abs=5.0)
+        assert result['bear']['total_pnl'] == pytest.approx(84616.05, abs=5.0)
+        assert result['sideways']['total_pnl'] == pytest.approx(139031.86, abs=5.0)
+        assert result['unknown']['total_pnl'] == pytest.approx(7915.91, abs=5.0)
 
         # Bear and sideways' per-day averages dwarf bull's — premium
         # is richest in volatile and choppy regimes. Specifically:
-        # ~$346/day in bear and ~$402/day in sideways vs ~$34/day
+        # ~$303/day in bear and ~$402/day in sideways vs ~$23/day
         # in bull, i.e. ~10× higher.
         assert result['bear']['avg_pnl_per_day'] > 8 * result['bull']['avg_pnl_per_day']
         assert result['sideways']['avg_pnl_per_day'] > 8 * result['bull']['avg_pnl_per_day']
@@ -1219,14 +1223,12 @@ class TestMsftTenYearRegression:
         2018-04 → 2025-10 out-of-sample span.
 
         Empirical observations pinned here:
-          - The familiar __main__ defaults (0.25Δ, 21 DTE) win the
-            most periods, but **close_at_pct=0.50 wins more periods
-            than the 0.75 default** — closing earlier frees capital
-            and skips the last sliver of theta that gamma often
-            eats.
+          - The familiar __main__ defaults (0.25Δ, 21 DTE, 0.75 close)
+            win the most periods on every axis — the in-sample Sharpe
+            optimum lands on the defaults more often than not.
           - Cumulative OOS compound return (per-period 6mo returns
-            chained) is ~510% over 7.5 years — substantially less
-            than the ~582% fixed-params return over the same span.
+            chained) is ~483% over 7.5 years — substantially less
+            than the ~563% fixed-params return over the same span.
             That gap is the cost of not having hindsight; the
             walk-forward number is the return you'd have actually
             achieved running this strategy in real time.
@@ -1259,32 +1261,31 @@ class TestMsftTenYearRegression:
         assert records[-1]['test_start'] == '2025-04-11'
         assert records[-1]['test_end'] == '2025-10-11'
 
-        # Most-chosen params: 0.25Δ and 21 DTE win consistently;
-        # close_at_pct=0.50 wins more periods than the 0.75 default.
+        # Most-chosen params: the __main__ defaults (0.25Δ, 21 DTE,
+        # 0.75 close) dominate every axis — the walk-forward optimizer
+        # keeps landing on the same configuration the tutorial documents.
         delta_counts = Counter(r['best_params']['call_delta'] for r in records)
         dte_counts = Counter(r['best_params']['dte'] for r in records)
         close_counts = Counter(r['best_params']['close_at_pct'] for r in records)
-        assert delta_counts[0.25] == 13
-        assert delta_counts[0.20] == 2
+        assert delta_counts[0.25] == 14
+        assert delta_counts[0.20] == 1
         assert delta_counts[0.15] == 0
-        assert dte_counts[21] == 10
+        assert dte_counts[21] == 9
         assert dte_counts[30] == 4
-        assert dte_counts[45] == 1
-        assert close_counts[0.50] == 8
-        assert close_counts[0.75] == 6
-        assert close_counts[1.00] == 1
+        assert dte_counts[45] == 2
+        assert close_counts[0.50] == 2
+        assert close_counts[0.75] == 11
+        assert close_counts[1.00] == 2
 
         # Cumulative OOS compound return: chain per-period 6mo returns.
         cumulative = 1.0
         for r in records:
-            period_eq = [
-                d for d in oos_equity
-                if r['test_start'] <= d['date'] < r['test_end']
-            ]
-            assert period_eq, f"no OOS equity for period {r['test_start']}"
-            period_ret = (period_eq[-1]['equity'] - period_eq[0]['equity']) / period_eq[0]['equity']
+            in_period = (oos_equity['date'] >= r['test_start']) & (oos_equity['date'] < r['test_end'])
+            period_eq: pd.Series[float] = oos_equity.loc[in_period, 'equity']  # type: ignore[assignment]
+            assert not period_eq.empty, f"no OOS equity for period {r['test_start']}"
+            period_ret = (period_eq.iloc[-1] - period_eq.iloc[0]) / period_eq.iloc[0]
             cumulative *= (1.0 + period_ret)
         cumulative_pct = (cumulative - 1.0) * 100
-        # Pinned around ~510%, allow a few pp of slack for floating-point
+        # Pinned around ~483%, allow a few pp of slack for floating-point
         # variation in the run-to-run results.
-        assert cumulative_pct == pytest.approx(510.0, abs=5.0)
+        assert cumulative_pct == pytest.approx(483.0, abs=5.0)

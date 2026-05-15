@@ -14,14 +14,21 @@ Produces PNGs in docs/figures/ that visualize:
 Run: python make_figures.py
 """
 
+# matplotlib's bundled stubs leave Axes/pyplot member return types and
+# **kwargs as partially-Unknown. Suppress those categories at file level
+# rather than annotating every plot()/hist()/set_xlabel() call.
+# pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownLambdaType=false
+
 from __future__ import annotations
 
 import csv
 import math
 import os
+from typing import Any, cast
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from matplotlib.figure import Figure
 from matplotlib.ticker import FuncFormatter
 from numpy.typing import NDArray
@@ -56,14 +63,22 @@ def load_msft_csv(path: str) -> tuple[list[str], NDArray[np.float64]]:
     return dates, np.array(prices, dtype=np.float64)
 
 
-def fig1_equity_curves(daily_equity: list[dict], summary: dict) -> Figure:
+def fig1_equity_curves(
+    daily_equity: pd.DataFrame, summary: dict[str, Any]
+) -> Figure:
     """Overlay vs. buy-and-hold equity curves over the 10-year window."""
     shares = summary["num_contracts"] * 100
     cash = summary["cash"]
 
-    date_strs = [d["date"] for d in daily_equity]
-    overlay = np.array([d["equity"] for d in daily_equity], dtype=float)
-    prices = np.array([d["price"] for d in daily_equity], dtype=float)
+    date_strs = cast("list[str]", daily_equity["date"].tolist())
+    overlay = cast(
+        "NDArray[np.float64]",
+        daily_equity["equity"].to_numpy(dtype=float),
+    )
+    prices = cast(
+        "NDArray[np.float64]",
+        daily_equity["price"].to_numpy(dtype=float),
+    )
     bh = shares * prices + cash
 
     dates = np.array(date_strs, dtype="datetime64[D]")
@@ -109,14 +124,22 @@ def fig1_equity_curves(daily_equity: list[dict], summary: dict) -> Figure:
 
 
 def fig2_excess_histogram(
-    daily_equity: list[dict], summary: dict, stats: dict
+    daily_equity: pd.DataFrame,
+    summary: dict[str, Any],
+    stats: dict[str, Any],
 ) -> Figure:
     """Histogram of daily excess returns with sample-mean and t-stat annotation."""
     shares = summary["num_contracts"] * 100
     cash = summary["cash"]
 
-    equity = np.array([d["equity"] for d in daily_equity], dtype=float)
-    prices = np.array([d["price"] for d in daily_equity], dtype=float)
+    equity = cast(
+        "NDArray[np.float64]",
+        daily_equity["equity"].to_numpy(dtype=float),
+    )
+    prices = cast(
+        "NDArray[np.float64]",
+        daily_equity["price"].to_numpy(dtype=float),
+    )
     bh = shares * prices + cash
 
     overlay_ret = np.diff(equity) / equity[:-1]
@@ -282,8 +305,8 @@ def fig3_bias_variance(
 
 def fig4_t_stat_vs_years(sharpe: float) -> Figure:
     """Expected t-statistic vs. years of data at a fixed Sharpe ratio."""
-    years = np.logspace(0, np.log10(500), 200)
-    t_stats = sharpe * np.sqrt(years)
+    years = cast('NDArray[np.float64]', np.logspace(0, np.log10(500), 200))
+    t_stats = cast('NDArray[np.float64]', sharpe * np.sqrt(years))
 
     years_for_t2 = (2.0 / sharpe) ** 2
     years_for_t3 = (3.0 / sharpe) ** 2
