@@ -9,6 +9,16 @@
 
 ---
 
+## How to Read This Tutorial
+
+This is a long document. You almost certainly don't need every word of it. Pick the path that matches where you're starting from:
+
+- **Total beginner (new to options, new to backtesting):** Read straight through. Each part builds on the last, and the glossary is right below if a term throws you.
+- **Coder, no finance background:** Skim the [Glossary](#glossary-of-key-terms) and [Part 1](#part-1-foundations--what-are-we-actually-doing) for vocabulary, then spend your time in [Part 2](#part-2-option-pricing-with-black-scholes) (Black-Scholes) and [Part 3](#part-3-the-covered-call-overlay-engine) (the overlay engine). That's where the finance becomes mechanical.
+- **Quant learning Python options:** Jump to [Part 4](#part-4-walk-forward-optimization) (walk-forward) and [Part 5](#part-5-robustness-checks--proving-its-not-luck) (Newey-West, bootstraps, regime splits), then browse the rest as reference.
+
+---
+
 ## Table of Contents
 
 1. [Part 1: Foundations — What Are We Actually Doing?](#part-1-foundations--what-are-we-actually-doing)
