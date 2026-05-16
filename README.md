@@ -85,11 +85,7 @@ CI runs `ruff`, `pyright`, the test suite, and a backtest smoke test on every PR
 | [docs/figures/](docs/figures/) | Generated PNGs embedded in the tutorial; regenerable from `make_figures.py` |
 | [requirements.txt](requirements.txt) | Runtime + dev dependencies |
 
-## Where to look for more details
-
-- **How any single piece works (Black-Scholes math, rolling vol, the overlay state machine, walk-forward optimization, robustness checks):** the [tutorial](tutorial_covered_call_backtest.md) is the source of truth. It explains the *why* behind every part of the engine.
-- **Exact behavior of a function:** read [cc_backtest.py](cc_backtest.py#L201) — it's heavily commented and small enough to read end-to-end (link jumps to `run_cc_overlay`, the engine entry point).
-- **What the engine guarantees:** [test_cc_backtest.py](test_cc_backtest.py#L474) has scenario tests for the major trade flows (sell + expire OTM, called away, profit-target close, multi-cycle accumulation).
+**Where to start:** the [tutorial](tutorial_covered_call_backtest.md) is the source of truth for *why* every part works the way it does (Black-Scholes math, rolling vol, the overlay state machine, walk-forward optimization, robustness checks). For *what* a function actually does, read [cc_backtest.py](cc_backtest.py#L201) end-to-end — it's heavily commented and the link jumps to `run_cc_overlay`, the engine entry point. For the behavior the engine guarantees, see the scenario tests in [test_cc_backtest.py](test_cc_backtest.py#L475) covering the major trade flows: sell + expire OTM, called away, profit-target close, and multi-cycle accumulation.
 
 ## Strategy parameters
 
