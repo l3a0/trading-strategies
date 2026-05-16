@@ -42,7 +42,7 @@ Every post should follow this general skeleton (adapt as needed, but don't skip 
 - **Sentence length in technical sections.** Watch for sentences that pack more than three distinct items. Split after the third. Dense sentences are fine in narrative sections but exhaust the reader in how-it-works sections. If a sentence exceeds ~35 words in a technical paragraph, it's a candidate for splitting.
 - **Bold** for key terms on first meaningful use, or to highlight the single most important sentence in a section.
 - **Bullet points or numbered lists** only when listing genuinely parallel items (features, steps, comparisons). Never use bullets as a crutch to avoid writing prose.
-- **One image, chart, or diagram** per post if it genuinely aids understanding. Don't add images for decoration.
+- **Images, charts, or diagrams** as needed — there's no fixed limit, but each must genuinely aid understanding by clarifying something the prose can't. Don't add images for decoration, and don't include near-duplicate figures that make the same point.
 - **No emoji in body text.** Subheadings may occasionally use one if it fits the section's tone.
 - **Target length:** 1,200–2,500 words. If a post needs more, split it into a series. If it needs fewer, it might be a tweet thread instead.
 
@@ -190,13 +190,15 @@ When asked to edit or improve an existing draft:
 
 ## Cross-Surface Consistency
 
-This repo has three surfaces that can drift apart: **code** (`cc_backtest.py`, `test_cc_backtest.py`, `make_figures.py`, `download_prices.py`), the **README** (`README.md`), and the **tutorial** (`tutorial_covered_call_backtest.md`). On every code change, sweep both prose surfaces before reporting done. Don't ask permission to verify — verify, then include findings in the response.
+This repo has four surfaces that can drift apart: **code** (`cc_backtest.py`, `test_cc_backtest.py`, `make_figures.py`, `download_prices.py`), the **README** (`README.md`), the **tutorial** (`tutorial_covered_call_backtest.md`), and the **blog series** (`blog/*.md`). On every code change, sweep all three prose surfaces before reporting done. Don't ask permission to verify — verify, then include findings in the response.
+
+The blog posts cite pinned numbers but generally *not* line anchors or symbol names (they're written for a non-engineer audience). So a code change that only moves line numbers usually leaves the blog untouched; a re-pinned regression result usually does not.
 
 ### What can drift
 
 - **Line anchors** in Markdown links of the form `file.py#L<N>`. Adding, removing, or moving lines in a referenced file can break these silently.
 - **Symbol names** cited in prose (function, class, and test names like `run_cc_overlay`, `TestScenarioFlatMarket`, `compute_statistics`).
-- **Pinned numbers** in the README "Sample output" block and the tutorial's quoted results (returns, win rates, t-stats, regime P&L tables, walk-forward period counts). When a regression test gets re-pinned, prose almost always needs the matching update.
+- **Pinned numbers** in the README "Sample output" block, the tutorial's quoted results, and the blog posts' quoted figures (returns, win rates, t-stats, regime P&L tables, walk-forward period counts). When a regression test gets re-pinned, prose almost always needs the matching update — and the blog series quotes the headline figures (total return, overlay P&L, win rate, trade count, t-stat) in narrative form, so grep the rounded/spelled-out forms too (e.g. `268,000`, `$268K`, `81%`, `0.46`).
 - **Strategy parameters table** in the README, which mirrors the `params` dict in `cc_backtest.py`'s `__main__`.
 - **Test-scenario names** in the README's "What the engine guarantees" line.
 - **CI claim** in the README, which describes `.github/workflows/ci.yml`.
@@ -208,13 +210,13 @@ Before reporting a code change done, run:
 
 ```bash
 # Every line anchor — confirm each still points at the right symbol
-rg '\.py#L\d+' README.md tutorial_covered_call_backtest.md
+rg '\.py#L\d+' README.md tutorial_covered_call_backtest.md blog/*.md
 
 # Every symbol name cited in prose — confirm names still exist in code
-rg -n '(run_cc_overlay|compute_statistics|calc_rolling_volatility|estimate_iv|detect_regime|find_strike_for_delta|classify_regime|regime_analysis|walk_forward_optimization|_param_combinations|monte_carlo_shuffle|sensitivity_analysis|TestScenario\w*|TestMsftTenYearRegression|TestRiskManagedCoveredCall|TestMsftRiskManagedRegression)' README.md tutorial_covered_call_backtest.md
+rg -n '(run_cc_overlay|compute_statistics|calc_rolling_volatility|estimate_iv|detect_regime|find_strike_for_delta|classify_regime|regime_analysis|walk_forward_optimization|_param_combinations|monte_carlo_shuffle|sensitivity_analysis|TestScenario\w*|TestMsftTenYearRegression|TestRiskManagedCoveredCall|TestMsftRiskManagedRegression)' README.md tutorial_covered_call_backtest.md blog/*.md
 ```
 
-For pinned numbers, re-run the backtest and any updated tests; diff the output against the README sample block and quoted figures in the tutorial.
+For pinned numbers, re-run the backtest and any updated tests; diff the output against the README sample block, the tutorial's quoted figures, and the blog series' narrative figures.
 
 **Keep the symbol-list regex above in sync with the code's public surface.** When renaming, adding, or removing a top-level symbol in `cc_backtest.py` or a top-level test class in `test_cc_backtest.py` (anything plausibly cited in prose), update the regex in the same change so future sweeps stay accurate. Don't ask — just do it and note it in the consistency-sweep report.
 
