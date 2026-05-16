@@ -481,69 +481,7 @@ RESET (sold and closed; ready for next call)
   └─ [Wait 1 day, then go back to IDLE]
 ```
 
-Sketched as a per-day handler (the real `run_cc_overlay` inlines this loop body — `run_cc_overlay_day` is illustrative, not a function in the codebase):
-
-```python
-def run_cc_overlay_day(
-    current_date,
-    position_state,  # None, or {'entry_price', 'entry_date', 'dte', ...}
-    current_price,
-    rolling_vol,
-    current_rate,
-    call_delta=0.20,
-    close_at_pct=0.75,
-):
-    """
-    Decide what to do with the covered call position on this day.
-    
-    Returns:
-        action: 'idle', 'sell', 'close', 'assign' or 'hold'
-        premium: if 'sell', the premium collected
-        result_price: if 'close' or 'assign', the result price
-    """
-    
-    # Case 1: No open position, check if we should sell
-    if position_state is None:
-        # Decide on strike
-        T = 30 / 252  # 30 DTE is our target (252 trading days/year)
-        strike = find_strike_for_delta(
-            current_price, T, current_rate, rolling_vol, call_delta, option_type='call'
-        )
-        premium = bs_price(current_price, strike, T, current_rate, rolling_vol, option_type='call')
-        
-        return 'sell', premium, strike
-    
-    # Case 2: Open position; check conditions
-    premium_collected = position_state['premium']
-    strike = position_state['strike']
-    entry_date = position_state['entry_date']
-    dte = position_state['dte']
-    
-    # Recalculate call value today
-    T_remaining = dte / 252
-    current_call_value = bs_price(current_price, strike, T_remaining, current_rate, rolling_vol, option_type='call')
-    
-    # Profit check: has enough premium been captured?
-    # close_at_pct = 0.75 means close when option worth <= 25% of what we sold it for
-    if current_call_value <= premium_collected * (1 - close_at_pct):
-        return 'close', current_call_value, strike
-    
-    # Expiration check
-    if dte <= 0:
-        if current_price >= strike:
-            return 'called_away', current_call_value, strike
-        else:
-            return 'expired_otm', current_call_value, strike
-    
-    # Condition: Call is deeply ITM (delta > 0.70)? Consider closing.
-    if current_price > strike:
-        delta_today = bs_delta(current_price, strike, T_remaining, current_rate, rolling_vol, option_type='call')
-        if delta_today > 0.70:
-            return 'close', current_call_value, strike
-    
-    # Otherwise, hold
-    return 'hold', None, None
-```
+The real engine has no separate per-day function — [`cc_backtest.py::run_cc_overlay`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L201) inlines exactly this loop body, with the four transitions above as its `if`/`elif` branches. *The Run_cc_overlay() Function: Full Walkthrough*, later in this part, traces it line by line.
 
 ### Transaction Costs: Commission ($0.65/contract) + Slippage (3% of Premium)
 
@@ -555,33 +493,7 @@ This is where backtests often lie.
 - You pay $0.65 per contract to close
 - You have slippage: the bid-ask spread might mean you sell the call for 95¢ but it's worth $1.00
 
-In our model:
-
-```python
-def apply_transaction_costs(premium, cost_per_contract=0.65, slippage_pct=0.03):
-    """
-    Reduce premium by transaction costs (per-share basis).
-    
-    Args:
-        premium: option premium per share
-        cost_per_contract: commission per contract ($0.65 typical)
-        slippage_pct: bid-ask slippage as % of premium
-    
-    Returns:
-        net_premium: premium after costs (per share)
-    """
-    # Slippage: reduce by 3% of the premium
-    slippage_cost = premium * slippage_pct
-    
-    # Commission: per-contract cost
-    # If we're selling 1 contract (100 shares), commission is $0.65
-    # Per-share basis: 0.65 / 100 = $0.0065
-    commission_per_share = cost_per_contract / 100.0
-    
-    net_premium = premium - slippage_cost - commission_per_share
-    
-    return net_premium
-```
+The engine doesn't wrap this in a helper — it's one line inside [`cc_backtest.py::run_cc_overlay`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L335): `net_premium = premium * (1 - 0.03) - 0.0065` on the sell side (3% slippage; $0.65/contract commission = $0.0065/share), with a matching `- 0.65 * num_contracts` charged when the call is bought back to close. If costs would exceed the credit — a near-worthless deep-OTM call — it skips the trade rather than open at a loss.
 
 **Example:**
 
@@ -636,39 +548,7 @@ Some wheel traders use a trend filter to decide *when* to sell options. The key 
 
 > **Note — the big tradeoff vs. buy-and-hold:** Premiums are small and steady; rallies are rare and huge. If you repeatedly get called away during strong uptrends, the capped upside compounds against you, and the strategy can materially **underperform a pure buy-and-hold** of the same stock. Covered calls trade lottery-ticket upside for consistent income — that's the deal, and it only looks good if you actually prefer smoother returns to maximizing total return.
 
-```python
-def sma(prices, window):
-    """Simple moving average: take the last `window` prices, return their average."""
-    # prices[-window:] grabs the last N prices from the list
-    # e.g. if window=50 and prices has 1000 entries, this averages the last 50
-    return np.mean(prices[-window:])
-
-def is_uptrend(prices, sma_short=50, sma_long=200):
-    """
-    Check if stock is in uptrend using golden cross.
-    
-    Returns:
-        True if SMA50 > SMA200 (uptrend), else False
-    """
-    if len(prices) < sma_long:
-        return True  # Not enough data; assume neutral
-    
-    sma_50 = sma(prices, sma_short)
-    sma_200 = sma(prices, sma_long)
-    
-    return sma_50 > sma_200
-```
-
-**In the overlay:**
-
-```python
-if trend_filter_enabled and not is_uptrend(prices):
-    # CSP phase: skip selling puts in downtrend (avoid assignment into falling stock)
-    # CC phase: you'd typically STILL sell calls here to reduce cost basis
-    return 'idle', None, None
-```
-
-**Empirical finding (from our walk-forward results):** The trend filter didn't help much. The filter's job is to pause CSPs when SMA50 < SMA200 (a downtrend) so you don't get assigned into a falling stock — but the wheel is defensive enough that even entering in a downtrend works out: premiums cushion the drawdown, and once you're assigned you just start collecting CC income on the way back up. We'll include the filter as an option but not use it by default.
+None of this lives in the engine — `sma`/`is_uptrend` sketch the golden-cross idea but aren't functions in the codebase. **Empirical finding (from the Part 4 walk-forward):** the filter didn't earn its keep. Its job is to pause CSPs when SMA50 < SMA200 so you don't get assigned into a falling stock, but the wheel is defensive enough that entering in a downtrend still works out — premiums cushion the drawdown, and once assigned you collect CC income on the recovery. So [`cc_backtest.py::run_cc_overlay`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L201) ships **no entry trend filter at all**: in the CC phase it sells in every regime, exactly as the CSP-vs-CC reasoning above argues.
 
 ### The Run_cc_overlay() Function: Full Walkthrough
 
@@ -792,49 +672,15 @@ Finally, stitch all testing results together into one equity curve.
 
 ### The Parameter Grid: What We Search Over and Why
 
-```python
-param_grid = {
-    'call_delta': [0.15, 0.20, 0.25],
-    'dte': [21, 30, 45],
-    'close_at_pct': [0.50, 0.75, 1.0],
-}
+The walk-forward optimizer searches a small grid of three parameters:
 
-# Why these ranges?
-# call_delta: 0.15 = conservative (rarely called away), 0.25 = aggressive (more premium)
-# dte: 21 = fast-moving, frequent sales; 45 = slower, higher premiums
-# close_at_pct: 0.50 = close when 50% of premium captured; 1.0 = hold to expiry
-#
-# Note: put_delta is NOT included here. This is a covered call overlay
-# backtest — we already own the shares and are only selling calls. The
-# put_delta parameter belongs to the CSP (cash-secured put) entry phase
-# of the full wheel strategy, which we aren't testing here.
+- **`call_delta`** — `[0.15, 0.20, 0.25]`. Lower is conservative (rarely called away); higher collects more premium but assigns more often.
+- **`dte`** — `[21, 30, 45]`. Shorter means faster, more frequent sales; longer means richer premiums per trade.
+- **`close_at_pct`** — `[0.50, 0.75, 1.00]`. Close once this fraction of the premium has been captured; `1.00` holds to expiry.
 
-def param_combinations(grid):
-    """
-    Turn a dict of lists into every possible combination.
-    
-    Input:  {'call_delta': [0.15, 0.20], 'dte': [21, 30]}
-    Output: [{'call_delta': 0.15, 'dte': 21},
-             {'call_delta': 0.15, 'dte': 30},
-             {'call_delta': 0.20, 'dte': 21},
-             {'call_delta': 0.20, 'dte': 30}]
-    
-    Each factor in the product is the number of options for one parameter:
-      call_delta:   3 choices ([0.15, 0.20, 0.25])
-      dte:          3 choices ([21, 30, 45])
-      close_at_pct: 3 choices ([0.50, 0.75, 1.0])
-    Total: 3 × 3 × 3 = 27 combos. This generates all 27 parameter sets
-    so the optimizer can try each one.
-    """
-    import itertools
-    
-    keys = list(grid.keys())           # ['call_delta', 'dte', 'close_at_pct']
-    values = list(grid.values())       # [[0.15, 0.20, 0.25], [21, 30, 45], ...]
-    
-    for combo in itertools.product(*values):  # itertools.product gives every combination
-        yield dict(zip(keys, combo))          # zip pairs each key with one value from the combo
-        # e.g., zip(['call_delta', 'dte'], (0.15, 21)) → {'call_delta': 0.15, 'dte': 21}
-```
+That's 3 × 3 × 3 = **27 parameter sets**. There's deliberately no `put_delta` axis: this is a covered-call overlay — we already own the shares and only sell calls, so `put_delta` belongs to the CSP (cash-secured put) entry phase of the full wheel, which we aren't testing here.
+
+Expanding the grid into all 27 combinations is one Cartesian product — [`cc_backtest.py::_param_combinations`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L873) — which `walk_forward_optimization` loops over on each training window.
 
 ### How to Stitch Out-of-Sample Results into a Single Equity Curve
 
@@ -861,7 +707,7 @@ What it does per iteration:
 3. Run those locked params on the out-of-sample test window. Append the resulting daily equity to the stitched curve.
 4. Advance `current_date` by `roll_months` and repeat until the next test window would run past `end_date`.
 
-The production implementation in [`cc_backtest.py::walk_forward_optimization`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L887) is heavily commented — it carries the teaching content (window arithmetic diagram, boolean-indexing explainer, Sharpe-built-inside-out walkthrough, Bessel's correction, √252 annualization derivation, "rules are LOCKED — no re-tuning" emphasis) right next to the code that does the work. The fixing test [`test_cc_backtest.py::TestMsftTenYearRegression::test_walk_forward_optimization`](https://github.com/l3a0/covered-call-backtesting/blob/main/test_cc_backtest.py#L1387) pins the 15 walk-forward periods, the most-chosen parameters, and the cumulative OOS compound return on the bundled MSFT data.
+The production implementation in [`cc_backtest.py::walk_forward_optimization`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L887) is heavily commented — it carries the teaching content (window arithmetic diagram, boolean-indexing explainer, Sharpe-built-inside-out walkthrough, Bessel's correction, √252 annualization derivation, "rules are LOCKED — no re-tuning" emphasis) right next to the code that does the work. The fixing test [`test_cc_backtest.py::TestMsftTenYearRegression::test_walk_forward_optimization`](https://github.com/l3a0/covered-call-backtesting/blob/main/test_cc_backtest.py#L1347) pins the 15 walk-forward periods, the most-chosen parameters, and the cumulative OOS compound return on the bundled MSFT data.
 
 ### What the Optimizer Chose
 
@@ -956,7 +802,7 @@ If no → the strategy exploits a specific *sequence* of returns (could be luck)
 
 **Why this works:** Real prices have a specific order — trends, mean-reversion, volatility clusters. Shuffling destroys that order while keeping the exact same set of daily returns (same mean, same volatility, same distribution). So if your strategy profits on both real and shuffled paths, it's capturing **statistical properties** of the returns (e.g., collecting premium in a volatile market) — those survive shuffling. But if it only works on the real path, it was exploiting the **specific sequence** — like selling calls right before drops and not selling before rallies. That pattern won't repeat, so it's likely overfitting or luck. Think of it like poker: if you win with many random deals, you have real skill. If you only win with the exact hand order you practiced on, you just memorized that deck.
 
-The reference implementation lives in [`test_cc_backtest.py::TestMsftTenYearRegression::test_monte_carlo_shuffle`](https://github.com/l3a0/covered-call-backtesting/blob/main/test_cc_backtest.py#L1202) — a test that re-runs the full shuffle on the bundled MSFT data (500 paths, `seed=42`, `__main__` params) and pins the resulting percentile, MC mean, and best-shuffled return. The algorithm in one line: compute daily returns from the real prices, shuffle their order with a fixed seed, rebuild a synthetic price path from each shuffled sequence, run the overlay backtest on each synthetic path, then compare the real ordered path's total return against the distribution.
+The implementation is [`cc_backtest.py::monte_carlo_shuffle`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L1095) — it computes daily returns from the real prices, shuffles their order with a fixed seed, rebuilds a synthetic price path from each shuffled sequence, runs the overlay backtest on each, then compares the real ordered path's total return against the distribution. The fixing test [`test_cc_backtest.py::TestMsftTenYearRegression::test_monte_carlo_shuffle`](https://github.com/l3a0/covered-call-backtesting/blob/main/test_cc_backtest.py#L1243) pins the resulting percentile, MC mean, and best-shuffled return on the bundled MSFT data (500 paths, `seed=42`, `__main__` params).
 
 **Our result (`__main__` params on the bundled MSFT data, 500 shuffles, seed=42):**
 
@@ -971,7 +817,7 @@ The reference implementation lives in [`test_cc_backtest.py::TestMsftTenYearRegr
 
 **Idea:** Unlike a grid search (which tries many combinations to find the *best* params), sensitivity analysis starts from already-chosen params and nudges *one at a time* to check *stability*. Grid search answers "what's optimal?" — sensitivity analysis answers "how fragile is that optimum?" If returns change drastically from a small tweak, you're overfitting that parameter. A robust strategy should stay in a similar range across small perturbations.
 
-The reference implementation lives in [`test_cc_backtest.py::TestMsftTenYearRegression::test_sensitivity_perturbations`](https://github.com/l3a0/covered-call-backtesting/blob/main/test_cc_backtest.py#L1150) — a parameterized test that sweeps `call_delta` and `close_at_pct` at ±0.05 / ±0.10 / ±0.20 offsets from base and pins each variant's total return, plus asserts the worst drop from base stays under 10% (the "robust" verdict). The algorithm: hold all params fixed except one, vary that one by a small offset in both directions, measure each variant's total return, then compute the worst drop from base and the full-range swing.
+The implementation is [`cc_backtest.py::sensitivity_analysis`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L1176) — it sweeps `call_delta` and `close_at_pct` at ±0.05 / ±0.10 / ±0.20 offsets from base. The algorithm: hold all params fixed except one, vary that one by a small offset in both directions, measure each variant's total return, then compute the worst drop from base. The fixing test [`test_cc_backtest.py::TestMsftTenYearRegression::test_sensitivity_perturbations`](https://github.com/l3a0/covered-call-backtesting/blob/main/test_cc_backtest.py#L1201) pins each variant's return and asserts the worst drop from base stays under 10% (the "robust" verdict) on the bundled MSFT data — the notebook companion calls the same function, so the two can't drift.
 
 **Example output** (`__main__` params on the bundled MSFT data, run against the current engine):
 

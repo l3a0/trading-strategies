@@ -211,7 +211,7 @@ Before reporting a code change done, run:
 rg '\.py#L\d+' README.md tutorial_covered_call_backtest.md
 
 # Every symbol name cited in prose — confirm names still exist in code
-rg -n '(run_cc_overlay|compute_statistics|calc_rolling_volatility|estimate_iv|detect_regime|find_strike_for_delta|classify_regime|regime_analysis|walk_forward_optimization|TestScenario\w*|TestMsftTenYearRegression|TestRiskManagedCoveredCall|TestMsftRiskManagedRegression)' README.md tutorial_covered_call_backtest.md
+rg -n '(run_cc_overlay|compute_statistics|calc_rolling_volatility|estimate_iv|detect_regime|find_strike_for_delta|classify_regime|regime_analysis|walk_forward_optimization|_param_combinations|monte_carlo_shuffle|sensitivity_analysis|TestScenario\w*|TestMsftTenYearRegression|TestRiskManagedCoveredCall|TestMsftRiskManagedRegression)' README.md tutorial_covered_call_backtest.md
 ```
 
 For pinned numbers, re-run the backtest and any updated tests; diff the output against the README sample block and quoted figures in the tutorial.

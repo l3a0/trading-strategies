@@ -43,9 +43,9 @@ jobs:
       - name: Lint
         run: ruff check .
 
-      # Static type checking with pyright. Checks all four Python source files.
+      # Static type checking with pyright. Checks all five Python source files.
       - name: Type check
-        run: pyright cc_backtest.py download_prices.py make_figures.py test_cc_backtest.py
+        run: pyright cc_backtest.py download_prices.py make_figures.py make_notebook.py test_cc_backtest.py
 
       # Unit tests with branch coverage. Runs the test suite against the
       # in-memory price fixtures — no network access required.
@@ -80,3 +80,14 @@ jobs:
               echo "Suspiciously small (<10KB): $f at $size bytes"; exit 1
             fi
           done
+
+      # Notebook drift check: the .ipynb is generated from the tutorial
+      # markdown, so unlike the PNGs it's deterministic and we *can*
+      # byte-compare. Regenerate and fail if it differs from the committed
+      # copy — that means someone edited the tutorial or figure script
+      # without running `python make_notebook.py` and committing the result.
+      - name: Verify notebook is up to date
+        run: |
+          python make_notebook.py
+          git diff --exit-code covered_call_backtest.ipynb \
+            || (echo "covered_call_backtest.ipynb is stale — run 'python make_notebook.py' and commit." && exit 1)

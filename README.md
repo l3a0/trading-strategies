@@ -1,6 +1,7 @@
 # Covered Call Backtester
 
 [![CI](https://github.com/l3a0/covered-call-backtesting/actions/workflows/ci.yml/badge.svg)](https://github.com/l3a0/covered-call-backtesting/actions/workflows/ci.yml)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/l3a0/covered-call-backtesting/blob/main/covered_call_backtest.ipynb)
 
 A from-scratch Python backtester for the covered call overlay strategy. Prices options with Black-Scholes (using `math.erf` for high-precision CDF), estimates IV from rolling historical volatility with regime-based multipliers, and simulates day-by-day trade decisions over multi-year price histories.
 
@@ -77,8 +78,10 @@ CI runs `ruff`, `pyright`, the test suite, and a backtest smoke test on every PR
 | [test_cc_backtest.py](test_cc_backtest.py#L35) | Unit and scenario tests covering pricing, the overlay state machine, and the statistics helper |
 | [download_prices.py](download_prices.py#L11) | yfinance data downloader |
 | [make_figures.py](make_figures.py#L369) | Regenerates the four educational figures embedded in the tutorial into `docs/figures/` |
+| [make_notebook.py](make_notebook.py#L1) | Regenerates the runnable notebook from the tutorial markdown + figure script |
 | [msft_10yr_prices.csv](msft_10yr_prices.csv) | Sample MSFT price data, 2016-04 to 2026-04 |
 | [tutorial_covered_call_backtest.md](tutorial_covered_call_backtest.md) | Long-form tutorial — theory, math, code walkthrough, and statistical-significance testing |
+| [covered_call_backtest.ipynb](covered_call_backtest.ipynb) | Runnable notebook companion to the tutorial — open in Colab via the badge above, or generate locally with `python make_notebook.py` |
 | [docs/figures/](docs/figures/) | Generated PNGs embedded in the tutorial; regenerable from `make_figures.py` |
 | [requirements.txt](requirements.txt) | Runtime + dev dependencies |
 
@@ -90,7 +93,7 @@ CI runs `ruff`, `pyright`, the test suite, and a backtest smoke test on every PR
 
 ## Strategy parameters
 
-Edit the `params` dict at the bottom of [cc_backtest.py](cc_backtest.py#L1118):
+Edit the `params` dict at the bottom of [cc_backtest.py](cc_backtest.py#L1262):
 
 | Param | Default | Meaning |
 | --- | --- | --- |
