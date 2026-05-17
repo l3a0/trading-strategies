@@ -204,6 +204,7 @@ The blog posts cite pinned numbers but generally *not* line anchors or symbol na
 - **Test-scenario names** in the README's "What the engine guarantees" line.
 - **CI claim** in the README, which describes `.github/workflows/ci.yml`.
 - **"Last updated" date** at the bottom of the tutorial.
+- **Generated notebook** (`covered_call_backtest.ipynb`), built from the tutorial markdown + figure script by `make_notebook.py`. It is not hand-edited and not a sweep target — it's a *regeneration obligation*. Any change to `tutorial_covered_call_backtest.md` (or `make_figures.py`) leaves the notebook stale until regenerated.
 
 ### Sweep commands
 
@@ -218,6 +219,8 @@ rg -n '(run_cc_overlay|compute_statistics|calc_rolling_volatility|estimate_iv|de
 ```
 
 For pinned numbers, re-run the backtest and any updated tests; diff the output against the README sample block, the tutorial's quoted figures, and the blog series' narrative figures.
+
+**If `tutorial_covered_call_backtest.md` or `make_figures.py` changed, regenerate the notebook in the same change:** run `python make_notebook.py` and commit the updated `covered_call_backtest.ipynb`. Don't ask — just do it. Sanity-check the diff: it should be a small, deterministic reflection of exactly what you edited. A large or unrelated `.ipynb` diff means a stale generator or a mismatched environment (e.g. different Python/lib versions) — investigate before committing, don't blindly commit churn. This applies even when the tutorial edit isn't itself a "code change" (a pure-prose tutorial tweak still requires the regen).
 
 **Keep the symbol-list regex above in sync with the code's public surface.** When renaming, adding, or removing a top-level symbol in `cc_backtest.py` or a top-level test class in `test_cc_backtest.py` (anything plausibly cited in prose), update the regex in the same change so future sweeps stay accurate. Don't ask — just do it and note it in the consistency-sweep report.
 

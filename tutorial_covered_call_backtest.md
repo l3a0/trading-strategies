@@ -753,6 +753,7 @@ All three winners match the `__main__` defaults: `0.25Δ`, `21 DTE`, and `0.75 c
 
 - **Walk-forward** (params optimized per period, 6-month OOS windows chained): **~483%** cumulative compound return.
 - **Fixed params** (`0.25Δ`, `21 DTE`, `0.75 close`) over the same span: **~563%** total return.
+- **Buy-and-hold** over the same span: **~467%** total return — *not* the README's ~646%, which is the full 10-year sample. This is the baseline the overlay numbers above should be compared against.
 
 Walk-forward **underperformed** fixed-params by about 80 percentage points (~14% relative). That sounds bad until you notice what the fixed-params number actually represents: the return *given that you somehow knew, before seeing any of this data, that those exact three parameters would be the winners on this 7.5-year window*.
 
@@ -761,6 +762,8 @@ The walk-forward number is the return you'd have actually achieved running this 
 **The pedagogical point isn't "walk-forward gets you a better number."** It's the opposite: **fixed-params backtests systematically overestimate the strategy's return; walk-forward gives you the number you'd actually have achieved**. If you see a strategy that "outperforms" in a single full-period backtest, walk-forward will often pull the headline number lower — that's the methodology working, not failing.
 
 This also clarifies the right reading of the headline 915% number reported elsewhere in this tutorial. That number is the fixed-params total return over the *full* 10-year MSFT sample (2016 → 2026), which includes 2 extra years on either side of the walk-forward span. The 483% / 563% comparison above is the apples-to-apples one inside the walk-forward window.
+
+The same span trap applies to the buy-and-hold baseline. The README's ~646% buy-and-hold is the full 10-year sample; over the walk-forward window buy-and-hold returned ~467%. Compared correctly, fixed-params (~563%) beats same-span buy-and-hold by ~96 pp, but the honest walk-forward number (~483%) clears it by only ~16 pp over 7.5 years. That thin no-hindsight margin over simply holding the stock is exactly what the Part 5 significance test puts a number on — and why the Newey-West t-stat on the overlay's *excess* over buy-and-hold lands well below 2.
 
 ### Common Mistake: Optimizing on Too Many Parameters (Overfitting the Grid)
 
