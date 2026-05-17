@@ -41,6 +41,12 @@ FIGURE_CALLS: dict[str, str] = {
     "02_excess_histogram.png": "fig2_excess_histogram(daily_equity, summary, stats)",
     "03_bias_variance.png": "fig3_bias_variance()",
     "04_t_stat_vs_years.png": 'fig4_t_stat_vs_years(stats["sharpe_excess"])',
+    "05_implied_vs_realized_vol.png": "fig5_implied_vs_realized_vol(dates, prices)",
+    "06_delta_dial.png": "fig6_delta_dial(prices)",
+    "07_walk_forward_schematic.png": "fig7_walk_forward_schematic(records)",
+    "09_monte_carlo.png": "fig9_monte_carlo(mc)",
+    "10_regime_pnl.png": "fig10_regime_pnl(regimes)",
+    "11_excess_acf.png": "fig11_excess_acf(daily_equity, summary)",
 }
 
 IMAGE_RE = re.compile(r"^!\[.*\]\((?:\./)?docs/figures/([0-9A-Za-z_]+\.png)\)\s*$")
@@ -315,8 +321,10 @@ from cc_backtest import (
     detect_regime,
     estimate_iv,
     find_strike_for_delta,
+    monte_carlo_shuffle,
     normal_cdf,
     normal_pdf,
+    regime_analysis,
     run_cc_overlay,
     walk_forward_optimization,
 )
@@ -324,11 +332,21 @@ from cc_backtest import (
 
 DATA_PREP_CODE = '''\
 # === Run the backtest once — the figure cells below reuse these results ===
+# Heads-up: this cell also runs the 15x27 walk-forward and a 500-path
+# Monte Carlo so the Part 4/5 figure cells have their inputs. That makes
+# this the slow cell (tens of seconds, like the bias-variance figure) —
+# it runs once and every figure below reuses the results.
 from make_figures import (
     fig1_equity_curves,
     fig2_excess_histogram,
     fig3_bias_variance,
     fig4_t_stat_vs_years,
+    fig5_implied_vs_realized_vol,
+    fig6_delta_dial,
+    fig7_walk_forward_schematic,
+    fig9_monte_carlo,
+    fig10_regime_pnl,
+    fig11_excess_acf,
     load_msft_csv,
 )
 
@@ -340,15 +358,28 @@ params = {
     "risk_free_rate": 0.045,
     "capital": 100_000,
 }
-summary, _trades, daily_equity = run_cc_overlay(dates, prices, params)
+summary, trades, daily_equity = run_cc_overlay(dates, prices, params)
 stats = compute_statistics(
     daily_equity,
     num_contracts=summary["num_contracts"],
     cash=summary["cash"],
 )
+
+# Walk-forward grid mirrors test_cc_backtest.py's pinned grid.
+param_grid = {
+    "call_delta": [0.15, 0.20, 0.25],
+    "dte": [21, 30, 45],
+    "close_at_pct": [0.50, 0.75, 1.00],
+}
+_oos_equity, records = walk_forward_optimization(dates, prices, param_grid)
+mc = monte_carlo_shuffle(dates, prices, params, n_shuffles=500, seed=42)
+regimes = regime_analysis(dates, prices, trades)
+
 print(
     f"Backtest ready — Sharpe of excess return: {stats['sharpe_excess']:+.3f}, "
-    f"Newey-West t-stat: {stats['t_stat_newey_west']:+.2f}"
+    f"Newey-West t-stat: {stats['t_stat_newey_west']:+.2f}, "
+    f"walk-forward periods: {len(records)}, "
+    f"MC percentile: {mc['percentile']:.0f}"
 )
 '''
 

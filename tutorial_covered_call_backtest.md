@@ -163,7 +163,7 @@ Think of it this way:
 
 ### Why We Need It: No Historical Option Data
 
-Here's the hard truth: **We don't have historical option prices.**
+**We don't have historical option prices.**
 
 If I want to test, "Would I have profited selling SPY calls on January 15, 2015?", I can't just look up what SPY calls cost that day—at least not easily or reliably. The data is expensive or incomplete.
 
@@ -257,6 +257,10 @@ Delta (Δ) is one of the most misunderstood Greek letters in finance.
 
 For income strategies, we typically sell 0.20Δ to 0.40Δ strikes (low probability of assignment).
 
+![Black-Scholes call delta plotted against how far out-of-the-money the strike is set, for MSFT with the stock at the first sample price (≈$48), assumed volatility ≈28%, 21 days to expiry. The curve falls monotonically from ≈0.54 at-the-money toward zero by ~20% out-of-the-money. A shaded horizontal band marks the 0.20–0.40 income-seller zone; a red dot marks the 0.25-delta strike, which lands ≈7% above the $48 stock (≈$51).](docs/figures/06_delta_dial.png)
+
+*The dial as a curve. Delta is monotone-decreasing in strike, so "pick a target delta" and "pick a strike distance" are the same decision viewed from two ends. The 0.20–0.40 band is wide in delta but narrow in strike distance — a few percent of moneyness covers the whole income-seller range, which is why small volatility errors move the effective delta more than you'd expect.*
+
 ### Finding a Strike for a Target Delta: The Brute-Force Search Approach
 
 Now the practical question: "I want to sell a 0.25Δ call. Which strike should I pick?"
@@ -326,8 +330,6 @@ Note: The delta won't be exactly 0.25 after rounding to a whole dollar — that'
 
 ### Common Mistake: Confusing Historical Volatility with Implied Volatility
 
-Here's where most people get confused.
-
 **Historical volatility (HV)** = How much the stock bounced around in the past
 
 - Example: "SPY moved ±1% per day on average over the last 30 days"
@@ -371,6 +373,10 @@ In the production engine `estimate_iv(rolling_vol)` does steps 2 and 3 together 
 - **In persistent trends:** HV might be high (the stock is moving a lot) but IV might be low (it's moving in one direction, so options are more predictable)
 
 We implement this regime-based approach in Part 3's `run_cc_overlay()` engine.
+
+![Two volatility series for MSFT, 2016–2026: trailing 30-day realized vol (gray) and the regime-scaled IV proxy (blue), with the gap between them shaded. Horizontal bands at the 15% and 25% thresholds label the low/normal/high regimes and their 1.5×/1.3×/1.1× multipliers. Realized vol spikes to ≈110% in the March 2020 crash, where the blue–gray gap visibly compresses.](docs/figures/05_implied_vs_realized_vol.png)
+
+*The proxy made visible. Four of the five Black-Scholes inputs are observable to the penny; this chart is the fifth. The shaded band is the assumed HV→IV markup, and it is not constant: it is widest in the low-vol regime (1.5×) and pinches shut in the 2020 panic (1.1×), exactly the regime-dependent behavior the multiplier table encodes. Every option price in the backtest inherits whatever error lives in that gap.*
 
 ---
 
@@ -719,7 +725,11 @@ Running walk-forward on the bundled MSFT data with the 3×3×3 grid produces 15 
 | **dte** | **21** | 21 × 9, 30 × 4, 45 × 2 |
 | **close_at_pct** | **0.75** | 0.75 × 11, 0.50 × 2, 1.00 × 2 |
 
-All three winners match the `__main__` defaults: `0.25Δ`, `21 DTE`, and `0.75 close_at_pct`. The walk-forward optimizer searches 27 combinations across 15 disjoint out-of-sample periods and keeps landing on the same configuration the rest of the tutorial uses. That convergence is a small piece of evidence that these defaults are what an honest, no-peeking search settles on across very different market windows.
+All three *per-axis* winners match the `__main__` defaults: `0.25Δ`, `21 DTE`, and `0.75 close_at_pct`. The convergence is strongest on the strike dial — `call_delta` is 0.25 in 14 of 15 periods — and looser on the other two axes, which wander within the grid without ever straying far from the middle setting. The exact triple `0.25Δ / 21 / 0.75` wins outright in a minority of periods; what's robust is the *neighborhood*, not a single combination repeating verbatim. That an honest, no-peeking search keeps returning to the same region across very different market windows is a small piece of evidence the defaults reflect something structural.
+
+![A schedule of 15 stacked rows, one per walk-forward cycle, time on the horizontal axis 2016–2026. Each row shows a 2-year training bar (blue) immediately followed by a 6-month test bar (orange); successive rows shift 6 months later, marching diagonally down and to the right. Rows whose chosen parameters left the 0.25Δ/21d/0.75 default are labelled with the combination the optimizer picked.](docs/figures/07_walk_forward_schematic.png)
+
+*The discipline, drawn out. Blue is in-sample (free to optimize); orange is the locked, never-tuned six months that actually counts. The labels make the per-axis story concrete: delta pins to 0.25 almost everywhere, while DTE and close-pct drift between adjacent grid values — convergence to a region, not a point.*
 
 **Why these defaults make sense:**
 
@@ -816,6 +826,10 @@ The implementation is [`cc_backtest.py::monte_carlo_shuffle`](https://github.com
 
 **Interpretation:** The strategy beats randomized price paths — it exploits real price patterns, not just luck. A percentile above 80 indicates genuine skill.
 
+![Histogram of total overlay returns across 500 shuffled price paths, roughly bell-shaped and centered near 657%. A dotted line marks the shuffle mean, a dashed line the best shuffle at ≈870%, and a solid red line at ≈915% sits to the right of the entire distribution — the real ordered path, beyond every shuffle.](docs/figures/09_monte_carlo.png)
+
+*Percentile 100, visualized. The shuffles keep the exact return set and destroy only the order, so the spread here is the return you'd get from MSFT's volatility with the trends and clusters removed. The real path sits outside the whole distribution: the overlay is harvesting a property of the return distribution, not a lucky sequence — but note the shuffle mean (~657%) is itself enormous, which is the first hint that most of this return is the stock, not the overlay.*
+
 ### Sensitivity Analysis: Perturb Each Parameter, See If Results Collapse
 
 **Idea:** Unlike a grid search (which tries many combinations to find the *best* params), sensitivity analysis starts from already-chosen params and nudges *one at a time* to check *stability*. Grid search answers "what's optimal?" — sensitivity analysis answers "how fragile is that optimum?" If returns change drastically from a small tweak, you're overfitting that parameter. A robust strategy should stay in a similar range across small perturbations.
@@ -875,6 +889,10 @@ The implementations are [`cc_backtest.py::classify_regime`](https://github.com/l
 
 **Interpretation:** Bear and sideways regimes produce **roughly 10× the per-day premium** of bull regimes, even though bull days dominate the day count (1,690 out of 2,515). Two things drive this: (1) volatility is higher in non-bull regimes, so option premium per trade is richer; (2) more positions hit their profit target or assignment threshold when the stock isn't grinding steadily upward. The strategy is structurally defensive — it earns most of its keep when the market is anything other than a one-way bull. That's the point of selling vol.
 
+![Bar chart of average overlay P&L per day by market regime: the bull bar is tiny at ≈$23/day, while the sideways bar towers at ≈$402/day and the bear bar at ≈$303/day.](docs/figures/10_regime_pnl.png)
+
+*The defensive signature in one picture. A bull-market strategy in disguise would put its tall bar on the left. This does the inverse: it barely registers while MSFT grinds up and earns ~13–17× as much per day once volatility returns. The day-count asymmetry (1,690 bull days vs. 625 bear+sideways) is exactly why the headline P&L still looks bull-driven in dollar terms even though the per-day edge is not.*
+
 ### Common Mistake: Only Testing in Bull Markets
 
 If you only backtest on 2016–2021 (a strong bull run), you'll overestimate buy-and-hold returns and underestimate the CC overlay's relative value.
@@ -904,6 +922,20 @@ Two thresholds to remember:
 - **|t| > 2** — Fisher's traditional bar. ~5% chance of occurring under the null. The textbook line for "statistically significant."
 - **|t| > 3** — [Harvey, Liu & Zhu's stricter bar from their 2016 paper](https://academic.oup.com/rfs/article-abstract/29/1/5/1843824). They argue that because finance has tested hundreds of factors, many "significant" |t| ≈ 2 results are just the lucky ones from a wide search. Three is the honest bar once you account for multiple testing.
 
+Those thresholds are easier to feel as **p-values** — the probability that pure chance, under H₀, produces a t at least this extreme. At n ≈ 2,500 daily observations the reference distribution is effectively standard normal (what Newey–West and Harvey–Liu–Zhu both assume asymptotically), so the mapping is just the normal tail:
+
+| t-stat | Two-sided p | One-sided p | ≈ false-positive odds (two-sided) |
+| ---: | ---: | ---: | --- |
+| 1.96 (exact 5%) | 0.050 | 0.025 | 1 in 20 |
+| **2.0** — conventional bar | **0.046** | 0.023 | ~1 in 22 |
+| 2.576 (exact 1%) | 0.010 | 0.005 | 1 in 100 |
+| **3.0** — Harvey–Liu–Zhu bar | **0.0027** | 0.0013 | ~1 in 370 |
+| naive **0.40** (this backtest) | 0.69 | 0.34 | ~1 in 1.4 |
+| Newey–West **0.46** (this backtest) | 0.65 | 0.32 | ~1 in 1.5 |
+| risk-managed **1.63** | 0.10 | 0.052 | ~1 in 10 |
+
+`compute_statistics` tests `|t|`, so the two-sided column is the one the pass/fail flags use; the one-sided column applies if you only care about a *positive* edge. Two caveats keep these honest: (1) the single-test p **understates** the true false-positive rate after a parameter search — search 27 combos, report the luckiest, and your real error rate is far worse than its nominal p; that gap is precisely why HLZ push the bar to t = 3 (p ≈ 0.0027), and why you should never read the t = 2 column as your error rate when you optimized. (2) The p inherits the Newey–West SE and the normal-tail approximation; with fat tails or residual autocorrelation it is itself an estimate — argue from the t-magnitude and the HLZ bar, not a bright-line p = 0.05. On this backtest the Newey–West 0.46 is a p ≈ 0.65: chance beats the overlay's excess about two times in three. That is the quantitative content of "indistinguishable from zero."
+
 #### What We're Actually Testing
 
 For a covered call overlay, the relevant null hypothesis is:
@@ -916,7 +948,7 @@ The clean way to do that is **excess returns**: each day's overlay return minus 
 
 #### The IID Trap
 
-Here's where most DIY backtesters get fooled. The standard t-stat formula is:
+The standard t-stat formula is:
 
 ```text
 t = mean / (std_dev / sqrt(n))
@@ -1083,6 +1115,10 @@ Newey-West can move the t-stat in either direction depending on the *sign* of sh
 
 Our excess returns show mild day-to-day mean reversion — likely from the way profit-target closes and position re-opens introduce alternation between premium-collection days and gap days. Either way the conclusion stands: t = 0.46 is firmly below any meaningful threshold.
 
+![Bar chart of the autocorrelation of daily excess P&L at lags 1–20. Most bars sit just below zero; the bars inside the Newey-West window (lags 1–8) are predominantly negative, and almost all lie within a shaded ±1.96/√n white-noise band.](docs/figures/11_excess_acf.png)
+
+*The sign that flips the correction's direction. The IID t-stat assumes every bar here is zero. They aren't — but they lean *negative* across the lags Newey-West actually weights, not positive. Negative short-lag autocovariance means the effective sample is slightly larger than a naive day-count, so the HAC correction nudges 0.40 up to 0.46 rather than shrinking it. This is the picture behind "Newey-West can move the t-stat either way."*
+
 #### Why Is This Lower Than the Volatility Risk Premium Literature?
 
 The academic VRP literature ([Bakshi-Kapadia 2003](https://academic.oup.com/rfs/article-abstract/16/2/527/1605194), [Coval-Shumway 2001](https://onlinelibrary.wiley.com/doi/10.1111/0022-1082.00352), the [BXM whitepapers](https://www.cboe.com/us/indices/dashboard/BXM/)) reports t-statistics in the range of **5–8**. So why does our well-built MSFT backtest produce 0.46?
@@ -1201,7 +1237,7 @@ Here's the complete process:
 
 **Good signs:**
 
-- Walk-forward test shows 60–70% of in-sample returns (realistic)
+- Walk-forward efficiency (out-of-sample ÷ in-sample) stays healthy — roughly two-thirds is the common practitioner rule of thumb (Pardo 2008), not a small fraction. Treat the band as lore, not a law
 - Monte Carlo: real return percentile > 80% (beats randomized price paths)
 - Sensitivity: nearby parameters give similar results (not overfit)
 - Works in all regimes (not just bull markets)
@@ -1439,6 +1475,10 @@ Academic papers cited or built on in this tutorial. URLs link to the publishers'
 ### Numerical methods
 
 - Abramowitz, M. & Stegun, I. A. (eds.) (1964). *Handbook of Mathematical Functions with Formulas, Graphs, and Mathematical Tables*. National Bureau of Standards. Source of the polynomial CDF approximation (Formula 26.2.17) used in the educational version of `normal_cdf`. ([Wikipedia](https://en.wikipedia.org/wiki/Abramowitz_and_Stegun))
+
+### Backtesting methodology
+
+- Pardo, R. (2008). *The Evaluation and Optimization of Trading Strategies* (2nd ed.). John Wiley & Sons. Source of walk-forward analysis and the *walk-forward efficiency* (out-of-sample ÷ in-sample) heuristic; the "roughly two-thirds" band is practitioner lore, not a precise threshold from the book. ([Wiley](https://www.wiley.com/en-us/The+Evaluation+and+Optimization+of+Trading+Strategies%2C+2nd+Edition-p-9781118045053))
 
 ### Volatility risk premium
 
