@@ -62,6 +62,12 @@ HEADING_RE = re.compile(r"#{2,4} ")
 # as prose, not as one span.
 _DOLLAR_SAFE_RE = re.compile(r"`[^`\n]*`|\$\$[^$\n]*\$\$")
 
+# Intra-document anchor links — [label](#section). They resolve on GitHub's
+# .md renderer but point at nothing in every notebook viewer (see
+# delink_fragments). Only pure #-fragment targets; file links (foo.py#L10)
+# and external links start with something other than "#" and are left alone.
+_FRAGMENT_LINK_RE = re.compile(r"(?<!!)\[([^\]]+)\]\(#[^)]*\)")
+
 # Some tutorial sections *link* to code in cc_backtest.py instead of inlining
 # it (the repo's "linked, test-pinned implementations" convention), so the
 # converter sees no fenced block to turn into a runnable cell. For those, map
@@ -463,9 +469,38 @@ def _escape_inline_dollars(line: str) -> str:
     return "".join(parts)
 
 
+def delink_fragments(text: str) -> str:
+    """Strip dead intra-document anchor links for the notebook only.
+
+    A ``[label](#section)`` link resolves on GitHub's ``.md`` renderer, which
+    assigns ``user-content-`` heading ids — but it points at nothing in *every*
+    notebook viewer. Jupyter, JupyterLab, Colab, and GitHub's ``.ipynb`` blob
+    view all render notebook markdown without heading anchors, so the Table of
+    Contents and the inline cross-references ("see the [glossary]") show up as
+    clickable text that goes nowhere. Replace each with its bare label; the
+    tutorial keeps its working anchors. Readers navigate the notebook with the
+    built-in Table of Contents / Outline panel (Colab sidebar, JupyterLab,
+    VS Code), which reads the heading structure directly.
+
+    Only pure ``#``-fragment links are stripped — file links (``foo.py#L10``)
+    and external links keep their targets. Fenced code is left untouched.
+    """
+    out: list[str] = []
+    in_fence = False
+    for line in text.split("\n"):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            out.append(line)
+        elif in_fence:
+            out.append(line)
+        else:
+            out.append(_FRAGMENT_LINK_RE.sub(r"\1", line))
+    return "\n".join(out)
+
+
 def build_cells(md: str) -> list[dict]:
     lines = md.split("\n")
-    cells: list[dict] = [md_cell(INTRO_MD), code_cell(SETUP_CODE),
+    cells: list[dict] = [md_cell(delink_fragments(INTRO_MD)), code_cell(SETUP_CODE),
                          code_cell(DATA_PREP_CODE)]
     buf: list[str] = []
     pending_demo: str | None = None
@@ -473,7 +508,7 @@ def build_cells(md: str) -> list[dict]:
     def flush() -> None:
         text = "\n".join(buf).strip("\n")
         if text.strip():
-            cells.append(md_cell(escape_notebook_dollars(text)))
+            cells.append(md_cell(escape_notebook_dollars(delink_fragments(text))))
         buf.clear()
 
     i = 0
