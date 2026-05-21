@@ -456,10 +456,10 @@ def _escape_inline_dollars(line: str) -> str:
     parts: list[str] = []
     pos = 0
     for m in _DOLLAR_SAFE_RE.finditer(line):
-        parts.append(line[pos:m.start()].replace("$", "\\\\$"))
+        parts.append(line[pos:m.start()].replace("$", "\\$"))
         parts.append(m.group(0))  # code span / display math — left as-is
         pos = m.end()
-    parts.append(line[pos:].replace("$", "\\\\$"))
+    parts.append(line[pos:].replace("$", "\\$"))
     return "".join(parts)
 
 
