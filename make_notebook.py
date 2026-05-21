@@ -55,6 +55,13 @@ IMAGE_RE = re.compile(r"^!\[.*\]\((?:\./)?docs/figures/([0-9A-Za-z_]+\.png)\)\s*
 # Not H1 (the single doc title) and not H5+ (none exist).
 HEADING_RE = re.compile(r"#{2,4} ")
 
+# Spans where a literal $ must be left alone when escaping currency dollars
+# (see escape_notebook_dollars): single-backtick inline code and $$...$$
+# display math. Matched left-to-right so the prose *between* two code spans
+# (e.g. the cost paragraph's "$0.65/contract ... $0.0065/share") is treated
+# as prose, not as one span.
+_DOLLAR_SAFE_RE = re.compile(r"`[^`\n]*`|\$\$[^$\n]*\$\$")
+
 # Some tutorial sections *link* to code in cc_backtest.py instead of inlining
 # it (the repo's "linked, test-pinned implementations" convention), so the
 # converter sees no fenced block to turn into a runnable cell. For those, map
@@ -139,16 +146,13 @@ print(
     f"  -> run_cc_overlay refuses to open (net_premium <= 0)"
 )''',
     "### How to Stitch Out-of-Sample Results into a Single Equity Curve": '''\
-# Run the real walk-forward optimizer with the 3x3x3 grid the next section
-# discusses (pinned by test_walk_forward_optimization on this MSFT data).
+# The walk-forward search already ran once in the setup cell (it binds
+# `records` + `oos_equity` from the 3x3x3 grid pinned by
+# test_walk_forward_optimization). Reuse those — re-running here would
+# repeat the 405-backtest search just to reprint the same results.
 import collections
 
-grid = {
-    "call_delta": [0.15, 0.20, 0.25],
-    "dte": [21, 30, 45],
-    "close_at_pct": [0.50, 0.75, 1.00],
-}
-oos_equity, periods = walk_forward_optimization(dates, prices, grid)
+periods = records
 
 print(
     f"{len(periods)} out-of-sample periods: "
@@ -161,6 +165,8 @@ for key in ("call_delta", "dte", "close_at_pct"):
 
 # Cumulative OOS return = chain each period's 6-month return. The stitched
 # curve resets per period, so dividing last by first would be meaningless.
+# This is the same chaining test_walk_forward_optimization asserts; it's
+# shown once, here, because this is the section that explains stitching.
 cumulative = 1.0
 for p in periods:
     seg = oos_equity.loc[
@@ -189,24 +195,6 @@ print(
     f"\\nShortcut: Sharpe x sqrt(years) = {sh:.3f} x sqrt({yrs}) "
     f"= {sh * math.sqrt(yrs):.2f}  (vs naive t {stats['t_stat_naive']:+.2f})"
 )''',
-    "### The SMA Trend Filter: 50-Day and 200-Day Moving Averages": '''\
-# sma/is_uptrend aren't in the engine — run_cc_overlay has no trend filter.
-# Compute the SMA50 vs SMA200 golden-cross signal on the real MSFT closes
-# to see why the Part 4 walk-forward dropped it.
-trend = np.array([
-    prices[i - 50:i].mean() > prices[i - 200:i].mean()
-    for i in range(200, len(prices))
-])
-n_up = int(trend.sum())
-print(f"{trend.size} days with both SMAs defined")
-print(f"  SMA50 > SMA200 (uptrend):   {n_up:5d}  ({n_up / trend.size:5.1%})")
-print(f"  SMA50 < SMA200 (downtrend): {trend.size - n_up:5d}"
-      f"  ({1 - n_up / trend.size:5.1%})")
-print(
-    "\\nThe CC overlay sells in every regime, so this golden-cross signal\\n"
-    "would not have gated a single covered-call trade here — which is why\\n"
-    "the walk-forward search found the entry trend filter didn't earn its keep."
-)''',
     "### The Parameter Grid: What We Search Over and Why": '''\
 # Expand the 3x3x3 grid with the real helper the optimizer uses.
 from cc_backtest import _param_combinations
@@ -225,12 +213,10 @@ print("   ...")
 for c in combos[-2:]:
     print("  ", c)''',
     "### Monte Carlo Simulation: Shuffle Daily Returns, Rebuild Price Paths": '''\
-# Reuse the real cc_backtest.monte_carlo_shuffle — the exact function
-# test_monte_carlo_shuffle pins, so the notebook can't drift from it.
-# ~12s, the heaviest cell (500 backtests).
-from cc_backtest import monte_carlo_shuffle
-
-mc = monte_carlo_shuffle(dates, prices, params)  # defaults: 500 paths, seed=42
+# `mc` already came from cc_backtest.monte_carlo_shuffle in the setup
+# cell (500 paths, seed=42 — the exact call test_monte_carlo_shuffle
+# pins). Reuse it; rerunning the 500-backtest shuffle here would just
+# reproduce the same dict the heavy setup cell already holds.
 print(
     f"real {mc['real_return']:.0f}%  vs  MC mean {mc['mc_mean']:.0f}%"
     f"  (max {mc['mc_max']:.0f}%)  ->  percentile {mc['percentile']}"
@@ -371,7 +357,7 @@ param_grid = {
     "dte": [21, 30, 45],
     "close_at_pct": [0.50, 0.75, 1.00],
 }
-_oos_equity, records = walk_forward_optimization(dates, prices, param_grid)
+oos_equity, records = walk_forward_optimization(dates, prices, param_grid)
 mc = monte_carlo_shuffle(dates, prices, params, n_shuffles=500, seed=42)
 regimes = regime_analysis(dates, prices, trades)
 
@@ -436,6 +422,47 @@ def code_cell(text: str) -> dict:
     }
 
 
+def escape_notebook_dollars(text: str) -> str:
+    """Escape literal currency dollars as ``\\$`` for the notebook only.
+
+    The tutorial keeps dollars bare — correct on GitHub's ``.md`` renderer
+    (it only typesets math it tags server-side and never tags dollar prose)
+    and on Substack. But GitHub renders ``.ipynb`` with a naive MathJax pass
+    that pairs *any* two ``$`` on a line, so bare prose like "$50 ... $52"
+    would typeset as math. A ``\\$`` in the cell source survives markdown
+    processing as a literal backslash-dollar, which MathJax's processEscapes
+    renders as a plain ``$`` — the one form confirmed to work in GitHub's
+    notebook viewer.
+
+    Left untouched, because there a ``$`` is already safe and a backslash
+    would show literally: fenced code blocks, single-backtick inline code,
+    and ``$$...$$`` display math (the SE formula in Part 5).
+    """
+    out: list[str] = []
+    in_fence = False
+    for line in text.split("\n"):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            out.append(line)
+        elif in_fence:
+            out.append(line)
+        else:
+            out.append(_escape_inline_dollars(line))
+    return "\n".join(out)
+
+
+def _escape_inline_dollars(line: str) -> str:
+    """Escape ``$`` -> ``\\$`` outside inline code and ``$$`` display math."""
+    parts: list[str] = []
+    pos = 0
+    for m in _DOLLAR_SAFE_RE.finditer(line):
+        parts.append(line[pos:m.start()].replace("$", "\\\\$"))
+        parts.append(m.group(0))  # code span / display math — left as-is
+        pos = m.end()
+    parts.append(line[pos:].replace("$", "\\\\$"))
+    return "".join(parts)
+
+
 def build_cells(md: str) -> list[dict]:
     lines = md.split("\n")
     cells: list[dict] = [md_cell(INTRO_MD), code_cell(SETUP_CODE),
@@ -446,7 +473,7 @@ def build_cells(md: str) -> list[dict]:
     def flush() -> None:
         text = "\n".join(buf).strip("\n")
         if text.strip():
-            cells.append(md_cell(text))
+            cells.append(md_cell(escape_notebook_dollars(text)))
         buf.clear()
 
     i = 0

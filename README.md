@@ -75,9 +75,9 @@ CI runs `ruff`, `pyright`, the test suite, and a backtest smoke test on every PR
 | File | What it is |
 | --- | --- |
 | [cc_backtest.py](cc_backtest.py#L201) | Backtest engine: Black-Scholes pricing, rolling vol, regime-based IV, day-by-day overlay state machine, Newey-West t-stat reporting on excess returns |
-| [test_cc_backtest.py](test_cc_backtest.py#L35) | Unit and scenario tests covering pricing, the overlay state machine, and the statistics helper |
+| [test_cc_backtest.py](test_cc_backtest.py#L36) | Unit and scenario tests covering pricing, the overlay state machine, and the statistics helper |
 | [download_prices.py](download_prices.py#L11) | yfinance data downloader |
-| [make_figures.py](make_figures.py#L369) | Regenerates the four educational figures embedded in the tutorial into `docs/figures/` |
+| [make_figures.py](make_figures.py#L838) | Regenerates the tutorial and blog figures (`fig1`–`fig12`) into `docs/figures/` |
 | [make_notebook.py](make_notebook.py#L1) | Regenerates the runnable notebook from the tutorial markdown + figure script |
 | [msft_10yr_prices.csv](msft_10yr_prices.csv) | Sample MSFT price data, 2016-04 to 2026-04 |
 | [tutorial_covered_call_backtest.md](tutorial_covered_call_backtest.md) | Long-form tutorial — theory, math, code walkthrough, and statistical-significance testing |
