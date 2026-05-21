@@ -74,14 +74,14 @@ A backtest is a time machine. You rewind to the past, follow your rules perfectl
 - They only count the survivors — the stocks that didn't go bankrupt (survivorship bias)
 - They tweak parameters so much that they overfit to random noise (overfitting)
 
-We'll avoid all three of these traps.
+We engineer the first out of the code, sidestep the second, and attack the third head-on.
 
 ### The Three Enemies of Backtesting
 
-| Enemy | What It Means | Example in CC Trading | How We'll Stop It |
+| Enemy | What It Means | Example in CC Trading | How We Handle It |
 | --- | --- | --- | --- |
 | **Look-ahead bias** | You use tomorrow's price to make today's decision | "I'll sell a call because I know the price will drop tomorrow" | Only use data available on the decision date; never peek forward |
-| **Survivorship bias** | You only test stocks that survived (ignoring the ones that died) | Only test Apple, Google, Microsoft (tech survived 2000s); ignore Blockbuster | Test a diverse index; accept all stocks |
+| **Survivorship bias** | You only test stocks that survived (ignoring the ones that died) | Only test Apple, Google, Microsoft (tech survived 2000s); ignore Blockbuster | Can't be eliminated on one stock, and this backtest deliberately tests a single survivor (Microsoft). We sidestep it by measuring the overlay's *excess over the same stock* — the winner's drift inflates overlay and benchmark alike, so it cancels in the difference. Single-stock stays a real limitation; the genuine fix (a diverse universe, including delisted names) is named but not run here (Part 5 and the conclusion) |
 | **Overfitting** | You tune your strategy so it's perfect for 2010-2020, then it fails 2021-2026 | Tweak the delta, expiration, and volatility multiplier until you get 1000% returns | Use walk-forward validation: train on one period, test on a different period |
 
 ### Mental Model: Think of Backtesting Like a Time Machine With Rules
