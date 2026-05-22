@@ -382,10 +382,7 @@ Note: The delta won't be exactly 0.25 after rounding to a whole dollar — that'
 
 In our backtest, we **don't have historical option prices**, so we can't extract IV. Instead, we use HV as a proxy, then adjust it.
 
-**The relationship:**
-
-- When the market is calm, IV might be *lower* than HV (people expect calm)
-- When the market is nervous, IV might be *higher* than HV (people expect chaos)
+**The relationship:** IV usually sits **above** HV — sellers are paid a premium for bearing volatility risk (the VRP from the reveal above), so a proxy built from HV has to scale *up*, not down. How far up depends on the market regime — that's the next section.
 
 ### The IV Proxy: Why a Regime-Based Multiplier Works
 
