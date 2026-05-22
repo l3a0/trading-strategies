@@ -170,13 +170,14 @@ Translation: "If the stock is at $50 and the strike is $52, how many standard de
 
 A high σ (volatility) makes the denominator huge, so d₁ stays closer to zero. This means the market expects big moves, so the option is worth more.
 
-#### Step 2: Use the normal distribution to convert d₁ to a probability
+#### Step 2: Run d₁ and d₂ through the normal distribution
 
 ```text
-N(d₁) = probability that the stock ends up in-the-money
+N(d₂) = (risk-neutral) probability the stock finishes in-the-money
+N(d₁) = delta — how much the option's value moves per $1 of stock
 ```
 
-This requires the **cumulative normal distribution function (CDF)** — the function that converts a z-score into a probability (see [Glossary](#appendix-c-glossary-of-key-terms)). We'll use the [Abramowitz & Stegun approximation](https://en.wikipedia.org/wiki/Abramowitz_and_Stegun).
+Both run through the **cumulative normal distribution function (CDF)** — the function that converts a z-score into a probability (see [Glossary](#appendix-c-glossary-of-key-terms)). We'll use the [Abramowitz & Stegun approximation](https://en.wikipedia.org/wiki/Abramowitz_and_Stegun). (d₂ is just d₁ nudged down by σ√T.) Traders often read delta itself as the ITM probability — that's N(d₁) standing in for N(d₂), close for short-dated options but not exact; we come back to it at the delta dial.
 
 #### Step 3: Calculate the call option price
 
@@ -186,8 +187,8 @@ C = S·N(d₁) - K·e^(-rT)·N(d₂)
 
 Think of it this way:
 
-- **S·N(d₁)** = "If I were to buy the stock outright, but only for the probability it goes up, how much would I pay?"
-- **K·e^(-rT)·N(d₂)** = "If I were to pay the strike price, but discounted for interest and adjusted for risk, how much is that?"
+- **S·N(d₁)** = "the share I'd receive if the call is exercised, valued today"
+- **K·e^(-rT)·N(d₂)** = "the strike I'd pay if exercised — discounted for interest and scaled by N(d₂), the chance I actually pay it"
 - The **difference** is what the option is worth.
 
 ### Why We Need It: No Historical Option Data
@@ -270,21 +271,21 @@ def normal_cdf(x):
 
 ### Delta: The Probability Dial — What 0.20 Δ Actually Means
 
-Delta (Δ) is one of the most misunderstood Greek letters in finance.
+**Simple definition:** Delta is *approximately* the probability that your option ends in-the-money at expiration — close enough that traders use it as the everyday proxy.
 
-**Simple definition:** Delta is the probability that your option ends in-the-money at expiration.
+- **Δ = 0.20** → ~20% chance the stock rises past the strike → sell a call with ~20% ITM risk
+- **Δ = 0.50** → ~50% chance the stock rises past the strike → sell a call with ~50% ITM risk
+- **Δ = 0.80** → ~80% chance the stock rises past the strike → ~80% ITM risk: near-certain assignment, almost no upside kept
 
-- **Δ = 0.20** → 20% chance the stock rises past the strike → sell a call with 20% ITM risk
-- **Δ = 0.50** → 50% chance the stock rises past the strike → sell a call with 50% ITM risk
-- **Δ = 0.80** → 80% chance the stock rises past the strike → sell a call with 80% ITM risk (dangerous!)
+The shorthand is a proxy, not an identity: call delta is N(d₁), while the exact (risk-neutral) chance of finishing ITM is N(d₂) = N(d₁ − σ√T), which runs a little lower. The gap shrinks the shorter-dated and lower-vol the option, so for the 21-day calls this engine sells, delta and the true probability sit within a couple of points — fine for picking a strike, as long as you don't mistake the dial for the thing it measures.
 
 **In covered call terms:**
 
-- Sell **0.30Δ** = "I'm okay with a 30% chance the stock gets called away"
+- Sell **0.30Δ** = "I'm okay with a ~30% chance the stock gets called away"
 - Sell **0.50Δ** = "50/50 shot the shares get called away"
-- Sell **0.70Δ** = "High chance the shares get called away; this is aggressive"
+- Sell **0.70Δ** = "high chance of assignment — and I've sold away most of my upside, collecting mostly intrinsic value" (the premium's in-the-money portion, `stock − strike` — handed back at assignment, so the real income is just the smaller time-value slice)
 
-For income strategies, we typically sell 0.20Δ to 0.40Δ strikes (low probability of assignment).
+Income sellers conventionally target the **0.20–0.40 delta** range, low enough that assignment is the exception rather than the rule. The ~0.30 center of that band is institutional convention, not theory: CBOE's [30-Delta BuyWrite Index (BXMD)](https://www.cboe.com/us/indices/dashboard/BXMD/) writes one-month 0.30-delta S&P 500 calls by published methodology. The width around that center is a practitioner rule of thumb, not a derived threshold. This engine sits at the conservative, low-delta end: the walk-forward `call_delta` grid is `[0.15, 0.20, 0.25]`, defaulting to 0.25.
 
 ![Black-Scholes call delta plotted against how far out-of-the-money the strike is set, for MSFT with the stock at the first sample price (≈$48), assumed volatility ≈28%, 21 days to expiry. The curve falls monotonically from ≈0.54 at-the-money toward zero by \~20% out-of-the-money. A shaded horizontal band marks the 0.20–0.40 income-seller zone; a red dot marks the 0.25-delta strike, which lands ≈7% above the $48 stock (≈$51).](docs/figures/06_delta_dial.png)
 
@@ -323,7 +324,7 @@ The full Black-Scholes toolkit — `normal_pdf`, `normal_cdf`, `bs_price`, `bs_d
 | `normal_pdf(x)` | Height of the standard-normal bell curve at `x`. Used inside the A&S polynomial CDF approximation shown earlier. |
 | `normal_cdf(x)` | Area under the bell curve from `-∞` to `x` — converts a z-score into a probability. Production uses `math.erf` (\~15 decimals) rather than the polynomial (\~7 decimals); the educational section above shows the polynomial so you can see *how* a CDF approximation works, and the production docstring explains why the switch matters at scale (A&S's 8th-decimal error compounds into a few cents of equity drift across hundreds of thousands of CDF calls). |
 | `bs_price(S, K, T, r, sigma, option_type='put')` | The Black-Scholes formula itself — returns the option premium given stock, strike, time, rate, vol, and option type. |
-| `bs_delta(S, K, T, r, sigma, option_type='put')` | Just `N(d1)` for calls or `N(d1) − 1` for puts — the probability of finishing ITM (and the option's first-derivative sensitivity to stock price). |
+| `bs_delta(S, K, T, r, sigma, option_type='put')` | Just `N(d1)` for calls or `N(d1) − 1` for puts — the option's first-derivative sensitivity to stock price, and a close proxy for the probability of finishing ITM (the exact risk-neutral figure is `N(d2)`). |
 | `find_strike_for_delta(S, T, r, sigma, target_delta, option_type='put')` | Grid search across whole-dollar strikes; returns the one whose Black-Scholes delta is closest to `target_delta`. Whole-dollar because real option chains list whole-dollar strikes. |
 
 **How to use it:**
