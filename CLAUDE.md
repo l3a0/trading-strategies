@@ -281,3 +281,9 @@ The right pattern:
 5. Commit exactly what was summarized. If new changes appeared between summary and commit, re-summarize and re-confirm — don't bundle unreviewed changes into an authorized commit.
 
 If you find yourself thinking "they already approved committing earlier in this session, so this small follow-up is fine" — stop. That reasoning is the exact failure mode this rule exists to prevent. The interaction with the regen rule is: the regen *runs* without asking (it's a mechanical consequence of the prior edit), but the *commit* of that regen still requires fresh approval like any other change.
+
+### Branch, don't commit to `main`
+
+**This repo is PR-gated: every change lands through a feature branch → pull request → squash-merge** (see the `#18`–`#24` commit history). Never commit directly to `main`. Create a `fix/…` (or `feat/…`) branch, commit there, push the branch, and open a PR so review and CodeQL gating run before merge.
+
+**Re-check `git branch --show-current` before *every* commit — not just the first of a session.** A mid-session squash-merge deletes the branch you were working on and leaves the local checkout on `main`, so "I was on a branch at the last commit" is not a safe assumption — the ground can move under you between turns. If the check shows `main`, branch first. (The orphaned local branch left behind by a merge is cleaned up separately, via `git sync-prune` / `git branch -D` — that's housekeeping, not part of the commit flow.)
