@@ -546,7 +546,7 @@ The real engine has no separate per-day function — [`cc_backtest.py::run_cc_ov
 
 ### Transaction Costs: Commission ($0.65/contract) + Slippage (3% of Premium)
 
-This is where backtests often lie.
+Leave transaction costs out of a backtest and every trade looks more profitable than it would in a real account.
 
 **Reality:**
 
@@ -563,7 +563,7 @@ The engine doesn't wrap this in a helper — it's one line inside [`cc_backtest.
 - Commission on open (0.65 per contract = $0.0065 per share): lose $0.0065
 - **Net credit:** $1.00 - $0.03 - $0.0065 = **$0.9635**
 
-Over a year with 12 calls sold, transaction costs can eat 5–10% of returns.
+Over a year with ~12 calls sold, slippage and commission consume roughly 3–5% of the premium collected. The slippage alone is a flat 3% by construction; the $0.65/contract commission adds the rest.
 
 ### The Dynamic IV Multiplier: Context Matters
 
@@ -656,14 +656,14 @@ Answer from memory before revealing — if one doesn't come, that section is wor
 
 1. "Never sell your shares" is *the* rule. When a short call goes deep in-the-money, what does the overlay actually do — and why does that make it an *overlay* rather than market timing?
 2. Before expiration the state machine has exactly two early-close triggers. Name both and give the one-line reason for each.
-3. The engine charges 3% slippage + $0.65/contract on every trade. Roughly what share of annual returns do costs consume, and what does the engine do when costs would exceed the credit?
+3. The engine charges 3% slippage + $0.65/contract on every trade. Roughly what share of the premium do these costs consume, and what does the engine do when costs would exceed the credit?
 
 <details>
 <summary>Reveal</summary>
 
-1. The share position is **permanent** — the engine never liquidates the underlying. When a short call goes deep ITM it **buys the call back** at delta > 0.70 (the `close_itm` rule) specifically to avoid assignment; assignment happens only as a fallback, when a call reaches expiration still ITM without the 0.70 or profit-target gate having closed it first — and even then the shares are modeled as held (the overlay books `premium − (price − strike)` while the stock's appreciation up to the strike stays in equity). Either path cycles only the *short call*, never the shares. Liquidating shares to dodge assignment would make it a market-timing bet on the stock, the opposite of running an income overlay on a position you hold anyway.
+1. The share position is **permanent** — the engine never liquidates the underlying. When a short call goes deep ITM it **buys the call back** at delta > 0.70 (the `close_itm` rule) specifically to avoid assignment. Assignment happens only as a fallback, when a call reaches expiration still ITM without the 0.70 or profit-target gate having closed it first — and even then the shares are modeled as held (the overlay books `premium − (price − strike)` while the stock's appreciation up to the strike stays in equity). Either path cycles only the *short call*, never the shares. Liquidating shares to dodge assignment would make it a market-timing bet on the stock, the opposite of running an income overlay on a position you hold anyway.
 2. **(a) 75% of the premium captured** → lock in most of the decay without riding through the gamma-heavy final stretch; **(b) delta > 0.70 (deep ITM)** → close to cap assignment damage before gamma compounds it. Anything short of those two: hold and recheck tomorrow.
-3. Roughly **5–10% of returns** over a year of ~monthly trades. If costs would exceed the credit (a near-worthless deep-OTM call), the engine **skips the trade** rather than open at a guaranteed loss.
+3. Roughly **3–5% of the premium** — the slippage is a flat 3% by construction, plus a small per-contract commission. If costs would exceed the credit (a near-worthless deep-OTM call), the engine **skips the trade** rather than open at a guaranteed loss.
 
 </details>
 
@@ -800,15 +800,15 @@ All three *per-axis* winners match the `__main__` defaults: `0.25Δ`, `21 DTE`, 
 
 **Why these defaults make sense:**
 
-1. **0.25Δ** is the sweet spot:
-   - Conservative (0.15Δ) misses too much premium
-   - Aggressive (0.35Δ) gets assigned too often
-   - 0.25 balances "collect income" with "keep the shares"
+1. **0.25Δ** is the top of the conservative grid:
+   - The walk-forward search only ranges over `[0.15, 0.20, 0.25]` — 0.25 is the most aggressive setting it can pick
+   - Lower (0.15Δ) leaves too much premium uncollected; pushing past the grid (0.30–0.35Δ) collects more but gets assigned too often
+   - 0.25 takes the most income the conservative range allows while still keeping the shares most of the time
 
 2. **21 DTE** is the monthly rhythm:
    - Matches typical options expiration cycles
    - Gives enough time for the trade to work out
-   - Allows 4–5 cycles per year for reinvesting premiums
+   - Runs roughly monthly — about 12 cycles a year for reinvesting premiums
 
 3. **75% profit target** is the sweet spot for closing:
    - Captures most of the premium decay without holding through the gamma-heavy final stretch
@@ -918,14 +918,14 @@ The implementation is [`cc_backtest.py::monte_carlo_shuffle`](https://github.com
 
 - Real return: \~915%
 - MC mean: \~657% (average across 500 shuffled paths)
-- MC percentile: 100 (our strategy beat 100% of random shuffles — the real return is higher than every single shuffled path's, with the shuffle max at \~870%)
-- This means: 0% of random price orderings produced a better return than our strategy did on the real price path.
+- MC percentile: 100 (in this seed-42 sample the real return tops every one of the 500 shuffled paths — the best reached \~870%)
+- What that 100 means: in *this* sample no scramble beat the real path. It does **not** mean the real ordering is unbeatable — at other seeds the percentile prints 98–99, with a handful of scrambles (\~0.5–1% of orderings) edging past. The real path sits around the **99th percentile** of orderings; seed 42 simply drew a sample with zero winners.
 
-**Interpretation:** Clearing the shuffled distribution rules out *sequence-luck* — the result survives destroying the trends and clusters. It does **not** establish skill or an edge over buy-and-hold: the shuffle mean (\~657%) is itself enormous because that's mostly the stock. Whether the overlay specifically adds value is the separate question the Newey-West test in *Statistical Significance* answers — in the negative.
+**Interpretation:** Landing in the far right tail of the shuffled distribution (\~99th percentile) rules out *sequence-luck* — the result survives destroying the trends and clusters. It does **not** establish skill or an edge over buy-and-hold: the shuffle mean (\~657%) is itself enormous because that's mostly the stock. Whether the overlay specifically adds value is the separate question the Newey-West test in *Statistical Significance* answers — in the negative.
 
 ![Histogram of total overlay returns across 500 shuffled price paths, roughly bell-shaped and centered near 657%. A dotted line marks the shuffle mean, a dashed line the best shuffle at ≈870%, and a solid red line at ≈915% sits to the right of the entire distribution — the real ordered path, beyond every shuffle.](docs/figures/09_monte_carlo.png)
 
-*Percentile 100, visualized. The shuffles keep the exact return set and destroy only the order, so the spread here is the return you'd get from MSFT's volatility with the trends and clusters removed. The real path sits outside the whole distribution: the overlay is harvesting a property of the return distribution, not a lucky sequence — but note the shuffle mean (\~657%) is itself enormous, which is the first hint that most of this return is the stock, not the overlay.*
+*The seed-42 sample, visualized. The shuffles keep the exact return set and destroy only the order, so the spread here is the return you'd get from MSFT's volatility with the trends and clusters removed. The real path sits in the far right tail — past every shuffle in this sample, around the 99th percentile of orderings: the overlay is harvesting a property of the return distribution, not a lucky sequence. But note the shuffle mean (\~657%) is itself enormous, the first hint that most of this return is the stock, not the overlay.*
 
 ### Sensitivity Analysis: Perturb Each Parameter, See If Results Collapse
 
@@ -1389,7 +1389,7 @@ Here's the complete process:
 *Overlay vs. buy-and-hold equity on the bundled MSFT data. The overlay finishes about $268K ahead. The gap is small through 2018, then widens through the 2019–2024 stretch and stays near $200–300K through the recent vol-heavy period — accumulating in the volatile middle years rather than in any single regime.*
 
 - ✅ Fixed params: \~915% total return on the bundled `$100K` configuration (final equity \~$1,015K; see Figure 1)
-- ✅ Monte Carlo: percentile 100 (real ordered path beats every one of 500 shuffled paths; max shuffled return \~870%)
+- ✅ Monte Carlo: real ordered path at the \~99th percentile of orderings (percentile prints 100 in the seed-42 sample — no scramble beat it there; max shuffled return \~870%)
 - ✅ Sensitivity: single-digit-% drops across both `call_delta` and `close_at_pct` perturbations
 - ✅ All regimes: bull, bear, sideways all profitable
 - ✅ Sharpe ratio vs cash (**rf** = risk-free rate; 4.5% is the engine default — see the `risk_free_rate` parameter in [`run_cc_overlay`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L201)): \~1.12, vs buy-and-hold MSFT's \~0.72 over the same window — risk-adjusted *absolute* returns are strong

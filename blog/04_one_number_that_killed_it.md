@@ -4,7 +4,7 @@
 
 Here is the paradox I opened this series with, now stated in full.
 
-The covered-call overlay added **$268,000** on top of buy-and-hold Microsoft over ten years. It kept ~86% of its return when tested out-of-sample with no hindsight. It beat all five hundred scrambled price paths. It shrugged off parameter nudges. It made money in bull, bear, and sideways markets. By the standards most strategies are sold on, it is bulletproof.
+The covered-call overlay added **$268,000** on top of buy-and-hold Microsoft over ten years. It kept ~86% of its return when tested out-of-sample with no hindsight. It beat all but a handful of five hundred scrambled price paths. It shrugged off parameter nudges. It made money in bull, bear, and sideways markets. By the standards most strategies are sold on, it is bulletproof.
 
 And the evidence that the overlay itself added anything — as opposed to riding a stock that happened to go up 646% — is **statistically indistinguishable from zero.**
 

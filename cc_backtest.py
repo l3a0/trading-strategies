@@ -307,8 +307,8 @@ def run_cc_overlay(
         date = dates[day_idx]
         price = float(prices[day_idx])
 
-        # Look up precomputed 30-day rolling annualized vol; fall back to 20%
-        # on day 0 when no return has been realized yet.
+        # Look up precomputed 30-day rolling vol. Days 0–2 fall back to 20%
+        # (day 0: no return yet, explicit else; days 1–2: NaN-filled above).
         rolling_vol = (
             float(rolling_vol_series.iloc[day_idx - 1])  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
             if day_idx > 0 else 0.20
