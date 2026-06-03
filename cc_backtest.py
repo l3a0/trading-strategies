@@ -889,7 +889,7 @@ def walk_forward_optimization(
     prices: NDArray[np.floating[Any]] | list[float],
     param_grid: dict[str, list[float]],
     fixed_params: dict[str, float] | None = None,
-    train_years: int = 2,
+    train_years: int = 3,
     test_months: int = 6,
     roll_months: int = 6,
 ) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
@@ -905,7 +905,8 @@ def walk_forward_optimization(
         fixed_params: parameters held constant across every combo
             (default: `{'risk_free_rate': 0.045, 'capital': 100_000}`).
         train_years: in-sample training window length in years
-            (default 2).
+            (default 3 — sized so every walk-forward window clears the
+            ~30-trade Pardo sample-size floor; see `degrees_of_freedom`).
         test_months: out-of-sample test window length in months
             (default 6).
         roll_months: how far to advance between iterations in months
@@ -919,7 +920,9 @@ def walk_forward_optimization(
             window produced a result.
         period_records: list of dicts describing each iteration —
             train/test bounds (ISO date strings), the chosen
-            `best_params`, and the in-sample `train_sharpe` that won.
+            `best_params`, the in-sample `train_sharpe` that won, and
+            `n_trades` (in-sample trades behind the winning fit, for the
+            Pardo sample-size check in `degrees_of_freedom`).
     """
     if fixed_params is None:
         fixed_params = {'risk_free_rate': 0.045, 'capital': 100_000}
@@ -942,7 +945,7 @@ def walk_forward_optimization(
     end_date = cast('pd.Timestamp', df['date'].max())  # pyright: ignore[reportUnknownMemberType]
     # The "knife" between train and test.
     # We start train_years in so there's enough history for the first training window.
-    # Example: start_date = Apr 2014, train_years = 2 → current_date = Apr 2016
+    # Example: start_date = Apr 2014, train_years = 3 → current_date = Apr 2017
     current_date = start_date + pd.DateOffset(years=train_years)
 
     # Keep rolling as long as there's enough data left for a complete test window.
@@ -953,9 +956,9 @@ def walk_forward_optimization(
         #   train_start ←— train_years —→ train_end/test_start ←— test_months —→ test_end
         #                                       ↑ current_date
         #
-        # Iter 1: [Apr 2014 – Apr 2016] train → [Apr 2016 – Oct 2016] test
-        # Iter 2: [Oct 2014 – Oct 2016] train → [Oct 2016 – Apr 2017] test
-        # Iter 3: [Apr 2015 – Apr 2017] train → [Apr 2017 – Oct 2017] test
+        # Iter 1: [Apr 2014 – Apr 2017] train → [Apr 2017 – Oct 2017] test
+        # Iter 2: [Oct 2014 – Oct 2017] train → [Oct 2017 – Apr 2018] test
+        # Iter 3: [Apr 2015 – Apr 2018] train → [Apr 2018 – Oct 2018] test
 
         # Look BACKWARD
         train_start = current_date - pd.DateOffset(years=train_years)
@@ -988,6 +991,7 @@ def walk_forward_optimization(
         # === Step 1: OPTIMIZE on training data ("study for the test") ===
         best_sharpe = -float('inf')  # Initialize to negative infinity so any real Sharpe beats it
         best_params: dict[str, float] | None = None
+        best_n_trades = 0  # in-sample trade count of the winning combo (Pardo sample-size check)
 
         for combo in _param_combinations(param_grid):
             # Merge in the fixed params that don't change across combos
@@ -1045,6 +1049,7 @@ def walk_forward_optimization(
             if sharpe > best_sharpe:  # Keep the best-performing parameter set
                 best_sharpe = sharpe
                 best_params = combo
+                best_n_trades = int(_summary['num_calls_sold'])  # trades behind this fit
 
         if best_params is None:
             current_date += pd.DateOffset(months=roll_months)
@@ -1057,6 +1062,7 @@ def walk_forward_optimization(
             'test_end': test_end.date().isoformat(),
             'best_params': best_params,
             'train_sharpe': round(best_sharpe, 3),
+            'n_trades': best_n_trades,  # in-sample trades behind the winning fit (Pardo "How Many Trades?")
         })
 
         # === Step 2: TEST on out-of-sample data (rules are LOCKED — no re-tuning) ===
@@ -1086,6 +1092,89 @@ def walk_forward_optimization(
         else pd.DataFrame({'date': [], 'equity': pd.Series([], dtype=float), 'price': pd.Series([], dtype=float)})
     )
     return oos_equity, best_params_per_period
+
+
+def degrees_of_freedom(
+    n_observations: int,
+    n_parameters: int,
+    indicator_lookback: int = 30,
+    n_trades: int | None = None,
+    min_pct_remaining: float = 0.90,
+    min_trades: int = 30,
+) -> dict[str, Any]:
+    """Pardo-style degrees-of-freedom validation for one strategy fit.
+
+    Robert Pardo (*The Evaluation and Optimization of Trading Strategies*,
+    2008) frames two independent adequacy checks, both loosely called
+    "degrees of freedom" but answering different questions:
+
+    (A) Bar-level degrees of freedom — the formal "% degrees of freedom
+        remaining." Each *free* parameter you optimize consumes one degree
+        of freedom, and each indicator consumes data equal to its lookback
+        (a 30-day rolling vol "uses up" its first 30 bars)::
+
+            consumed  = n_parameters + indicator_lookback
+            remaining = n_observations - consumed
+            pct       = remaining / n_observations
+
+        Pardo's rule of thumb keeps ``pct`` above ~0.90; the quantstrat
+        port of his method tightens it to 0.95. Below that, the model is
+        too complex for the data.
+
+    (B) Sample-size adequacy ("How Many Trades?") — separately, Pardo
+        argues the unit of statistical evidence is the *trade*, not the
+        bar. The conventional floor is ~30 trades before performance
+        statistics mean much (100+ preferred). Pass ``n_trades`` to run it.
+
+    Why both, and why (A) is *not* the verdict: (A) is necessary, not
+    sufficient — and it is *falsely reassuring for a held-position overlay*.
+    One short call drives P&L for its entire life, so consecutive daily
+    bars are not independent draws; ``n_observations`` (the bar count)
+    overstates the real evidence. The binding constraint is (B), the trade
+    count — and ultimately the Newey-West significance of *excess* returns
+    (see :func:`compute_statistics`). A high ``pct`` means "not obviously
+    over-parameterized," never "the edge is real."
+
+    Counting convention: only *free* (optimized) parameters are charged
+    here, not fixed structural constants (regime thresholds, IV
+    multipliers, the deep-ITM gate) — those aren't fit to the data, so they
+    don't consume estimation degrees of freedom. That makes ``pct`` an
+    optimistic upper bound, which only sharpens the "necessary, not
+    sufficient" point.
+
+    Args:
+        n_observations: data points in the fit window (e.g. 504 trading
+            days for a 2-year in-sample window).
+        n_parameters: free parameters being optimized (the engine's
+            walk-forward searches 3: call_delta, dte, close_at_pct).
+        indicator_lookback: longest indicator warm-up in bars (default 30,
+            the rolling-volatility window in calc_rolling_volatility).
+        n_trades: trades generated in the window, for check (B). Optional;
+            ``passes_trades`` is None when omitted.
+        min_pct_remaining: threshold for check (A) (default 0.90, Pardo).
+        min_trades: threshold for check (B) (default 30).
+
+    Returns a dict with ``n_observations``, ``n_parameters``,
+    ``indicator_lookback``, ``consumed``, ``remaining``, ``pct_remaining``
+    (rounded to 4), ``min_pct_remaining``, ``passes_dof`` (bool, check A),
+    ``n_trades``, ``min_trades``, and ``passes_trades`` (bool | None, B).
+    """
+    consumed = n_parameters + indicator_lookback
+    remaining = n_observations - consumed
+    pct = remaining / n_observations if n_observations > 0 else 0.0
+    return {
+        'n_observations': n_observations,
+        'n_parameters': n_parameters,
+        'indicator_lookback': indicator_lookback,
+        'consumed': consumed,
+        'remaining': remaining,
+        'pct_remaining': round(pct, 4),
+        'min_pct_remaining': min_pct_remaining,
+        'passes_dof': pct >= min_pct_remaining,
+        'n_trades': n_trades,
+        'min_trades': min_trades,
+        'passes_trades': (n_trades >= min_trades) if n_trades is not None else None,
+    }
 
 
 # ====================
@@ -1329,3 +1418,35 @@ if __name__ == '__main__':
     print(f"    {'t-stat (Newey-West)':<32}{stats['t_stat_newey_west']:>+15.2f}{hedge_stats['t_stat_newey_west']:>+15.2f}")
     print(f"    {'Clears t=2 bar?':<32}{str(stats['passes_t_2']):>15}{str(hedge_stats['passes_t_2']):>15}")
     print(f"    {'Clears t=3 bar?':<32}{str(stats['passes_t_3']):>15}{str(hedge_stats['passes_t_3']):>15}")
+    print()
+
+    # Degrees of Freedom (Pardo 2008): is ONE in-sample window big enough to
+    # optimize 3 parameters on? Two checks, for the default 3-year window. The
+    # bar-level % passes comfortably; the trade count — the unit that actually
+    # carries statistical evidence — now clears the ~30 floor too. That is
+    # exactly why the window is 3 years: at 2 years the median grid fit lands
+    # at ~24 trades, below the floor (see tutorial Part 4). Note both checks
+    # passing is necessary, not sufficient — the edge still hinges on the
+    # Newey-West t-stat above, which is full-sample and unaffected by this.
+    train_cut = pd.to_datetime(date_list[0]) + pd.DateOffset(years=3)
+    is_dates = [d for d in date_list if pd.to_datetime(d) < train_cut]
+    is_prices = prices_arr[:len(is_dates)]
+    dof_grid: dict[str, list[float]] = {
+        'call_delta': [0.15, 0.20, 0.25],
+        'dte': [21, 30, 45],
+        'close_at_pct': [0.50, 0.75, 1.00],
+    }
+    dof_base = {'risk_free_rate': 0.045, 'capital': 100_000}
+    is_trade_counts = sorted(
+        int(run_cc_overlay(is_dates, is_prices, {**dof_base, **combo})[0]['num_calls_sold'])
+        for combo in _param_combinations(dof_grid)
+    )
+    median_trades = is_trade_counts[len(is_trade_counts) // 2]
+    dof = degrees_of_freedom(len(is_dates), n_parameters=3, indicator_lookback=30, n_trades=median_trades)
+    print("Degrees of Freedom — 3-year in-sample window (Pardo 2008)")
+    print(f"    Observations (trading days): {dof['n_observations']:>12}")
+    print(f"    Consumed (3 params + 30 LB): {dof['consumed']:>12}")
+    print(f"    Remaining (free):            {dof['remaining']:>12}    ({dof['pct_remaining'] * 100:.1f}% — Pardo floor 90%)")
+    print(f"    Bar-level DOF adequate?      {str(dof['passes_dof']):>12}    (necessary, not sufficient)")
+    print(f"    Independent trades (median): {dof['n_trades']:>12}    (grid range {is_trade_counts[0]}-{is_trade_counts[-1]})")
+    print(f"    >= 30 trades for inference?  {str(dof['passes_trades']):>12}    (clears it; 2-year window would not)")

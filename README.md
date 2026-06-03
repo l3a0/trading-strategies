@@ -52,11 +52,21 @@ Statistical Significance (H0: overlay adds zero value vs. buy-and-hold)
     t-stat (Newey-West, L=8 ):          +0.46    (correct: accounts for position autocorrelation)
     Clears t=2 bar?                     False    (conventional significance)
     Clears t=3 bar (HLZ 2016)?          False    (multiple-testing adjusted)
+
+Degrees of Freedom — 3-year in-sample window (Pardo 2008)
+    Observations (trading days):          756
+    Consumed (3 params + 30 LB):           33
+    Remaining (free):                     723    (95.6% — Pardo floor 90%)
+    Bar-level DOF adequate?              True    (necessary, not sufficient)
+    Independent trades (median):           36    (grid range 17-73)
+    >= 30 trades for inference?          True    (clears it; 2-year window would not)
 ```
 
 The portfolio is sized into whole 100-share contracts at the initial price; any leftover (here, $4,426 of $100K with MSFT at ~$48) sits as 0%-yield cash. Returns are measured against `capital`, so the cash drag is included. To run a single-contract simulation, omit `capital` from `params`.
 
 The bottom block tests whether the overlay's excess return over buy-and-hold is statistically distinguishable from zero, using Newey-West HAC standard errors that correct for the autocorrelation introduced by holding the same option position across multiple days. On this MSFT sample the t-stat is 0.46 — well below the conventional significance bar of 2 — meaning the $268K of headline overlay P&L isn't reliably distinguishable from noise. See the [tutorial's Part 5](tutorial_covered_call_backtest.md#part-5-robustness-checks--proving-its-not-luck) for the full reasoning.
+
+The final block reports Robert Pardo's degrees-of-freedom check for the default 3-year walk-forward training window. Both checks pass: the bar-level test (756 observations minus 3 free parameters and a 30-bar indicator lookback leaves 95.6% free, above Pardo's ~90% floor) and — the binding one — the ~30-trade sample-size floor, which the 3-year window clears (median 36 trades). The window is sized to 3 years precisely for that: a 2-year window leaves the median grid fit at ~24 trades, short of the floor. Note this is necessary, not sufficient — a clean DOF check means the model isn't over-parameterized, not that the edge is real (the t-stat above settles that). See [tutorial Part 4](tutorial_covered_call_backtest.md#part-4-walk-forward-optimization).
 
 For an explanation of each output line — including what "assignment loss" means and why buybacks can dominate the overlay's gross premium income — see the [tutorial](tutorial_covered_call_backtest.md) (its Glossary defines the terms; Part 3 walks through the trade-by-trade math).
 
@@ -75,9 +85,9 @@ CI runs `ruff`, `pyright`, the test suite, and a backtest smoke test on every PR
 | File | What it is |
 | --- | --- |
 | [cc_backtest.py](cc_backtest.py#L201) | Backtest engine: Black-Scholes pricing, rolling vol, regime-based IV, day-by-day overlay state machine, Newey-West t-stat reporting on excess returns |
-| [test_cc_backtest.py](test_cc_backtest.py#L36) | Unit and scenario tests covering pricing, the overlay state machine, and the statistics helper |
+| [test_cc_backtest.py](test_cc_backtest.py#L38) | Unit and scenario tests covering pricing, the overlay state machine, and the statistics helper |
 | [download_prices.py](download_prices.py#L11) | yfinance data downloader |
-| [make_figures.py](make_figures.py#L838) | Regenerates the tutorial and blog figures (`fig1`–`fig12`) into `docs/figures/` |
+| [make_figures.py](make_figures.py#L888) | Regenerates the tutorial and blog figures (`fig1`–`fig13`) into `docs/figures/` |
 | [make_notebook.py](make_notebook.py#L1) | Regenerates the runnable notebook from the tutorial markdown + figure script |
 | [msft_10yr_prices.csv](msft_10yr_prices.csv) | Sample MSFT price data, 2016-04 to 2026-04 |
 | [tutorial_covered_call_backtest.md](tutorial_covered_call_backtest.md) | Long-form tutorial — theory, math, code walkthrough, and statistical-significance testing |
@@ -85,11 +95,11 @@ CI runs `ruff`, `pyright`, the test suite, and a backtest smoke test on every PR
 | [docs/figures/](docs/figures/) | Generated PNGs embedded in the tutorial; regenerable from `make_figures.py` |
 | [requirements.txt](requirements.txt) | Runtime + dev dependencies |
 
-**Where to start:** the [tutorial](tutorial_covered_call_backtest.md) is the source of truth for *why* every part works the way it does (Black-Scholes math, rolling vol, the overlay state machine, walk-forward optimization, robustness checks). For *what* a function actually does, read [cc_backtest.py](cc_backtest.py#L201) end-to-end — it's heavily commented and the link jumps to `run_cc_overlay`, the engine entry point. For the behavior the engine guarantees, see the scenario tests in [test_cc_backtest.py](test_cc_backtest.py#L475) covering the major trade flows: sell + expire OTM, called away, profit-target close, and multi-cycle accumulation.
+**Where to start:** the [tutorial](tutorial_covered_call_backtest.md) is the source of truth for *why* every part works the way it does (Black-Scholes math, rolling vol, the overlay state machine, walk-forward optimization, robustness checks). For *what* a function actually does, read [cc_backtest.py](cc_backtest.py#L201) end-to-end — it's heavily commented and the link jumps to `run_cc_overlay`, the engine entry point. For the behavior the engine guarantees, see the scenario tests in [test_cc_backtest.py](test_cc_backtest.py#L477) covering the major trade flows: sell + expire OTM, called away, profit-target close, and multi-cycle accumulation.
 
 ## Strategy parameters
 
-Edit the `params` dict at the bottom of [cc_backtest.py](cc_backtest.py#L1262):
+Edit the `params` dict at the bottom of [cc_backtest.py](cc_backtest.py#L1351):
 
 | Param | Default | Meaning |
 | --- | --- | --- |

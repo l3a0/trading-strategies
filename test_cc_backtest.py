@@ -13,11 +13,13 @@ import pandas as pd
 import pytest
 
 from cc_backtest import (
+    _param_combinations,
     bs_delta,
     bs_price,
     calc_rolling_volatility,
     classify_regime,
     compute_statistics,
+    degrees_of_freedom,
     find_strike_for_delta,
     monte_carlo_shuffle,
     normal_cdf,
@@ -1105,6 +1107,51 @@ def _load_msft_csv() -> tuple[list[str], np.ndarray[Any, np.dtype[np.float64]]]:
     return dates, np.array(prices, dtype=np.float64)
 
 
+class TestDegreesOfFreedom:
+    """Pardo-style degrees-of-freedom validation (degrees_of_freedom).
+
+    Two independent checks: (A) the bar-level "% degrees of freedom
+    remaining" — Pardo's formal formula, which passes comfortably here —
+    and (B) the ~30-trade sample-size floor, which is the binding
+    constraint for a held-position overlay. The data-backed numbers
+    (median grid trade count, per-window winners) live in
+    TestMsftTenYearRegression; these lock the pure-function arithmetic.
+    """
+
+    def test_standard_in_sample_window(self) -> None:
+        # Default 3-year in-sample window: 756 bars − 3 free params − 30-bar lookback.
+        dof = degrees_of_freedom(756, n_parameters=3, indicator_lookback=30)
+        assert dof['consumed'] == 33
+        assert dof['remaining'] == 723
+        assert dof['pct_remaining'] == 0.9563  # 723/756, rounded to 4 dp
+        assert dof['passes_dof'] is True        # 95.63% clears the 90% floor
+        assert dof['passes_trades'] is None     # no n_trades supplied
+
+    def test_trade_count_floor(self) -> None:
+        # Check (B): the conventional 30-trade floor.
+        assert degrees_of_freedom(504, 3, 30, n_trades=24)['passes_trades'] is False
+        assert degrees_of_freedom(504, 3, 30, n_trades=30)['passes_trades'] is True
+        assert degrees_of_freedom(504, 3, 30, n_trades=50)['passes_trades'] is True
+
+    def test_bar_level_threshold(self) -> None:
+        # A tight 200-bar window: 167/200 = 83.5% < 90% → fails check (A).
+        tight = degrees_of_freedom(200, 3, 30)
+        assert tight['pct_remaining'] == 0.835
+        assert tight['passes_dof'] is False
+        # quantstrat's stricter 95% bar fails a 2-year (504-bar) window
+        # (93.45% < 95%); the default 3-year window (95.63%) clears even that.
+        assert degrees_of_freedom(504, 3, 30, min_pct_remaining=0.95)['passes_dof'] is False
+        assert degrees_of_freedom(756, 3, 30, min_pct_remaining=0.95)['passes_dof'] is True
+
+    def test_full_sample_passes_both(self) -> None:
+        # Full 10y single run (2515 bars, 181 trades) passes both checks —
+        # which is exactly why the per-window walk-forward view, not the
+        # full-sample view, is the honest granularity for the DOF question.
+        dof = degrees_of_freedom(2515, 3, 30, n_trades=181)
+        assert dof['passes_dof'] is True
+        assert dof['passes_trades'] is True
+
+
 class TestMsftTenYearRegression:
     """Pin the headline numbers the tutorial and README quote for the bundled
     MSFT data.
@@ -1347,35 +1394,32 @@ class TestMsftTenYearRegression:
     def test_walk_forward_optimization(
         self, data: tuple[list[str], np.ndarray[Any, np.dtype[np.float64]]]
     ) -> None:
-        """Pin the walk-forward result on MSFT 2016-2026.
+        """Pin the walk-forward result on MSFT 2016-2026 (default 3-year train).
 
         With the tutorial's standard 3×3×3 grid (call_delta ∈
         {0.15, 0.20, 0.25}, dte ∈ {21, 30, 45}, close_at_pct ∈
-        {0.50, 0.75, 1.00}), a 2-year train / 6-month test / 6-month
-        roll schedule produces 15 walk-forward periods over the
-        2018-04 → 2025-10 out-of-sample span.
+        {0.50, 0.75, 1.00}) and the default 3-year train / 6-month test /
+        6-month roll schedule, the engine produces 13 walk-forward periods
+        over the 2019-04 → 2025-10 out-of-sample span. The window is 3 years
+        specifically so every period clears Pardo's ~30-trade sample-size
+        floor (the 2-year contrast is pinned in
+        test_degrees_of_freedom_two_year_contrast).
 
         Empirical observations pinned here:
-          - The familiar __main__ defaults (0.25Δ, 21 DTE, 0.75 close)
-            win the most periods on every axis — the in-sample Sharpe
-            optimum lands on the defaults more often than not.
-          - Cumulative OOS compound return (per-period 6mo returns
-            chained) is ~483% over 7.5 years — substantially less
-            than the ~563% fixed-params return over the same span.
-            Both halves of that comparison are pinned here (483%
-            from the chained OOS curve, 563% from the fixed defaults
-            run over the identical span), so the 483-vs-563 claim
-            the tutorial and blog draw is fully CI-verified. That
-            gap is the cost of not having hindsight; the walk-forward
-            number is the return you'd have actually achieved running
-            this strategy in real time.
-          - Same-span buy-and-hold is ~467% (not the README's 646%,
-            which is the full 10y sample). Pinned too, so prose can
-            anchor the overlay's honest edge over buy-and-hold (~16 pp
-            walk-forward) without quoting an unverified baseline.
+          - call_delta locks to 0.25 in all 13 periods; dte favors 21
+            (9 of 13, the rest 30); close_at_pct splits 0.75 (7) / 0.50 (6)
+            — the earlier-close setting competes once the window is longer.
+          - Cumulative OOS compound return (per-period 6mo returns chained)
+            is ~324% over the 6.5-year span, vs the ~378% fixed-defaults
+            return over the same span. Both halves are pinned, so the
+            324-vs-378 comparison the tutorial and blog draw is CI-verified.
+            The gap is the cost of not having hindsight.
+          - Same-span buy-and-hold is ~317%, so the honest walk-forward edge
+            over buy-and-hold is only ~7 pp over 6.5 years — even thinner
+            than the 2-year window's ~16 pp. Pinned so prose stays honest.
 
-        Total runtime is a couple of seconds (15 windows × 27
-        combos = 405 train backtests on 504-day windows).
+        Runtime is a few seconds (13 windows × 27 combos = 351 train
+        backtests on 756-day windows).
         """
         from collections import Counter
 
@@ -1387,36 +1431,47 @@ class TestMsftTenYearRegression:
         }
         oos_equity, records = walk_forward_optimization(dates, prices, param_grid)
 
-        # Window structure: 2y train, 6mo test, 6mo roll → 15 periods on
+        # Window structure: 3y train, 6mo test, 6mo roll → 13 periods on
         # a 10y MSFT dataset starting 2016-04.
-        assert len(records) == 15
-        assert len(oos_equity) == 1887  # daily OOS equity points across all periods
+        assert len(records) == 13
+        assert len(oos_equity) == 1635  # daily OOS equity points across all periods
 
         # train_end == test_start by construction (half-open intervals).
         for r in records:
             assert r['train_end'] == r['test_start']
 
-        # First and last period bounds.
-        assert records[0]['test_start'] == '2018-04-11'
-        assert records[0]['test_end'] == '2018-10-11'
+        # First and last period bounds. First test starts 3 years in (2019-04),
+        # one year later than the 2-year window's 2018-04.
+        assert records[0]['test_start'] == '2019-04-11'
+        assert records[0]['test_end'] == '2019-10-11'
         assert records[-1]['test_start'] == '2025-04-11'
         assert records[-1]['test_end'] == '2025-10-11'
 
-        # Most-chosen params: the __main__ defaults (0.25Δ, 21 DTE,
-        # 0.75 close) dominate every axis — the walk-forward optimizer
-        # keeps landing on the same configuration the tutorial documents.
+        # Most-chosen params. call_delta pins to 0.25 in every period; dte
+        # favors the monthly 21; close_at_pct is split between 0.75 and the
+        # earlier-profit 0.50, with 45 DTE and the hold-to-expiry 1.00 never
+        # winning at this window length.
         delta_counts = Counter(r['best_params']['call_delta'] for r in records)
         dte_counts = Counter(r['best_params']['dte'] for r in records)
         close_counts = Counter(r['best_params']['close_at_pct'] for r in records)
-        assert delta_counts[0.25] == 14
-        assert delta_counts[0.20] == 1
+        assert delta_counts[0.25] == 13
+        assert delta_counts[0.20] == 0
         assert delta_counts[0.15] == 0
         assert dte_counts[21] == 9
         assert dte_counts[30] == 4
-        assert dte_counts[45] == 2
-        assert close_counts[0.50] == 2
-        assert close_counts[0.75] == 11
-        assert close_counts[1.00] == 2
+        assert dte_counts[45] == 0
+        assert close_counts[0.75] == 7
+        assert close_counts[0.50] == 6
+        assert close_counts[1.00] == 0
+
+        # Pardo "How Many Trades?" sample-size check (feeds degrees_of_freedom,
+        # check B): the 3-year window lifts EVERY period past the 30-trade
+        # floor (median 54). That is the whole reason the window is 3 years —
+        # contrast the 2-year window's 7-of-15-below in
+        # test_degrees_of_freedom_two_year_contrast. Pins fig13's right panel.
+        n_trades = [r['n_trades'] for r in records]
+        assert all(isinstance(t, int) and t >= 30 for t in n_trades)
+        assert sorted(n_trades)[len(n_trades) // 2] == 54  # median
 
         # Cumulative OOS compound return: chain per-period 6mo returns.
         cumulative = 1.0
@@ -1427,17 +1482,15 @@ class TestMsftTenYearRegression:
             period_ret = (period_eq.iloc[-1] - period_eq.iloc[0]) / period_eq.iloc[0]
             cumulative *= (1.0 + period_ret)
         cumulative_pct = (cumulative - 1.0) * 100
-        # Pinned around ~483%, allow a few pp of slack for floating-point
+        # Pinned around ~324%, allow a few pp of slack for floating-point
         # variation in the run-to-run results.
-        assert cumulative_pct == pytest.approx(483.0, abs=5.0)
+        assert cumulative_pct == pytest.approx(324.0, abs=5.0)
 
-        # The other half of the comparison the tutorial (Part 4) and the
-        # blog series quote: the fixed __main__ defaults run over the
-        # *same* OOS span. Until now only the 483% walk-forward side was
-        # pinned, so the 563% fixed-params number could drift silently in
-        # three prose surfaces. Pin it here so the cross-surface sweep
-        # keeps it honest. Derive the span from the asserted OOS bounds
-        # (2018-04-11 → 2025-10-11) rather than hardcoding.
+        # The other half of the comparison the tutorial (Part 4) and the blog
+        # series quote: the fixed __main__ defaults run over the *same* OOS
+        # span. Pin it so the 324-vs-378 number can't drift silently across
+        # the three prose surfaces. Derive the span from the asserted OOS
+        # bounds (2019-04-11 → 2025-10-11) rather than hardcoding.
         oos_lo, oos_hi = records[0]['test_start'], records[-1]['test_end']
         span_idx = [i for i, d in enumerate(dates) if oos_lo <= d < oos_hi]
         span_dates = dates[span_idx[0]:span_idx[-1] + 1]
@@ -1446,11 +1499,89 @@ class TestMsftTenYearRegression:
         fixed_summary, _, _ = run_cc_overlay(span_dates, span_prices, _TUTORIAL_PARAMS)
         # Deterministic single run_cc_overlay call — pin to the same
         # precision as the other headline total_return_pct regressions.
-        assert fixed_summary['total_return_pct'] == pytest.approx(563.04, abs=0.05)
-        # Same-span buy-and-hold baseline. The tutorial and blog quote the
-        # 483%/563% overlay returns against the README's 646% buy-and-hold,
-        # which is the *full 10y sample* — comparing them invites the wrong
-        # conclusion (that the overlay lost). The correct same-span baseline
-        # is ~467%, so the honest walk-forward edge over buy-and-hold is only
-        # ~16 pp. Pin it so that framing is CI-verified wherever prose uses it.
-        assert fixed_summary['buy_hold_return_pct'] == pytest.approx(466.57, abs=0.05)
+        assert fixed_summary['total_return_pct'] == pytest.approx(378.17, abs=0.05)
+        # Same-span buy-and-hold baseline (~317%). The honest walk-forward edge
+        # over buy-and-hold is only ~7 pp over 6.5 years. Pinned so that
+        # framing is CI-verified wherever prose uses it.
+        assert fixed_summary['buy_hold_return_pct'] == pytest.approx(316.83, abs=0.05)
+
+    def test_degrees_of_freedom_first_window(
+        self, data: tuple[list[str], np.ndarray[Any, np.dtype[np.float64]]]
+    ) -> None:
+        """Pin the Pardo degrees-of-freedom numbers the __main__ report and
+        the Part 4 tutorial prose cite for the default (first 3-year)
+        in-sample window.
+
+        Both of Pardo's checks pass at 3 years: the bar-level % comfortably
+        (95.6%), and — the binding one — the trade count, whose grid median of
+        36 clears the ~30 floor. That the trade count passes here but not at
+        2 years (test_degrees_of_freedom_two_year_contrast) is exactly why the
+        engine defaults to a 3-year window.
+        """
+        dates, prices = data
+        train_cut = pd.to_datetime(dates[0]) + pd.DateOffset(years=3)
+        is_dates = [d for d in dates if pd.to_datetime(d) < train_cut]
+        is_prices = prices[:len(is_dates)]
+        assert len(is_dates) == 756  # 3 years × 252 trading days
+
+        # Bar-level degrees of freedom (check A): 756 − 3 params − 30 lookback.
+        dof = degrees_of_freedom(len(is_dates), n_parameters=3, indicator_lookback=30)
+        assert dof['consumed'] == 33
+        assert dof['remaining'] == 723
+        assert dof['pct_remaining'] == 0.9563
+        assert dof['passes_dof'] is True
+
+        # Trade count across the 27-combo grid on that window (check B):
+        # median 36, range 17–73 — the figures the __main__ DOF block prints.
+        grid = {'call_delta': [0.15, 0.20, 0.25], 'dte': [21, 30, 45],
+                'close_at_pct': [0.50, 0.75, 1.00]}
+        base = {'risk_free_rate': 0.045, 'capital': 100_000}
+        counts = sorted(
+            int(run_cc_overlay(is_dates, is_prices, {**base, **c})[0]['num_calls_sold'])
+            for c in _param_combinations(grid)
+        )
+        assert counts[0] == 17
+        assert counts[-1] == 73
+        assert counts[len(counts) // 2] == 36  # median
+        # Wiring the median into the sample-size check clears it (36 >= 30).
+        assert degrees_of_freedom(756, 3, 30, n_trades=counts[len(counts) // 2])['passes_trades'] is True
+
+    def test_degrees_of_freedom_two_year_contrast(
+        self, data: tuple[list[str], np.ndarray[Any, np.dtype[np.float64]]]
+    ) -> None:
+        """Pin the 2-year 'before' that justifies the 3-year default window.
+
+        A 2-year window is what the engine does NOT use, precisely because its
+        trade count strains Pardo's floor: across the 15 walk-forward periods
+        the winning fit lands below 30 trades in 7 of them (median 30), and the
+        first window's grid median is just 24 (range 12–50) — below the floor —
+        even though the bar-level check passes (93.5%). fig13's left panel and
+        the Part 4 "why 3 years" prose cite these; the 3-year side is pinned in
+        test_walk_forward_optimization and test_degrees_of_freedom_first_window.
+        """
+        dates, prices = data
+        grid = {'call_delta': [0.15, 0.20, 0.25], 'dte': [21, 30, 45],
+                'close_at_pct': [0.50, 0.75, 1.00]}
+        base = {'risk_free_rate': 0.045, 'capital': 100_000}
+
+        # Per-window winning-fit trade counts at the 2-year window.
+        _, recs = walk_forward_optimization(dates, prices, grid, train_years=2)
+        n_trades = sorted(r['n_trades'] for r in recs)
+        assert len(recs) == 15
+        assert sum(1 for t in n_trades if t < 30) == 7    # 7 of 15 below the floor
+        assert n_trades[len(n_trades) // 2] == 30          # median right on it
+
+        # First 2-year window: bar-level passes (93.5%), grid trade median strains.
+        train_cut = pd.to_datetime(dates[0]) + pd.DateOffset(years=2)
+        is_dates = [d for d in dates if pd.to_datetime(d) < train_cut]
+        is_prices = prices[:len(is_dates)]
+        assert len(is_dates) == 504
+        assert degrees_of_freedom(504, 3, 30)['pct_remaining'] == 0.9345
+        counts = sorted(
+            int(run_cc_overlay(is_dates, is_prices, {**base, **c})[0]['num_calls_sold'])
+            for c in _param_combinations(grid)
+        )
+        assert counts[0] == 12
+        assert counts[-1] == 50
+        assert counts[len(counts) // 2] == 24             # below the 30 floor
+        assert degrees_of_freedom(504, 3, 30, n_trades=24)['passes_trades'] is False

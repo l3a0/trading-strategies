@@ -720,17 +720,17 @@ Test all 120 on 2016–2026 data, pick the top performer, and you've almost cert
 
 Walk-forward prevents this by using *different* data for training and testing.
 
-### The Walk-Forward Structure: 2-Year Train → 6-Month Test → Roll Forward
+### The Walk-Forward Structure: 3-Year Train → 6-Month Test → Roll Forward
 
 Here's the idea:
 
 ```text
 Training window        Testing window
-[Apr 2016 - Mar 2018] [Apr 2018 - Sep 2018] (6 months)
+[Apr 2016 - Mar 2019] [Apr 2019 - Sep 2019] (6 months)
                                                ↓ roll forward
-                      [Oct 2016 - Sep 2018] [Oct 2018 - Mar 2019]
+                      [Oct 2016 - Sep 2019] [Oct 2019 - Mar 2020]
                                                ↓ roll forward
-                                    [Apr 2017 - Mar 2019] [Apr 2019 - Sep 2019]
+                                    [Apr 2017 - Mar 2020] [Apr 2020 - Sep 2020]
                                     ... etc ...
 ```
 
@@ -742,6 +742,10 @@ For each **training window:**
 4. Record the result
 
 Finally, stitch all testing results together into one equity curve.
+
+**Why a 6-month test window?** In walk-forward the out-of-sample window is both the slice you score honestly *and* how often you re-optimize. A 6-month test means re-tuning twice a year. The guidance is to keep it a modest fraction of the training window, so each honest test still rests on parameters fit to plenty of data (Pardo 2008). The specific figure is practitioner lore that is commonly cited around 10–20% of the optimization window, with real-world setups ranging up to about a third.
+
+Our 3-year train / 6-month test is a \~17% ratio, squarely inside that band. As the [degrees-of-freedom section](#degrees-of-freedom-was-the-window-big-enough-to-optimize) below shows, the 3-year window is chosen so every walk-forward fit clears Pardo's 30-trade sample-size floor. Keeping the 6-month test lands the window ratio in the recommended range too. A 2-year train would be a 25% ratio, at the band's upper edge. That would leave the trade count short of the floor, which is why we don't use it.
 
 ### The Parameter Grid: What We Search Over and Why
 
@@ -780,23 +784,23 @@ What it does per iteration:
 3. Run those locked params on the out-of-sample test window. Append the resulting daily equity to the stitched curve.
 4. Advance `current_date` by `roll_months` and repeat until the next test window would run past `end_date`.
 
-The production implementation in [`cc_backtest.py::walk_forward_optimization`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L887) is heavily commented — it carries the teaching content (window arithmetic diagram, boolean-indexing explainer, Sharpe-built-inside-out walkthrough, Bessel's correction, √252 annualization derivation, "rules are LOCKED — no re-tuning" emphasis) right next to the code that does the work. The fixing test [`test_cc_backtest.py::TestMsftTenYearRegression::test_walk_forward_optimization`](https://github.com/l3a0/covered-call-backtesting/blob/main/test_cc_backtest.py#L1347) pins the 15 walk-forward periods, the most-chosen parameters, and the cumulative OOS compound return on the bundled MSFT data.
+The production implementation in [`cc_backtest.py::walk_forward_optimization`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L887) is heavily commented. It carries the teaching content (window arithmetic diagram, boolean-indexing explainer, Sharpe-built-inside-out walkthrough, Bessel's correction, √252 annualization derivation, "rules are LOCKED — no re-tuning" emphasis) right next to the code that does the work. The fixing test [`test_cc_backtest.py::TestMsftTenYearRegression::test_walk_forward_optimization`](https://github.com/l3a0/covered-call-backtesting/blob/main/test_cc_backtest.py#L1394) pins the 13 walk-forward periods, the most chosen parameters, and the cumulative OOS compound return on the bundled MSFT data.
 
 ### What the Optimizer Chose
 
-Running walk-forward on the bundled MSFT data with the 3×3×3 grid produces 15 OOS test periods. The optimizer's choices per period (pinned by `test_walk_forward_optimization`):
+Running walk-forward on the bundled MSFT data with the 3×3×3 grid produces 13 OOS test periods. The optimizer's choices per period (pinned by `test_walk_forward_optimization`):
 
-| Parameter | Most-chosen value | Counts across 15 periods |
+| Parameter | Most-chosen value | Counts across 13 periods |
 | --- | --- | --- |
-| **call_delta** | **0.25** | 0.25 × 14, 0.20 × 1, 0.15 × 0 |
-| **dte** | **21** | 21 × 9, 30 × 4, 45 × 2 |
-| **close_at_pct** | **0.75** | 0.75 × 11, 0.50 × 2, 1.00 × 2 |
+| **call_delta** | **0.25** | 0.25 × 13, 0.20 × 0, 0.15 × 0 |
+| **dte** | **21** | 21 × 9, 30 × 4, 45 × 0 |
+| **close_at_pct** | **0.75** | 0.75 × 7, 0.50 × 6, 1.00 × 0 |
 
-All three *per-axis* winners match the `__main__` defaults: `0.25Δ`, `21 DTE`, and `0.75 close_at_pct`. The convergence is strongest on the strike dial — `call_delta` is 0.25 in 14 of 15 periods — and looser on the other two axes, which wander within the grid without ever straying far from the middle setting. The exact triple `0.25Δ / 21 / 0.75` wins outright in a minority of periods; what's robust is the *neighborhood*, not a single combination repeating verbatim. That an honest, no-peeking search keeps returning to the same region across very different market windows is a small piece of evidence the defaults reflect something structural.
+The strike dial is unanimous — `call_delta` is 0.25 in all 13 periods. `dte` favors the monthly 21 (9 of 13, the rest 30). `close_at_pct` is the one genuinely split axis: 0.75 wins 7 periods and the earlier-profit 0.50 wins the other 6. The longer window makes early profit-taking competitive where the 2-year window had mostly favored 0.75. The hold-to-expiry 1.00 and the slow 45 DTE never win. The exact triple `0.25Δ / 21 / 0.75` wins outright in a minority of periods. What's robust is the *neighborhood* — a tight cluster around aggressive-but-not-maximal strikes, monthly expiries, and early-to-mid profit-taking. That an honest, no-peeking search keeps returning to the same region across very different market windows is a small piece of evidence the defaults reflect something structural.
 
-![A schedule of 15 stacked rows, one per walk-forward cycle, time on the horizontal axis 2016–2026. Each row shows a 2-year training bar (blue) immediately followed by a 6-month test bar (orange); successive rows shift 6 months later, marching diagonally down and to the right. Rows whose chosen parameters left the 0.25Δ/21d/0.75 default are labelled with the combination the optimizer picked.](docs/figures/07_walk_forward_schematic.png)
+![A schedule of 13 stacked rows, one per walk-forward cycle, time on the horizontal axis 2016–2026. Each row shows a 3-year training bar (blue) immediately followed by a 6-month test bar (orange); successive rows shift 6 months later, marching diagonally down and to the right. Rows whose chosen parameters left the 0.25Δ/21d/0.75 default are labelled with the combination the optimizer picked.](docs/figures/07_walk_forward_schematic.png)
 
-*The discipline, drawn out. Blue is in-sample (free to optimize); orange is the locked, never-tuned six months that actually counts. The labels make the per-axis story concrete: delta pins to 0.25 almost everywhere, while DTE and close-pct drift between adjacent grid values — convergence to a region, not a point.*
+*The discipline, drawn out. Blue is in-sample (free to optimize); orange is the locked, never-tuned six months that actually counts. The labels make the per-axis story concrete: delta pins to 0.25 in every cycle, while DTE and close-pct drift between adjacent grid values — convergence to a region, not a point.*
 
 **Why these defaults make sense:**
 
@@ -810,10 +814,10 @@ All three *per-axis* winners match the `__main__` defaults: `0.25Δ`, `21 DTE`, 
    - Gives enough time for the trade to work out
    - Runs roughly monthly — about 12 cycles a year for reinvesting premiums
 
-3. **75% profit target** is the sweet spot for closing:
+3. **75% profit target** is the default, with early-to-mid closing the robust region:
    - Captures most of the premium decay without holding through the gamma-heavy final stretch
-   - Closing earlier (50%) leaves real income on the table; holding to expiry (100%) means riding through the period where assignment risk is highest and time decay slows
-   - Walk-forward picks 0.75 in 11 of 15 periods — the optimizer keeps choosing it across very different market windows
+   - Holding to expiry (100%) means riding through the period where assignment risk is highest and time decay slows — the optimizer never picks it
+   - Walk-forward splits between 0.75 (7 of 13 periods) and the earlier 0.50 (6 of 13) — both early-to-mid profit-taking. The 3-year window makes 0.50 competitive, but 0.75 still edges it and stays the `__main__` default
 
 4. **Deep-ITM close at delta > 0.70** caps assignment damage:
    - When the call goes deep ITM, gamma is steep and a small adverse move can wipe out months of premium income
@@ -821,30 +825,46 @@ All three *per-axis* winners match the `__main__` defaults: `0.25Δ`, `21 DTE`, 
 
 ### The Key Finding: Walk-Forward Tells the Honest Story
 
-**Predict first.** Walk-forward re-tunes the parameters every period using only the data available *before* each test window. The "fixed-params" run instead uses the single best triple for the whole 7.5-year span. Before you read on, commit to an answer: does walk-forward come out **higher or lower** than fixed-params — and which of the two is the number you should actually trust?
+**Predict first.** Walk-forward re-tunes the parameters every period using only the data available *before* each test window. The "fixed-params" run instead uses the single best triple for the whole 6.5-year span. Before you read on, commit to an answer: does walk-forward come out **higher or lower** than fixed-params — and which of the two is the number you should actually trust?
 
 <details>
 <summary>Reveal</summary>
 
-**Lower — and the lower number is the honest one.** Walk-forward underperforms fixed-params here by roughly 80 percentage points. That feels like the more rigorous method losing, but it's the reverse: fixed-params only "wins" because it was handed the answer key — the winning triple, chosen with full hindsight over the very data it's then scored on. Walk-forward is the return you'd have actually earned trading in real time. If a single full-period backtest looks great and walk-forward pulls it down, that's the methodology working. The numbers are below.
+**Lower — and the lower number is the honest one.** Walk-forward underperforms fixed-params here by roughly 54 percentage points. That feels like the more rigorous method losing, but it's the reverse: fixed-params only "wins" because it was handed the answer key — the winning triple, chosen with full hindsight over the very data it's then scored on. Walk-forward is the return you'd have actually earned trading in real time. If a single full-period backtest looks great and walk-forward pulls it down, that's the methodology working. The numbers are below.
 
 </details>
 
-**Result on the bundled MSFT data, over the walk-forward span (2018-04 → 2025-10):**
+**Result on the bundled MSFT data, over the walk-forward span (2019-04 → 2025-10):**
 
-- **Walk-forward** (params optimized per period, 6-month OOS windows chained): **\~483%** cumulative compound return.
-- **Fixed params** (`0.25Δ`, `21 DTE`, `0.75 close`) over the same span: **\~563%** total return.
-- **Buy-and-hold** over the same span: **\~467%** total return — *not* the README's \~646%, which is the full 10-year sample. This is the baseline the overlay numbers above should be compared against.
+- **Walk-forward** (params optimized per period, 6-month OOS windows chained): **\~324%** cumulative compound return.
+- **Fixed params** (`0.25Δ`, `21 DTE`, `0.75 close`) over the same span: **\~378%** total return.
+- **Buy-and-hold** over the same span: **\~317%** total return — *not* the README's \~646%, which is the full 10-year sample. This is the baseline the overlay numbers above should be compared against.
 
-Walk-forward **underperformed** fixed-params by about 80 percentage points (\~14% relative). That sounds bad until you notice what the fixed-params number actually represents: the return *given that you somehow knew, before seeing any of this data, that those exact three parameters would be the winners on this 7.5-year window*.
+Walk-forward **underperformed** fixed-params by about 54 percentage points (\~14% relative). That sounds bad until you notice what the fixed-params number actually represents: the return *given that you somehow knew, before seeing any of this data, that those exact three parameters would be the winners on this 6.5-year window*.
 
 The walk-forward number is the return you'd have actually achieved running this strategy in real time, with no peeking. The gap is the cost of not having hindsight — which is to say, the realistic expected return.
 
 The point: **fixed-params backtests systematically overestimate the strategy's return; walk-forward gives you the number you'd actually have achieved.** If you see a strategy that "outperforms" in a single full-period backtest, walk-forward will often pull the headline number lower.
 
-This also clarifies the right reading of the headline 915% number reported elsewhere in this tutorial. That number is the fixed-params total return over the *full* 10-year MSFT sample (2016-04 → 2026-04), which extends \~2 years *before* the walk-forward span — the initial 2-year training window, never scored out-of-sample — and \~6 months *after* it (leftover data the roll schedule never reaches). The 483% / 563% comparison above is the apples-to-apples one inside the walk-forward window.
+This also clarifies the right reading of the headline 915% number reported elsewhere in this tutorial. That number is the fixed-params total return over the *full* 10-year MSFT sample (2016-04 → 2026-04). It extends \~3 years *before* the walk-forward span and \~6 months *after* it. The 324% / 378% comparison above is the apples-to-apples one inside the walk-forward window.
 
-The same span trap applies to the buy-and-hold baseline. The README's \~646% buy-and-hold is the full 10-year sample; over the walk-forward window buy-and-hold returned \~467%. Compared correctly, fixed-params (\~563%) beats same-span buy-and-hold by \~96 pp, but the honest walk-forward number (\~483%) clears it by only \~16 pp over 7.5 years. That thin no-hindsight margin over simply holding the stock is exactly what the Part 5 significance test puts a number on — and why the Newey-West t-stat on the overlay's *excess* over buy-and-hold lands well below 2.
+The same span trap applies to the buy-and-hold baseline. The README's \~646% buy-and-hold is the full 10-year sample; over the walk-forward window buy-and-hold returned \~317%. Compared correctly, fixed-params (\~378%) beats same-span buy-and-hold by \~61 pp, but the honest walk-forward number (\~324%) clears it by only \~7 pp over 6.5 years — an even thinner margin than the 2-year window's \~16 pp. That razor-thin no-hindsight edge over simply holding the stock is exactly what the Part 5 significance test puts a number on — and why the Newey-West t-stat on the overlay's *excess* over buy-and-hold lands well below 2.
+
+### Degrees of Freedom: Was the Window Big Enough to Optimize?
+
+We optimize on a **3-year** window, and Pardo's degrees-of-freedom checks are the reason. Robert Pardo's *The Evaluation and Optimization of Trading Strategies* (2008) gives two checks, and they disagree at a window length of two years. That disagreement is what drives the choice.
+
+The first is **degrees of freedom** in the literal sense. Each free parameter you optimize consumes one degree of freedom. Each indicator consumes data equal to its lookback — the 30-day rolling-volatility window "uses up" its first 30 bars. A 2-year (504-day) window spends `3 + 30 = 33` and keeps **93.5%** free; the 3-year (756-day) window keeps **95.6%**. Pardo's rule of thumb wants that above ~90% (the [quantstrat](https://rdrr.io/github/braverock/quantstrat/man/degrees.of.freedom.html) port of his method tightens it to 95%), so *both* windows pass. [`degrees_of_freedom`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L1097) computes it, and `TestDegreesOfFreedom` pins the arithmetic.
+
+The second check is the one that decides. Pardo argues — in separate chapters on sample size and "How Many Trades?" — that the unit of statistical evidence is the **trade**, not the time bar. The time bar count flatters a covered call: one short option drives P&L for weeks, so consecutive daily bars are not independent observations. The real sample size is the number of option cycles. At a **2-year** window the median across the grid is just **24 trades** (range 12–50), and the *winning* fit clears the conventional 30-trade floor in only 8 of the 15 walk-forward periods — 7 fall short. Lengthen the window to **3 years** and every one of the 13 periods clears it (median **54 trades**). That is precisely why the engine optimizes on three years rather than two.
+
+![Two panels of vertical bars — one bar per walk-forward period, showing the winning fit's in-sample trade count against a dashed line at Pardo's 30-trade floor. Left (2-year window): 15 bars, 7 of them red below the floor, median 30. Right (3-year window): 13 bars, all green and above the floor, median 54.](docs/figures/13_degrees_of_freedom.png)
+
+*Why the optimization window is three years. Pardo's bar-level degrees-of-freedom check passes at both window lengths (93.5% at 2 years, 95.6% at 3), so the binding check is the trade count. At a 2-year window the winning fit falls below the conventional 30-trade floor in 7 of 15 walk-forward periods (median 30); at 3 years every one of the 13 periods clears it (median 54). The longer window is sized to satisfy the sample-size floor.*
+
+So the degrees-of-freedom check is **why the window is three years, not two**: the time bar-level percentage passes either way, but the trade count — the unit that actually carries evidence for a held-position strategy — only clears Pardo's floor at the longer window. Two caveats keep this honest. First, the longer window costs out-of-sample granularity: 13 periods instead of 15. Second, and more important, clearing a sample-size floor buys a more *stable* parameter fit, not a real edge It means there was enough data to look, not that the strategy found an edge. Only the Newey-West significance test in Part 5 speaks to whether the excess return is distinguishable from zero.
+
+**Why not just trade more often to clear the floor?** Because that's a fake fix. Selling 14-day or weekly calls instead of monthly multiplies the trade count, but only by chopping the *same* price path into finer, still-overlapping slices: more trades, barely more independent information, and a transaction-cost bill that grows with every round-trip. The levers that add genuine evidence are the ones Pardo names: lengthening the window (the one we took), **adding symbols**, or **cutting parameters**. Pooling the overlay across a basket — AAPL, SPY, QQQ — turns one window's few dozen trades into a couple hundred and is the *only* lever that also tightens the Part 5 significance test, since it adds genuinely independent excess-return observations rather than re-slicing one path. The catch: names share market-wide volatility, so the gain is real but below a clean 10×. The [multi-asset testing](#beyond-walk-forward-the-full-anti-overfitting-toolkit) should be investigated in future work. Trimming the grid from three free parameters to one works the other side of Pardo's ratio: needing less evidence rather than manufacturing more.
 
 ### Common Mistake: Optimizing on Too Many Parameters (Overfitting the Grid)
 
@@ -884,14 +904,14 @@ If you optimize on 500 parameter combinations, some will look amazing by pure lu
 Answer these from memory before peeking — if any answer doesn't come, that section is worth a re-read before Part 5 builds on it.
 
 1. The half-open intervals guarantee `test_start == train_end` but never put the boundary date in *both* windows. Why is that one-line detail the load-bearing part of the whole method?
-2. Fixed-params returned \~563% and walk-forward \~483% over the same span. Which number would you quote to someone deciding whether to trade this, and why is the *bigger* one misleading?
-3. `call_delta` locked to 0.25 in 14 of 15 periods, but DTE and close-pct wandered between adjacent grid values. Is that wandering a problem? What would actually be the worrying pattern?
+2. Fixed-params returned \~378% and walk-forward \~324% over the same span. Which number would you quote to someone deciding whether to trade this, and why is the *bigger* one misleading?
+3. `call_delta` locked to 0.25 in all 13 periods, but DTE and close-pct wandered between adjacent grid values. Is that wandering a problem? What would actually be the worrying pattern?
 
 <details>
 <summary>Reveal</summary>
 
 1. It's the no-peeking guarantee made mechanical. If the boundary date leaked into both windows, the parameters scored on a test window would have been chosen partly *from* that window — exactly the in-sample contamination walk-forward exists to prevent. The interval arithmetic is what makes "no peeking" a property of the code rather than a promise.
-2. Quote \~483% (walk-forward). The \~563% fixed-params number assumes you knew the winning triple before seeing any data — it's the return *with* hindsight, which you'll never have live. Walk-forward is the no-hindsight number, i.e. the realistic expectation.
+2. Quote \~324% (walk-forward). The \~378% fixed-params number assumes you knew the winning triple before seeing any data — it's the return *with* hindsight, which you'll never have live. Walk-forward is the no-hindsight number, i.e. the realistic expectation.
 3. Not a problem — it's the healthy "convergence to a neighborhood" pattern. The worrying signature is the opposite: a single parameter triple winning by a wide margin while its grid neighbors collapse (the cliff-shaped leaderboard from the overfitting Common Mistake). A robust strategy works across a region; a fragile one works at a point.
 
 </details>
@@ -912,7 +932,7 @@ If no → the strategy exploits a specific *sequence* of returns (could be luck)
 
 **Why this works:** Real prices have a specific order — trends, mean-reversion, volatility clusters. Shuffling destroys that order while keeping the exact same set of daily returns (same mean, same volatility, same distribution). So if your strategy profits on both real and shuffled paths, it's capturing **statistical properties** of the returns (e.g., collecting premium in a volatile market) — those survive shuffling. But if it only works on the real path, it was exploiting the **specific sequence** — like selling calls right before drops and not selling before rallies. That pattern won't repeat, so it's likely overfitting or luck. Think of it like poker: if you win with many random deals, you have real skill. If you only win with the exact hand order you practiced on, you just memorized that deck.
 
-The implementation is [`cc_backtest.py::monte_carlo_shuffle`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L1095) — it computes daily returns from the real prices, shuffles their order with a fixed seed, rebuilds a synthetic price path from each shuffled sequence, runs the overlay backtest on each, then compares the real ordered path's total return against the distribution. The fixing test [`test_cc_backtest.py::TestMsftTenYearRegression::test_monte_carlo_shuffle`](https://github.com/l3a0/covered-call-backtesting/blob/main/test_cc_backtest.py#L1243) pins the resulting percentile, MC mean, and best-shuffled return on the bundled MSFT data (500 paths, `seed=42`, `__main__` params).
+The implementation is [`cc_backtest.py::monte_carlo_shuffle`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L1184) — it computes daily returns from the real prices, shuffles their order with a fixed seed, rebuilds a synthetic price path from each shuffled sequence, runs the overlay backtest on each, then compares the real ordered path's total return against the distribution. The fixing test [`test_cc_backtest.py::TestMsftTenYearRegression::test_monte_carlo_shuffle`](https://github.com/l3a0/covered-call-backtesting/blob/main/test_cc_backtest.py#L1290) pins the resulting percentile, MC mean, and best-shuffled return on the bundled MSFT data (500 paths, `seed=42`, `__main__` params).
 
 **Our result (`__main__` params on the bundled MSFT data, 500 shuffles, seed=42):**
 
@@ -931,7 +951,7 @@ The implementation is [`cc_backtest.py::monte_carlo_shuffle`](https://github.com
 
 **Idea:** Unlike a grid search (which tries many combinations to find the *best* params), sensitivity analysis starts from already-chosen params and nudges *one at a time* to check *stability*. Grid search answers "what's optimal?" — sensitivity analysis answers "how fragile is that optimum?" If returns change drastically from a small tweak, you're overfitting that parameter. A robust strategy should stay in a similar range across small perturbations.
 
-The implementation is [`cc_backtest.py::sensitivity_analysis`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L1176) — it sweeps `call_delta` and `close_at_pct` at ±0.05 / ±0.10 / ±0.20 offsets from base. The algorithm: hold all params fixed except one, vary that one by a small offset in both directions, measure each variant's total return, then compute the worst drop from base. The fixing test [`test_cc_backtest.py::TestMsftTenYearRegression::test_sensitivity_perturbations`](https://github.com/l3a0/covered-call-backtesting/blob/main/test_cc_backtest.py#L1201) pins each variant's return and asserts the worst drop from base stays under 10% (the "robust" verdict) on the bundled MSFT data — the notebook companion calls the same function, so the two can't drift.
+The implementation is [`cc_backtest.py::sensitivity_analysis`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L1265) — it sweeps `call_delta` and `close_at_pct` at ±0.05 / ±0.10 / ±0.20 offsets from base. The algorithm: hold all params fixed except one, vary that one by a small offset in both directions, measure each variant's total return, then compute the worst drop from base. The fixing test [`test_cc_backtest.py::TestMsftTenYearRegression::test_sensitivity_perturbations`](https://github.com/l3a0/covered-call-backtesting/blob/main/test_cc_backtest.py#L1248) pins each variant's return and asserts the worst drop from base stays under 10% (the "robust" verdict) on the bundled MSFT data — the notebook companion calls the same function, so the two can't drift.
 
 **Example output** (`__main__` params on the bundled MSFT data, run against the current engine):
 
@@ -1286,6 +1306,7 @@ Monte Carlo, sensitivity analysis, and regime testing (above) are the robustness
 | Layer | What It Catches | How It Works |
 | --- | --- | --- |
 | **Walk-forward** (Part 4) | Parameter overfitting | Train on one period, test on a different one, roll forward. |
+| **Degrees of freedom** (Part 4) | Too few data points per parameter | Pardo's precondition check: `observations − free parameters − indicator lookback`, kept above ~90% (bar-level), *and* the ~30-trade sample-size floor. The default 3-year window clears both (95.6%, median 54 trades); a 2-year window would clear the bar-level (93.5%) but strain the trade floor (median 24) — which is why the window is sized to 3 years. Necessary, not sufficient: the edge still hinges on the Part 5 significance test. |
 | **Parameter stability** (sensitivity analysis above) | Fragile strategies | Check that nearby parameters give similar results — look for a "plateau" of good performance, not a single lucky peak. |
 | **Monte Carlo shuffle** (above) | Sequence-dependent luck | Randomize the order of daily returns, rebuild price paths, see if strategy still works. |
 | **Deflated Sharpe Ratio** | Multiple-testing bias | Adjusts your Sharpe ratio for how many strategies you tried. If you tested 120 parameter combos, the best one will look great by pure chance — even on random data, the luckiest combo will have a high Sharpe (same reason flipping 120 coins, at least one lands heads 7+ times in a row). The Deflated Sharpe corrects by asking: "Given N strategies tested, what's the probability my best Sharpe is just the expected maximum of N random trials?" It penalizes based on: (1) how many strategies tested — more trials → higher penalty, (2) variance of Sharpe ratios across trials — wider spread → best is more likely an outlier, (3) skewness/kurtosis of returns — fat tails make lucky outliers more likely. If your adjusted Sharpe is still significant after this penalty, the strategy has genuine edge — not just "I picked the luckiest coin out of 120." Key reference: Marcos López de Prado's work on this. |
@@ -1351,7 +1372,7 @@ Here's the complete process:
    
 5. WALK-FORWARD OPTIMIZATION
    ↓
-   Train on 2-year window, test on 6-month window
+   Train on 3-year window, test on 6-month window
    Find best params for each window
    Stitch out-of-sample results
    
@@ -1512,7 +1533,7 @@ The full implementation lives in this repository. Each file is the source of tru
 | File | What it contains |
 | --- | --- |
 | [`cc_backtest.py`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L201) | Black-Scholes pricing, rolling-volatility helpers, the [`run_cc_overlay`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L201) engine, and [`compute_statistics`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L599) for Newey-West t-stats |
-| [`test_cc_backtest.py`](https://github.com/l3a0/covered-call-backtesting/blob/main/test_cc_backtest.py#L36) | Pytest suite covering pricing primitives, the overlay state machine, scenario tests, and the statistics helper |
+| [`test_cc_backtest.py`](https://github.com/l3a0/covered-call-backtesting/blob/main/test_cc_backtest.py#L38) | Pytest suite covering pricing primitives, the overlay state machine, scenario tests, and the statistics helper |
 | [`download_prices.py`](https://github.com/l3a0/covered-call-backtesting/blob/main/download_prices.py#L11) | Fetches historical daily closes via yfinance |
 | [`msft_10yr_prices.csv`](https://github.com/l3a0/covered-call-backtesting/blob/main/msft_10yr_prices.csv) | Bundled 10-year MSFT daily-close dataset used in the worked examples |
 | [`requirements.txt`](https://github.com/l3a0/covered-call-backtesting/blob/main/requirements.txt) | Pinned dependencies |
@@ -1559,6 +1580,7 @@ Reference glossary for terms used throughout the tutorial. Most are also defined
 - **CSP (Cash-Secured Put):** A strategy where you sell a put option and set aside enough cash to buy 100 shares at the strike price if assigned. You collect the premium up front; if the stock stays above the strike, the put expires worthless and you keep the cash. If it falls below, you're obligated to buy the shares at the strike. CSPs are the "entry" half of the wheel — a way to get paid while waiting to buy a stock at a discount.
 - **CDF (Cumulative Distribution Function):** Answers the question "what's the probability a value falls at or below X?" Imagine filling a glass of water as you move left to right across a bell curve — at the far left it's nearly empty (0%), at the center it's half full (50%), at the far right it's nearly full (100%). In our context, the CDF converts a stock's distance from the strike price into a probability, which is exactly what Black-Scholes needs to price an option.
 - **Closed-form solution:** A formula you can write down using basic math (add, multiply, exponents, etc.) and compute directly — like the area of a circle (πr²). When something has "no closed-form solution," it means you can't write a simple equation for it; you need either calculus or an approximation. The normal CDF has no closed-form, which is why we use a polynomial shortcut.
+- **Degrees of freedom (Pardo):** A measure of how much room a dataset gives you to fit a strategy's parameters. Robert Pardo's bar-level version subtracts the free parameters and each indicator's lookback from the total observations and asks that ~90% remain (the engine's 3-year, 756-bar window spends `3 + 30 = 33` and keeps 95.6%). But for a held-position strategy the bar count is misleading — one option drives many correlated days of P&L — so Pardo *also* checks the **number of trades** (the conventional floor is ~30), which is the unit that actually carries statistical evidence. The 3-year window clears that floor (median 54 trades); a 2-year window keeps a fine 93.5% on bars but its trade count (median 24) falls short — which is why the window is 3 years. A clean percentage is necessary, not sufficient. See `degrees_of_freedom` in the code.
 - **Delta (Δ):** The probability (roughly) that an option expires in-the-money. A 0.25 delta call means \~25% chance the stock ends above the strike. We use delta to choose how aggressive our covered calls are.
 - **Drawdown:** The decline from a recent peak to a subsequent trough. *Max drawdown* is the worst peak-to-trough loss in the sample — a common measure of downside risk. A strategy returning 20% annualized with 5% max drawdown is safer than one returning 25% with 40% max drawdown, even though the first has lower expected return.
 - **DTE (Days to Expiration):** How many calendar days until the option expires. We use 21 DTE (about 3 weeks) as our default.
@@ -1621,7 +1643,7 @@ Academic papers cited or built on in this tutorial. URLs link to the publishers'
 
 ### Backtesting methodology
 
-- Pardo, R. (2008). *The Evaluation and Optimization of Trading Strategies* (2nd ed.). John Wiley & Sons. Source of walk-forward analysis and the *walk-forward efficiency* (out-of-sample ÷ in-sample) heuristic; the "roughly two-thirds" band is practitioner lore, not a precise threshold from the book. ([Wiley](https://www.wiley.com/en-us/The+Evaluation+and+Optimization+of+Trading+Strategies%2C+2nd+Edition-p-9781118045053))
+- Pardo, R. (2008). *The Evaluation and Optimization of Trading Strategies* (2nd ed.). John Wiley & Sons. Source of walk-forward analysis; the *walk-forward efficiency* (out-of-sample ÷ in-sample) heuristic, whose "roughly two-thirds" band is practitioner lore, not a precise threshold from the book; the *degrees-of-freedom* check used in Part 4 — both the bar-level "% remaining" formula (`observations − parameters − indicator lookback`, kept above ~90%) and the separate trade-count / "How Many Trades?" sample-size floor (~30); and the *walk-forward window ratio* (out-of-sample sized at a modest fraction of the optimization window, ~10–20%). The bar-level 90% threshold and the window ratio are likewise rules of thumb, not laws. ([Wiley](https://www.wiley.com/en-us/The+Evaluation+and+Optimization+of+Trading+Strategies%2C+2nd+Edition-p-9781118045053)) The bar-level formula is operationalized in code by the [quantstrat `degrees.of.freedom`](https://rdrr.io/github/braverock/quantstrat/man/degrees.of.freedom.html) function, which tightens the threshold to 95%.
 
 ### Volatility risk premium
 

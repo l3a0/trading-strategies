@@ -47,6 +47,10 @@ FIGURE_CALLS: dict[str, str] = {
     "09_monte_carlo.png": "fig9_monte_carlo(mc)",
     "10_regime_pnl.png": "fig10_regime_pnl(regimes)",
     "11_excess_acf.png": "fig11_excess_acf(daily_equity, summary)",
+    # 13 (Part 4 degrees-of-freedom) is a 2yr-vs-3yr before/after, so it needs
+    # both the default 3yr `records` and the 2yr `records_2yr` (both bound in
+    # DATA_PREP_CODE). 08/12 stay blog-only and absent here.
+    "13_degrees_of_freedom.png": "fig13_degrees_of_freedom(records_2yr, records)",
 }
 
 IMAGE_RE = re.compile(r"^!\[.*\]\((?:\./)?docs/figures/([0-9A-Za-z_]+\.png)\)\s*$")
@@ -339,6 +343,7 @@ from make_figures import (
     fig9_monte_carlo,
     fig10_regime_pnl,
     fig11_excess_acf,
+    fig13_degrees_of_freedom,
     load_msft_csv,
 )
 
@@ -364,6 +369,8 @@ param_grid = {
     "close_at_pct": [0.50, 0.75, 1.00],
 }
 oos_equity, records = walk_forward_optimization(dates, prices, param_grid)
+# 2-year records for the fig13 before/after contrast (the window we did NOT pick).
+_, records_2yr = walk_forward_optimization(dates, prices, param_grid, train_years=2)
 mc = monte_carlo_shuffle(dates, prices, params, n_shuffles=500, seed=42)
 regimes = regime_analysis(dates, prices, trades)
 
