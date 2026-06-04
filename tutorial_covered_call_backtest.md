@@ -544,6 +544,10 @@ RESET (sold and closed; ready for next call)
 
 The real engine has no separate per-day function — [`cc_backtest.py::run_cc_overlay`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L201) inlines exactly this loop body, with the four transitions above as its `if`/`elif` branches. *The Run_cc_overlay() Function: Full Walkthrough*, later in this part, traces it line by line.
 
+**Then how does any call reach the expiration branch at all?** The two early-close gates only run while time remains. They sit in the `else` of the `days_left ≤ 0` check, so on the day a call expires the engine handles it and never re-checks profit or delta. A call reaches expiration only when both gates stayed false on every day it still had time: it never decayed to 25% of the premium, and its delta never crossed 0.70.
+
+That's the call that drifts near its strike for its whole life. Hovering close to the money, it keeps too much value to hit the 75% target, yet never moves far enough in-the-money to trip the 0.70-delta gate. The last day it gets checked is the one with a single day left. The next morning `days_left` reaches 0 and the position settles one of two ways: it finishes a hair out-of-the-money and expires worthless with the premium kept, or it finishes just in-the-money and the shares are assigned at the strike. Both outcomes log as `expiration`, and together they're a small minority — most calls are closed early by one of the two gates well before expiry.
+
 ### Transaction Costs: Commission ($0.65/contract) + Slippage (3% of Premium)
 
 Leave transaction costs out of a backtest and every trade looks more profitable than it would in a real account.
