@@ -185,6 +185,11 @@ for p in periods:
         "equity",
     ]
     cumulative *= 1.0 + (seg.iloc[-1] - seg.iloc[0]) / seg.iloc[0]
+# Report a return, not a multiple: `cumulative` is a growth factor (the
+# product of 1 + each period's return; 2.0 = doubled), so subtracting 1.0
+# strips out the principal and leaves the gain. The :+.0% format prints it
+# as a signed whole-number percent (% scales by 100, .0 drops decimals,
+# + forces the sign).
 print(f"\\nChained OOS compound return: {cumulative - 1.0:+.0%}")''',
     "#### The Code": '''\
 # compute_statistics already ran in the data-prep cell — these are its real

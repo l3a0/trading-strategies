@@ -71,9 +71,9 @@ A backtest is a time machine. You rewind to the past, follow your rules perfectl
 
 Underneath that timing problem sit three *mechanical* biases any single run can hide:
 
-- They peek at future prices while building today's decision (look-ahead bias)
-- They only count the survivors — the stocks that didn't go bankrupt (survivorship bias)
-- They tweak parameters so much that they overfit to random noise (overfitting)
+- They peek at future prices while building today's decision (look-ahead bias).
+- They only count the survivors — the stocks that didn't go bankrupt (survivorship bias).
+- They tweak parameters so much that they overfit to random noise (overfitting).
 
 We engineer the first of these out of the code, sidestep the second, and attack the third head-on.
 
@@ -398,15 +398,15 @@ In the production engine `estimate_iv(rolling_vol)` does steps 2 and 3 together 
 
 **Why these multipliers?**
 
-- As a rough practitioner rule of thumb, implied volatility tends to run on the order of 20–40% above realized volatility — the **volatility risk premium** (Bakshi & Kapadia 2003; Coval & Shumway 2001 establish the premium's existence and sign; the specific band is lore, not a figure from those papers)
-- But the gap **varies by regime**: when vol is already high, IV doesn't spike as much above HV; when vol is low, IV tends to stay well above HV (mean-reversion pricing)
-- The regime-based approach (1.1×/1.3×/1.5×) captures this dynamic better than a flat constant
+- As a rough practitioner rule of thumb, implied volatility tends to run on the order of 20–40% above realized volatility — the **volatility risk premium** (Bakshi & Kapadia 2003; Coval & Shumway 2001 establish the premium's existence and sign; the specific band is lore, not a figure from those papers).
+- But the gap **varies by regime**: when vol is already high, IV doesn't spike as much above HV; when vol is low, IV tends to stay well above HV (mean-reversion pricing).
+- The regime-based approach (1.1×/1.3×/1.5×) captures this dynamic better than a flat constant.
 
 **When this still breaks down:**
 
-- **Before earnings:** IV spikes way above HV (the market expects a big move)
-- **After a crash:** HV explodes but IV might normalize faster (panic recedes)
-- **In persistent trends:** HV might be high (the stock is moving a lot) but IV might be low (it's moving in one direction, so options are more predictable)
+- **Before earnings:** IV spikes way above HV (the market expects a big move).
+- **After a crash:** HV explodes but IV might normalize faster (panic recedes).
+- **In persistent trends:** HV might be high (the stock is moving a lot) but IV might be low (it's moving in one direction, so options are more predictable).
 
 We implement this regime-based approach in Part 3's `run_cc_overlay()` engine.
 
@@ -759,7 +759,7 @@ The walk-forward optimizer searches a small grid of three parameters:
 - **`dte`** — `[21, 30, 45]`. Shorter means faster, more frequent sales; longer means richer premiums per trade.
 - **`close_at_pct`** — `[0.50, 0.75, 1.00]`. Close once this fraction of the premium has been captured; `1.00` holds to expiry.
 
-That's 3 × 3 × 3 = **27 parameter sets**. There's deliberately no `put_delta` axis: this is a covered-call overlay — we already own the shares and only sell calls, so `put_delta` belongs to the CSP (cash-secured put) entry phase of the full wheel, which we aren't testing here.
+That's 3 × 3 × 3 = **27 parameter sets**.
 
 Expanding the grid into all 27 combinations is one Cartesian product — [`cc_backtest.py::_param_combinations`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L873) — which `walk_forward_optimization` loops over on each training window.
 
@@ -773,7 +773,7 @@ def walk_forward_optimization(
     prices: NDArray[np.floating[Any]] | list[float],
     param_grid: dict[str, list[float]],
     fixed_params: dict[str, float] | None = None,
-    train_years: int = 2,
+    train_years: int = 3,
     test_months: int = 6,
     roll_months: int = 6,
 ) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
@@ -809,23 +809,23 @@ The strike dial is unanimous — `call_delta` is 0.25 in all 13 periods. `dte` f
 **Why these defaults make sense:**
 
 1. **0.25Δ** is the top of the conservative grid:
-   - The walk-forward search only ranges over `[0.15, 0.20, 0.25]` — 0.25 is the most aggressive setting it can pick
-   - Lower (0.15Δ) leaves too much premium uncollected; pushing past the grid (0.30–0.35Δ) collects more but gets assigned too often
-   - 0.25 takes the most income the conservative range allows while still keeping the shares most of the time
+   - The walk-forward search only ranges over `[0.15, 0.20, 0.25]` — 0.25 is the most aggressive setting it can pick.
+   - Lower (0.15Δ) leaves too much premium uncollected; pushing past the grid (0.30–0.35Δ) collects more but gets assigned too often.
+   - 0.25 takes the most income the conservative range allows while still keeping the shares most of the time.
 
 2. **21 DTE** is the monthly rhythm:
-   - Matches typical options expiration cycles
-   - Gives enough time for the trade to work out
-   - Runs roughly monthly — about 12 cycles a year for reinvesting premiums
+   - Matches typical options expiration cycles.
+   - Gives enough time for the trade to work out.
+   - Runs roughly monthly — about 12 cycles a year for reinvesting premiums.
 
 3. **75% profit target** is the default, with early-to-mid closing the robust region:
-   - Captures most of the premium decay without holding through the gamma-heavy final stretch
-   - Holding to expiry (100%) means riding through the period where assignment risk is highest and time decay slows — the optimizer never picks it
-   - Walk-forward splits between 0.75 (7 of 13 periods) and the earlier 0.50 (6 of 13) — both early-to-mid profit-taking. The 3-year window makes 0.50 competitive, but 0.75 still edges it and stays the `__main__` default
+   - Captures most of the premium decay without holding through the gamma-heavy final stretch.
+   - Holding to expiry (100%) means riding through the period where assignment risk is highest and time decay slows — the optimizer never picks it.
+   - Walk-forward splits between 0.75 (7 of 13 periods) and the earlier 0.50 (6 of 13) — both early-to-mid profit-taking. The 3-year window makes 0.50 competitive, but 0.75 still edges it and stays the `__main__` default.
 
 4. **Deep-ITM close at delta > 0.70** caps assignment damage:
-   - When the call goes deep ITM, gamma is steep and a small adverse move can wipe out months of premium income
-   - Closing early at the 0.70-delta threshold gives up the last sliver of time value to escape before assignment crystallizes the full upside loss
+   - When the call goes deep ITM, gamma is steep and a small adverse move can wipe out months of premium income.
+   - Closing early at the 0.70-delta threshold gives up the last sliver of time value to escape before assignment crystallizes the full upside loss.
 
 ### The Key Finding: Walk-Forward Tells the Honest Story
 
@@ -1581,7 +1581,6 @@ Reference glossary for terms used throughout the tutorial. Most are also defined
 - **AR(1) (autoregressive, order 1):** The simplest model of a time series that has memory. Each value depends linearly on the previous one plus a fresh random shock: `y_t = φ · y_{t-1} + ε_t`. The single coefficient `φ` (phi) controls how much: `φ = 0` is white noise (no memory — IID coin flips), `φ > 0` is positive autocorrelation (today inherits from yesterday — momentum), `φ < 0` is mean reversion (today fades yesterday). AR(1) is the standard testbed for time-series methods because its long-run variance has a clean closed form (`1 / (1 − φ)²` for unit-variance innovations), so you can measure how well an estimator like Newey-West tracks the truth. Figure 3 in Part 5 uses 2,000 AR(1) paths with `φ = 0.3` to demonstrate the bias-variance tradeoff for the NW lag cutoff.
 - **Assignment loss:** What happens when your covered call gets exercised because the stock rallied past the strike. You collected premium up front, but to keep running the overlay you must rebuy the shares at the current (higher) market price. The overlay's net is `premium − (market_price − strike)`. It's a **loss** when the stock rallied past `strike + premium`. Example: you sold a $310 strike call for $1.50 premium and the stock closed at $325 — you keep the $1.50 but pay back $15 of capped upside, netting **−$13.50/share**. The stock appreciation up to the strike is still yours (tracked separately as part of equity), but the *uncapped* portion of the rally is gone. In a strong bull market this is the dominant cost the overlay pays.
 - **CC (Covered Call):** A strategy where you own 100 shares of a stock and sell a call option against them. You collect the premium up front; if the stock stays below the strike at expiration, you keep the shares and the premium. If it rises above the strike, your shares may be called away at that price. "Covered" means you already own the shares, so you're not exposed to unlimited upside risk like a naked call.
-- **CSP (Cash-Secured Put):** A strategy where you sell a put option and set aside enough cash to buy 100 shares at the strike price if assigned. You collect the premium up front; if the stock stays above the strike, the put expires worthless and you keep the cash. If it falls below, you're obligated to buy the shares at the strike. CSPs are the "entry" half of the wheel — a way to get paid while waiting to buy a stock at a discount.
 - **CDF (Cumulative Distribution Function):** Answers the question "what's the probability a value falls at or below X?" Imagine filling a glass of water as you move left to right across a bell curve — at the far left it's nearly empty (0%), at the center it's half full (50%), at the far right it's nearly full (100%). In our context, the CDF converts a stock's distance from the strike price into a probability, which is exactly what Black-Scholes needs to price an option.
 - **Closed-form solution:** A formula you can write down using basic math (add, multiply, exponents, etc.) and compute directly — like the area of a circle (πr²). When something has "no closed-form solution," it means you can't write a simple equation for it; you need either calculus or an approximation. The normal CDF has no closed-form, which is why we use a polynomial shortcut.
 - **Degrees of freedom (Pardo):** A measure of how much room a dataset gives you to fit a strategy's parameters. Robert Pardo's bar-level version subtracts the free parameters and each indicator's lookback from the total observations and asks that ~90% remain (the engine's 3-year, 756-bar window spends `3 + 30 = 33` and keeps 95.6%). But for a held-position strategy the bar count is misleading — one option drives many correlated days of P&L — so Pardo *also* checks the **number of trades** (the conventional floor is ~30), which is the unit that actually carries statistical evidence. The 3-year window clears that floor (median 54 trades); a 2-year window keeps a fine 93.5% on bars but its trade count (median 24) falls short — which is why the window is 3 years. A clean percentage is necessary, not sufficient. See `degrees_of_freedom` in the code.
@@ -1606,7 +1605,6 @@ Reference glossary for terms used throughout the tutorial. Most are also defined
 - **Strike (Strike Price):** The price at which an option's buyer can choose to buy (for a call) or sell (for a put) the underlying stock. Strikes are usually whole-dollar increments. When you "sell a 0.25-delta call," what you're really choosing is the strike where the call has roughly 25% probability of being ITM at expiration — high enough above the current price that exercise is unlikely, low enough that the premium is worth collecting.
 - **T-statistic:** A number that tells you how many standard errors your estimate is away from zero. A t-stat of 2 means there's only a \~5% chance of observing this result if the true effect were zero — Fisher's conventional bar for "statistically significant." For backtests, you want a t-stat well above 2 (Harvey, Liu & Zhu 2016 argue 3 is the honest bar after multiple-testing adjustment) and you want it computed with Newey-West standard errors, not naive ones.
 - **VRP (Volatility Risk Premium):** The systematic gap between options' implied volatility (what option prices imply about future moves) and realized volatility (what actually happens). Across decades and asset classes, IV averages above subsequent realized vol — meaning options are, on average, slightly overpriced. Selling options is the textbook way to harvest the VRP. Our covered call overlay captures only a fraction of it: the call side, only out-of-the-money strikes, only on a single stock. The full premium is much richer at the index level (BXM, PUT indices document this).
-- **Wheel (Wheel Strategy):** A two-phase options income strategy. Phase 1: sell *cash-secured puts* (CSPs) on a stock you'd be happy to own. If the puts expire worthless, keep the premium; if they get assigned, you now own the stock at a discount. Phase 2: sell *covered calls* (CCs) against those shares. If the calls expire worthless, keep the premium; if they get exercised, you sell at a profit and start the cycle over. This tutorial focuses on the covered-call (Phase 2) half of the wheel.
 
 ---
 

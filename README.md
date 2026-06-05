@@ -115,6 +115,6 @@ IV is no longer a tunable param — it's derived from rolling 30-day historical 
 
 This is an educational backtester, not a production trading system. Notable limitations:
 
-- IV is estimated, not real (no historical option chain data)
-- No earnings-week avoidance, no dividend handling, no rolling logic
-- Single-stock, single-period results — see the tutorial's robustness section for how to evaluate generalizability
+- IV is estimated, not real (no historical option chain data).
+- No earnings-week avoidance, no dividend handling, no rolling logic.
+- Single-stock, single-period results — see the tutorial's robustness section for how to evaluate generalizability.
