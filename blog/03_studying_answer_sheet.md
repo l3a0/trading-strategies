@@ -68,7 +68,7 @@ The third is **regime analysis**. Bucket every trade's profit by the market stat
 
 ## Why this is the real skill
 
-A strategy that survives four independent attacks — out-of-sample testing, scrambled price paths, parameter perturbation, and every market regime — is worth far more than one that posted a bigger number on a single decade it was tuned to fit. Robustness beats optimization, and it isn't close. The optimized number is the one you want to be true. The robust number is the one you can act on.
+A strategy that survives four independent attacks — out-of-sample testing, scrambled price paths, parameter perturbation, and every market regime — is worth far more than one that posted a bigger number on a single decade it was tuned to fit. Robustness beats optimization. The optimized number is the one you want to be true. The robust number is the one you can act on.
 
 Most strategies you'll be pitched report the first kind and quietly skip all four tests. Now you know exactly which questions to ask, and why a confident answer to "how did it do?" without an answer to "how did you keep from fooling yourself?" is no answer at all.
 

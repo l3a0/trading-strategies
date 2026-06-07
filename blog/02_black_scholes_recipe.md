@@ -4,7 +4,7 @@
 
 Suppose I asked you to price one year of car insurance for a 25-year-old. You don't need an actuarial license to know what you'd want: how much the car costs to replace (the stock price), what the coverage limit is (the strike), how long the policy runs (the time to expiration), what you can earn on the premium while you hold it (the risk-free rate), and how wild a driver we're talking about (the volatility). Five questions. Answer them honestly and you can name a fair price.
 
-That is the entire idea behind the most famous equation in finance.
+That is the recipe behind the most famous equation in finance.
 
 Last post I showed a backtest that "made" $268,000 layering covered calls on Microsoft, and then a statistic suggesting the edge was indistinguishable from luck. Before we can judge whether that profit was real, we have to open the engine and look at where its option prices came from — because the backtest never bought a single real option. It calculated them. This is the part of the machine where optimism gets in.
 
@@ -32,7 +32,7 @@ It runs from 0 to 1, and you can read it directly as a risk setting. Sell a 0.20
 
 *The dial, drawn out. Pushing the strike further out-of-the-money slides you down the curve to a lower delta — a smaller chance of assignment, and a smaller premium. The backtest sits at the red dot.*
 
-That assignment isn't a malfunction when it happens. It's the deal you signed for the premium. Selling a call means selling away the far upside on purpose; getting called away on the one-in-four is the price of getting paid the other three times. A covered-call strategy that never gets assigned isn't being careful — it's leaving money it was promised on the table.
+That assignment isn't a malfunction when it happens. It's the deal you signed for the premium. Selling a call means selling away the far upside on purpose; getting called away on the one-in-four is the price of getting paid the other three times.
 
 ## The input you can't look up
 

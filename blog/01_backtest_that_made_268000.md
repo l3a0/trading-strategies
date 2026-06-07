@@ -26,7 +26,7 @@ It is the single best tool an individual investor has for asking "does this idea
 
 ## Why most backtests lie
 
-I've come to treat a clean backtest result the way I treat a too-good restaurant review: my first question isn't "how good?" but "who wrote it, and what did they leave out?" Three failure modes cause almost all of the damage, and a backtest can suffer from any of them without throwing a single error.
+The question to ask a clean backtest isn't how good it is — it's what it left out. Three failure modes cause almost all the damage, and a backtest can suffer any of them without throwing a single error.
 
 The first is **look-ahead bias** — letting tomorrow's information leak into today's decision. In a covered-call test, this is as subtle as deciding not to sell an option on a day you happen to know the stock is about to drop. The code looks innocent. The returns look spectacular. The strategy is unrunnable, because in real life you don't know.
 
@@ -64,9 +64,9 @@ What the exercise produced instead was the more valuable thing: a clear, defensi
 
 ## What's still unanswered
 
-There's a loose end. A 0.46 isn't random — it's roughly what the academic literature predicts when you run this strategy on a single stock rather than a broad index, and the reason why is genuinely interesting. There's also the fourth trap I flagged earlier, and it's different in kind from the first three: those corrupt the backtest, while this one corrupts the statistic you use to judge it. The textbook formula for that statistic quietly assumes something untrue for a strategy held for weeks at a time, and most amateur backtests never correct for it.
+There's a loose end. A 0.46 isn't random — a weak result that can't clear the bar is exactly what the academic literature leads you to expect from a single stock rather than a broad index, and the reason why is genuinely interesting. There's also the fourth trap I flagged earlier, and it's different in kind from the first three: those corrupt the backtest, while this one corrupts the statistic you use to judge it. The textbook formula for that statistic quietly assumes something untrue for a strategy held for weeks at a time, and most amateur backtests never correct for it.
 
-The pricing engine comes next — where those option prices came from, and why that's exactly where optimism sneaks in. After that, how you stress-test a strategy against overfitting. The series ends back here: why 0.46 is what the single-stock literature predicts, and that fourth trap in how the number is computed. For now, the takeaway is small and load-bearing: when a backtest hands you a beautiful number, the interesting work hasn't started yet.
+The pricing engine comes next — where those option prices came from, and why that's exactly where optimism sneaks in. After that, how you stress-test a strategy against overfitting. The series ends back here: why a weak single-stock result like 0.46 is what the literature predicts, and that fourth trap in how the number is computed. For now, the takeaway is small and load-bearing: when a backtest hands you a beautiful number, the interesting work hasn't started yet.
 
 ---
 
