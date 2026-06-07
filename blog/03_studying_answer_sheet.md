@@ -4,7 +4,7 @@
 
 If you study for an exam by reading the exact questions that will be on it, you'll get a perfect score. You'll also have learned nothing about whether you understand the subject. The grade is real and completely uninformative at the same time.
 
-That is the single most common way a backtest lies, and it has a technical name: **in-sample optimization**. Last post I showed that even an honestly priced engine — every option valued the way the real market would have — can still be tortured into a beautiful, fragile, fictional result. This is how the torturing happens, and how you stop doing it to yourself.
+That's the most common way a backtest lies, and it has a technical name: **in-sample optimization**. Last post I showed that even an honestly priced engine — every option valued the way the real market would have — can still be tortured into a fragile, fictional result. This is how that happens, and how you stop doing it to yourself.
 
 ## The cheapest way to fool yourself
 
@@ -16,7 +16,7 @@ It dies because you didn't discover a strategy. You discovered the settings that
 
 ## Studying for a different test
 
-The fix is almost insultingly simple to state: **never evaluate a strategy on data you used to choose its settings.**
+The fix is simple to state: **never evaluate a strategy on data you used to choose its settings.**
 
 The disciplined version is called **walk-forward validation**, and it works like a rolling exam. Take the first three years of history as a training window. Search every parameter combination on *those three years only*, pick the best one, then lock it — no more tuning allowed. Now run that locked strategy on the next six months, which the search never saw. Record the result. Roll the whole apparatus forward six months and repeat: retrain, lock, test on fresh data, record. On the Microsoft history this produces thirteen of these train-then-test cycles.
 
@@ -36,11 +36,11 @@ The covered-call overlay does not collapse. Over the walk-forward span — April
 
 There's a subtler piece of evidence buried in those thirteen retraining cycles. The search was free to pick any of twenty-seven combinations each time, on thirteen very different market windows — and it kept gravitating to the same neighborhood. The strike-distance dial in particular locked onto the boring middle setting — a 0.25 delta — in all thirteen; the other two knobs wandered a little but never far from the configuration the rest of the analysis already used (you can see the wandering in the labels on the chart above). A search that keeps independently returning to the same region across a correction, a crash, and a sideways grind is telling you that region reflects something structural, not a fluke of one window.
 
-Now the part that actually matters. Retaining 86% of an in-sample number is reassuring, but it's the wrong yardstick. The right one is the simplest possible alternative: just buying Microsoft and holding it. Over that same April 2019–October 2025 window, buy-and-hold returned about **317%**. So the honest, no-hindsight overlay beat doing nothing clever at all by roughly **7 points over six and a half years**. The optimized 378% looked like a comfortable 61-point win over the stock; strip out the hindsight and almost the entire margin evaporates. The strategy is robust, general, survives every test in this post — and clears a buy-and-hold investor by a sliver. Whether even that sliver is real is exactly the question the final post answers.
+Now the part that matters. Retaining 86% of an in-sample number is reassuring, but it's the wrong yardstick. The right one is the simplest possible alternative: just buying Microsoft and holding it. Over that same April 2019–October 2025 window, buy-and-hold returned about **317%**. So the honest, no-hindsight overlay beat doing nothing clever at all by roughly **7 points over six and a half years**. The optimized 378% looked like a comfortable 61-point win over the stock; strip out the hindsight and almost the entire margin evaporates. The strategy is robust, general, survives every test in this post — and clears a buy-and-hold investor by a sliver. Whether even that sliver is real is exactly the question the final post answers.
 
 ![Three cumulative-return curves over the 2019–2025 walk-forward span. The optimized fixed-defaults curve ends highest at +378%, the honest out-of-sample curve at +324%, and buy-and-hold Microsoft just below at +317%. All three track closely for most of the span and only fan apart late.](../docs/figures/08_is_vs_oos.png)
 
-*No collapse — and no real separation either. The honest blue curve stays well clear of any collapse, but it spends the whole decade a hair above the gray buy-and-hold line. The win that looked like 61 points is a 7-point sliver once the hindsight is gone.*
+*The honest blue curve doesn't collapse — but it doesn't separate either. It spends the whole span a hair above the gray buy-and-hold line. The win that looked like 61 points is a 7-point sliver once the hindsight is gone.*
 
 ## Why three years, not two
 
@@ -56,19 +56,19 @@ The first is **Monte Carlo**. Take the actual daily returns, shuffle their order
 
 ![A histogram of total returns from 500 shuffled price paths, roughly bell-shaped and centered near 657%. A dotted line marks the shuffle mean, a dashed line the best shuffle at about 870%, and a solid red line far to the right marks the real ordered path at about 915%, beyond every shuffled outcome.](../docs/figures/09_monte_carlo.png)
 
-*Five hundred scrambles, and in this batch the real path's return sits to the right of all of them — out around the 99th percentile of orderings. If the strategy depended on the specific sequence of history — the trend that happened to follow that dip — destroying the order would have killed it. It didn't.*
+*Five hundred scrambles, and in this batch the real path's return sits to the right of all of them, out around the 99th percentile of orderings. If the strategy depended on the exact sequence of history, destroying the order would have killed it. It didn't.*
 
 The second is **sensitivity analysis**. Take the chosen settings and nudge one at a time — strike distance a little tighter, then looser; profit target a little higher, then lower. A strategy perched on a fragile optimum falls apart under small perturbations. This one doesn't: every nudge moves the return by single-digit percentages. The optimum is a plateau, not a needle.
 
-The third is **regime analysis**. Bucket every trade's profit by the market state it closed in — bull, bear, or sideways — and check whether the strategy secretly depends on one of them. The covered-call overlay is profitable in all three, and the breakdown is the most interesting result in the whole project: it earns roughly $23 of premium per day in bull markets and $300–$400 per day in bear and sideways ones. It's structurally defensive — it earns most of its keep precisely when the market isn't going straight up, which is the entire point of selling insurance.
+The third is **regime analysis**. Bucket every trade's profit by the market state it closed in — bull, bear, or sideways — and check whether the strategy secretly depends on one of them. The covered-call overlay is profitable in all three. It earns roughly $23 of premium per day in bull markets and $300–$400 per day in bear and sideways ones. It's structurally defensive — it earns most of its keep precisely when the market isn't going straight up, which is the entire point of selling insurance.
 
 ![A bar chart of average overlay P&L per day by market regime. The bull bar is tiny at about $23 per day; the sideways bar towers at about $400 per day and the bear bar at about $300 per day.](../docs/figures/10_regime_pnl.png)
 
 *The shape of a defensive strategy. A bull-market strategy in disguise would have its tall bar on the left. This one barely registers when Microsoft is ripping and does its real work in the flat and falling stretches — selling insurance pays best when buyers are scared.*
 
-## Why this is the real skill
+## Robustness beats optimization
 
-A strategy that survives four independent attacks — out-of-sample testing, scrambled price paths, parameter perturbation, and every market regime — is worth far more than one that posted a bigger number on a single decade it was tuned to fit. Robustness beats optimization. The optimized number is the one you want to be true. The robust number is the one you can act on.
+A strategy that survives four independent attacks — out-of-sample testing, scrambled price paths, parameter perturbation, and every market regime — is worth far more than one that posted a bigger number on a single decade it was tuned to fit. The optimized number is the one you want to be true. The robust number is the one you can act on.
 
 Most strategies you'll be pitched report the first kind and quietly skip all four tests. Now you know exactly which questions to ask, and why a confident answer to "how did it do?" without an answer to "how did you keep from fooling yourself?" is no answer at all.
 

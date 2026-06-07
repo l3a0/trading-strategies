@@ -10,13 +10,13 @@ And the evidence that the overlay itself added anything — as opposed to riding
 
 ![Two portfolio-value curves over 2016–2026 on a $100K start. The covered-call overlay line ends near $1.01M, slightly above the buy-and-hold Microsoft line; both rise together for most of the decade, with the overlay pulling modestly ahead.](../docs/figures/01_equity_curves.png)
 
-*The reveal. This is the exact chart from the first post — same axes, same numbers, same quarter-million-dollar gap. Nothing about the picture changed. Everything about what it means is about to.*
+*This is the exact chart from the first post — same axes, same numbers, same quarter-million-dollar gap. Nothing about the picture changed. Everything about what it means is about to.*
 
 Both of those are true. This post is about the one number that reconciles them, why the textbook way of computing it quietly lies for strategies like this one, and what's left standing once you compute it honestly.
 
 ## A profit and an edge are different claims
 
-Start with the distinction the whole post rests on, because almost every strategy you'll ever be pitched depends on you not making it.
+Start with the distinction the post rests on, because almost every strategy you'll be pitched depends on you not making it.
 
 **A profit** is a statement about one run of history: *this made money on this stock over these ten years.* **An edge** is a statement about the future: *this has a repeatable advantage that will probably show up again.* The first is a fact about the past. The second is a claim about a distribution — and claims about distributions need a measure of uncertainty attached, or they're just storytelling with a dollar sign in front.
 
@@ -32,7 +32,7 @@ For a covered-call overlay, that assumption is simply false, and it's worth seei
 
 Treat correlated observations as independent and you fool yourself about how much information you really have. Thirty days of readings off one option position is not thirty independent facts — it's closer to one or two. The textbook formula doesn't know that. It counts every day as a fresh, independent vote, so it thinks your sample is far larger and your estimate far more certain than it is. In the common case — where holding a position creates *positive* day-to-day correlation — the result is a standard error that's too small and a t-statistic that's inflated, sometimes substantially, occasionally enough to shove a pure-noise strategy across the significance line.
 
-That is a fourth way to fool yourself, sitting on top of the three from the first post. And it's the nastiest, because it strikes at the one number you were trusting to catch the other three.
+That is a fourth way to fool yourself, on top of the three from the first post — and it strikes at the one number you were trusting to catch the other three.
 
 ## Newey-West, in plain language
 
@@ -44,7 +44,7 @@ It's a well-worn tool. Andrews (1991) and Newey & West (1994) set the framework;
 
 *The correction has one knob — how many days of dependence to look back over. Too few and you miss the dependence; too many and the estimate gets noisy. There's a sweet spot, and the standard formula lands near it without you having to tune anything. That's why "use Newey-West" is a recipe, not a judgment call.*
 
-Here's what it did, and I want to be precise because the honest version is more interesting than the tidy one. The naive t-stat on the overlay's excess return is **0.40**. The Newey-West-corrected t-stat is **0.46**. The correction barely moved it — and it nudged it slightly *up*, not down.
+Here's what it did. The honest version is more interesting than the tidy one. The naive t-stat on the overlay's excess return is **0.40**. The Newey-West-corrected t-stat is **0.46**. The correction barely moved it — and it nudged it slightly *up*, not down.
 
 That deserves an explanation, not a glossover. The textbook danger is positive autocorrelation inflating a naive t-stat toward a fake "significant." This strategy's excess returns happen to carry mild *negative* net autocorrelation instead — the short call's daily mark-to-market partly reverses itself day to day — so here the correction's effect is tiny and runs the other way. The lesson is not "Newey-West rescued me from a fake 2.0." On this sample it didn't have to. The lesson is that **you only know that because you computed it.** The correction is the instrument that tells you which case you're in. Skip it and you're trusting a number that, on a different strategy, would have lied to you confidently.
 
@@ -52,11 +52,11 @@ That deserves an explanation, not a glossover. The textbook danger is positive a
 
 *What the textbook formula assumes is all-zero. Holding one option for weeks makes these bars non-zero — but here they lean slightly negative, not positive, especially across the eight-day window the correction actually uses. That negative lean is the whole reason 0.40 became 0.46 instead of something smaller.*
 
-Either way the verdict is identical and unambiguous: 0.46, against a bar of 2, and a stricter bar of 3 once you account for having tested twenty-seven parameter combinations to find this one. It helps to put these in the currency statisticians actually use — a *p-value*, the probability pure chance hands you a result at least this good. The bar of 2 is roughly a 1-in-20 event; the multiple-testing bar of 3 is about 1 in 370. This backtest's 0.46 is a p-value near 0.65 — chance alone would match or beat it about two times in three. The edge is indistinguishable from zero, before the correction and after it.
+Either way the verdict is the same: 0.46, against a bar of 2, and a stricter bar of 3 once you account for having tested twenty-seven parameter combinations to find this one. It helps to put these in the currency statisticians actually use — a *p-value*, the probability pure chance hands you a result at least this good. The bar of 2 is roughly a 1-in-20 event; the multiple-testing bar of 3 is about 1 in 370. This backtest's 0.46 is a p-value near 0.65 — chance alone would match or beat it about two times in three. The edge is indistinguishable from zero, before the correction and after it.
 
 ## The honest verdict
 
-So is the strategy worthless? No — and the precise shape of the answer is the most useful thing in this series.
+So is the strategy worthless? No — and the precise shape of that answer is the part worth getting right.
 
 On an *absolute* basis, the overlay is genuinely good. Its risk-adjusted return — Sharpe ratio against cash — is about **1.12**, versus roughly **0.72** for just buying and holding Microsoft over the same window. Lower volatility, smoother ride, real income. If your alternative were a savings account, this strategy beat it on a risk-adjusted basis and it isn't close.
 
