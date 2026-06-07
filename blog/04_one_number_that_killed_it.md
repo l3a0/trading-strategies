@@ -74,7 +74,7 @@ There's a sharper way to make the point. The overlay's excess return mixes two d
 
 You can hedge it away. Dynamically rebalance the share position so the portfolio's net exposure stays pinned to plain buy-and-hold, and the same calls and the same premium now isolate the premium cleanly. Do that and the Sharpe of the excess return roughly triples — from about **0.13** to **0.46** — and the Newey-West t-stat climbs from the **0.46** we've been living with to about **1.63**, a 3.5× improvement on the unhedged version. And it is *still* short of the t = 2 bar.
 
-That isn't a backtest bug. It's the single-stock weakness reasserting itself even after you've stripped out every source of noise you can name. The honest path to a confident answer was never a longer single-stock backtest — at this effect size that would take roughly 250 years of data. It's the same framework run on a broad index over decades, which is exactly what the academic literature does.
+It's the single-stock weakness reasserting itself even after you've stripped out every source of noise you can name. The honest path to a confident answer was never a longer single-stock backtest — at this effect size that would take roughly 250 years of data. It's the same framework run on a broad index over decades, which is exactly what the academic literature does.
 
 ![A curve of expected t-statistic against years of data on a logarithmic axis, at this strategy's Sharpe ratio. It rises slowly, crossing the conventional significance line of 2 at around 250 years and the stricter line of 3 at around 570. A dot at ten years sits far below both, near 0.4.](../docs/figures/04_t_stat_vs_years.png)
 

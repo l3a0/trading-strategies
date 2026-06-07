@@ -5,7 +5,7 @@
 **For:** Bao, actively learning options trading  
 **Goal:** Understand both the WHY and the HOW of backtesting covered calls  
 **Time to read:** 60 minutes (code walkthrough: another 60)  
-**Last updated:** May 2026
+**Last updated:** June 2026
 
 ---
 
@@ -852,7 +852,7 @@ The point: **fixed-params backtests systematically overestimate the strategy's r
 
 This also clarifies the right reading of the headline 915% number reported elsewhere in this tutorial. That number is the fixed-params total return over the *full* 10-year MSFT sample (2016-04 → 2026-04). It extends \~3 years *before* the walk-forward span and \~6 months *after* it. The 324% / 378% comparison above is the apples-to-apples one inside the walk-forward window.
 
-The same span trap applies to the buy-and-hold baseline. The README's \~646% buy-and-hold is the full 10-year sample; over the walk-forward window buy-and-hold returned \~317%. Compared correctly, fixed-params (\~378%) beats same-span buy-and-hold by \~61 pp, but the honest walk-forward number (\~324%) clears it by only \~7 pp over 6.5 years — an even thinner margin than the 2-year window's \~16 pp. That razor-thin no-hindsight edge over simply holding the stock is exactly what the Part 5 significance test puts a number on — and why the Newey-West t-stat on the overlay's *excess* over buy-and-hold lands well below 2.
+The same span trap applies to the buy-and-hold baseline. The README's \~646% buy-and-hold is the full 10-year sample; over the walk-forward window buy-and-hold returned \~317%. Compared correctly, fixed-params (\~378%) beats same-span buy-and-hold by \~61 pp, but the honest walk-forward number (\~324%) clears it by only \~7 pp over 6.5 years — an even thinner margin than the 2-year window's \~16 pp. Part 5 doesn't test that walk-forward edge. Its significance test is a separate measurement, run on the full 10-year fixed-params backtest. It reaches the same verdict: the Newey-West t-stat on the overlay's *excess* over buy-and-hold lands well below 2. By either route, the overlay barely clears buy-and-hold, if at all.
 
 ### Degrees of Freedom: Was the Window Big Enough to Optimize?
 
@@ -1120,7 +1120,7 @@ A series is *heteroskedastic* when its variance changes over time. Some periods 
 
 Why this also breaks naive t-stats: a standard error that assumes constant variance is doing exactly the ocean thing — averaging over periods that have genuinely different volatility. The composite SE is biased: too small in calm periods, too big in volatile ones. Across the full sample you can over- or under-state significance depending on how the high-vol periods coincide with your signal.
 
-In our backtest, heteroskedasticity is everywhere. Volatility clusters in equities — a documented stylized fact for at least 50 years ([Engle's 1982 ARCH paper](https://www.jstor.org/stable/1912773), [Mandelbrot's 1963 cotton-prices paper](https://www.jstor.org/stable/2350970)). The MSFT data spans calm 2017, the COVID volatility spike of 2020, the 2022 rate-hike sell-off, and 2024's renewed mega-cap bull run, each with materially different return variance. Our own `detect_regime()` function literally encodes this: it classifies each day as low / normal / high vol, explicitly acknowledging that returns come from different distributions. That classification *is* heteroskedasticity in code form.
+In our backtest, heteroskedasticity is everywhere. Volatility clusters in equities — documented for at least 50 years ([Engle's 1982 ARCH paper](https://www.jstor.org/stable/1912773), [Mandelbrot's 1963 cotton-prices paper](https://www.jstor.org/stable/2350970)). The MSFT data spans calm 2017, the COVID volatility spike of 2020, the 2022 rate-hike sell-off, and 2024's renewed mega-cap bull run, each with materially different return variance. Our own `detect_regime()` function literally encodes this: it classifies each day as low / normal / high vol, explicitly acknowledging that returns come from different distributions. That classification *is* heteroskedasticity in code form.
 
 **Why it matters that HAC handles both.**
 
@@ -1128,7 +1128,7 @@ Newey-West is built around *sample autocovariances at each lag* rather than a si
 
 That's the promise of the "C" (consistent) in HAC: **as your sample grows, the HAC standard error gets closer and closer to the truth**. The naive standard error doesn't have this property under autocorrelated data — give it a million more observations and it just becomes more confidently wrong. Picture a pollster using a broken sampling method: with 100 voters their estimate is off, with 10 million voters it's still off by the same amount, just with tighter "confidence" around the wrong answer. That's the naive estimator. HAC is the pollster who fixes the method, so each additional observation actually pulls the estimate toward the right number. At any finite sample (like our 2,500 days) HAC has a small wobble that shrinks as you collect more data; the naive formula has a structural bug that more data can't fix.
 
-This is why HAC is the default standard-error tool in modern empirical finance. Any time-series regression that assumes IID errors is making both these mistakes silently. HAC is what you reach for when you want the t-stat to mean what it claims to mean.
+This is why HAC is the default standard-error tool for time-series data in modern empirical finance. Financial returns are almost never IID, so a regression that assumes they are makes both these mistakes silently. HAC is what you reach for when you want the t-stat to mean what it claims to mean.
 
 #### The Newey-West Fix
 
@@ -1295,7 +1295,7 @@ Running the bundled MSFT backtest in both modes:
 
 Same calls, same premium, same buybacks and assignments — the *only* difference is that we held an extra \~25 shares per contract on average to hedge the call's negative delta. That single change cuts excess vol by \~45% and roughly doubles annualized excess return, lifting the Newey-West t-stat from 0.46 to 1.63 — about a 3.5× improvement.
 
-The t-stat still doesn't clear the t = 2 bar. That's not a backtest bug; it's the single-stock VRP weakness from the previous section reasserting itself. The risk-managed version is the correct *measurement* of whether the volatility risk premium is showing up; on MSFT it's showing up, just not at index-CC magnitudes. The honest path from here is what the academic literature already does: same risk-managed framework, run on SPX or SPY, over decades.
+The t-stat still doesn't clear the t = 2 bar. It's the single-stock VRP weakness from the previous section reasserting itself. The risk-managed version is the correct *measurement* of whether the volatility risk premium is showing up. On MSFT it's showing up, just not at index-CC magnitudes. The honest path from here is what the academic literature already does: same risk-managed framework, run on SPX or SPY, over decades.
 
 The general lesson is one we'll keep meeting in backtesting: **the way you construct the benchmark determines what your t-stat is actually measuring**. Naive CC vs. buy-and-hold measures premium income *minus* the equity-timing wiggle. Risk-managed CC vs. buy-and-hold measures the premium income alone. When the wiggle dominates the signal, only the second comparison tells you what you wanted to know.
 
@@ -1393,21 +1393,21 @@ Here's the complete process:
 
 **Good signs:**
 
-- Walk-forward efficiency (out-of-sample ÷ in-sample) stays healthy — roughly two-thirds is the common practitioner rule of thumb (Pardo 2008), not a small fraction. Treat the band as lore, not a law
-- Monte Carlo: real return clears the shuffle distribution (rules out sequence-luck — does not by itself establish edge; see the Newey-West test in Part 5)
-- Sensitivity: nearby parameters give similar results (not overfit)
-- Works in all regimes (not just bull markets)
-- Sharpe ratio > 0.8 (good risk-adjusted returns)
-- Newey-West t-stat on excess returns > 2 (>3 if you tested many parameter combos)
+- Walk-forward efficiency (out-of-sample ÷ in-sample) stays healthy — roughly two-thirds is the common practitioner rule of thumb (Pardo 2008), not a small fraction. Treat the band as lore, not a law.
+- Monte Carlo: real return clears the shuffle distribution (rules out sequence-luck — does not by itself establish edge; see the Newey-West test in Part 5).
+- Sensitivity: nearby parameters give similar results (not overfit).
+- Works in all regimes (not just bull markets).
+- Sharpe ratio > 0.8 (good risk-adjusted returns).
+- Newey-West t-stat on excess returns > 2 (>3 if you tested many parameter combos).
 
 **Red flags:**
 
-- In-sample 500%, out-of-sample 50% (massive overfitting)
-- Monte Carlo percentile < 50% (random paths beat you)
-- Sensitivity shows wildly different results for small tweaks (unstable)
-- Only works in one market regime (not generalizable)
-- Sharpe < 0.3 (returns don't justify the risk)
-- Newey-West t-stat < 2 even though dollar P&L looks positive (the apparent edge is noise)
+- In-sample 500%, out-of-sample 50% (massive overfitting).
+- Monte Carlo percentile < 50% (random paths beat you).
+- Sensitivity shows wildly different results for small tweaks (unstable).
+- Only works in one market regime (not generalizable).
+- Sharpe < 0.3 (returns don't justify the risk).
+- Newey-West t-stat < 2 even though dollar P&L looks positive (the apparent edge is noise).
 
 **Our strategy:**
 
@@ -1464,10 +1464,9 @@ The integrative one — these pull threads from every Part. Answer from memory b
 | **call_delta** | 0.15–0.20 | 0.25 | 0.30–0.35 |
 | **dte** | 35–45 | 30 | 21 |
 | **close_at_pct** | 0.50 (close early) | 0.75 | 1.00 (hold to expiry) |
-| **Expected assignment freq.** | \~15% | \~25% | \~35% |
 | **Capital in use** | Low (less frequent sales) | Medium | High (constant selling) |
 
-**Recommendation for beginners:** Start with "Balanced" (0.25Δ call, 30 DTE, 0.75 close_at_pct). It's tested and robust.
+**Recommendation for beginners:** Start with the tested defaults: 0.25Δ call, 21 DTE, 0.75 close_at_pct — the configuration behind every result in this tutorial.
 
 ### Decision Flowchart: "Should I Sell a CC Today?"
 
@@ -1484,7 +1483,7 @@ Is there an open position?
        ├─ Find 0.25Δ strike using grid search
        ├─ Calculate premium using Black-Scholes
        ├─ Apply 3% slippage + $0.65 commission
-       └─ SELL CALL (if net premium > 1% of stock price)
+       └─ SELL CALL (if net premium > 0)
 ```
 
 ### The Limitations We Haven't Solved
@@ -1681,4 +1680,4 @@ This tutorial was drafted in collaboration with Claude (Anthropic) — the prose
 
 The author is a learner working through these ideas, not a credentialed quant or financial advisor. Nothing in this tutorial is investment advice.
 
-**Last updated:** May 2026
+**Last updated:** June 2026
