@@ -1,6 +1,6 @@
 # Building a Covered Call Backtester From Scratch
 
-## Theory, Code, and Hard-Won Lessons
+## Theory, Code, and Lessons
 
 **For:** Bao, actively learning options trading  
 **Goal:** Understand both the WHY and the HOW of backtesting covered calls  
@@ -40,8 +40,6 @@ This is a long document. You almost certainly don't need every word of it. Pick 
 
 ### The Core Idea: Own Shares + Sell Insurance = Extra Income
 
-Let me start with the simplest possible explanation.
-
 Imagine you own a house worth $300,000. You could:
 
 1. **Do nothing** — hope it appreciates, sit and wait
@@ -50,7 +48,7 @@ Imagine you own a house worth $300,000. You could:
 
 A covered call is like option #2 and #3 combined. You own the stock (like owning a house). You sell call options (like selling insurance: "I'll let you buy my stock at $50 anytime in the next 30 days, and you pay me $2 for that right"). If the stock goes up, sometimes your buyer exercises the option and buys your shares (you "lose" them, but at a fixed price). If it stays flat or goes down, the buyer doesn't exercise, and you keep both the stock AND the premium ($2).
 
-> **Key insight:** You're not trying to hit a home run. You're trying to collect small, frequent premiums while the stock does its normal thing.
+> You're collecting small, frequent premiums while the stock does its normal thing.
 
 **Predict first.** You own shares bought at $50. You sell a 30-day call struck at $55 and collect a $2 premium. Over the next month the stock rockets to $65. Did the covered call make money or lose money — and how does your result compare to someone who just held the shares and sold nothing?
 
@@ -152,7 +150,7 @@ For a stock at $50:
 
 ### Step-by-Step Intuition (Not the Math)
 
-The Black-Scholes formula looks scary:
+Written out, the formula is:
 
 ```text
 C = S₀·N(d₁) - K·e^(-rT)·N(d₂)
@@ -289,7 +287,7 @@ Income sellers conventionally target the **0.20–0.40 delta** range, low enough
 
 ![Black-Scholes call delta plotted against how far out-of-the-money the strike is set, for MSFT with the stock at the first sample price (≈$48), assumed volatility ≈28%, 21 days to expiry. The curve falls monotonically from ≈0.54 at-the-money toward zero by \~20% out-of-the-money. A shaded horizontal band marks the 0.20–0.40 income-seller zone; a red dot marks the 0.25-delta strike, which lands ≈7% above the $48 stock (≈$51).](docs/figures/06_delta_dial.png)
 
-*The dial as a curve. Delta is monotone-decreasing in strike, so "pick a target delta" and "pick a strike distance" are the same decision viewed from two ends. The 0.20–0.40 band is wide in delta but narrow in strike distance — a few percent of moneyness covers the whole income-seller range, which is why small volatility errors move the effective delta more than you'd expect.*
+*Delta is monotone-decreasing in strike, so "pick a target delta" and "pick a strike distance" are the same decision viewed from two ends. The 0.20–0.40 band is wide in delta but narrow in strike distance — a few percent of moneyness covers the whole income-seller range, which is why small volatility errors move the effective delta more than you'd expect.*
 
 ### Finding a Strike for a Target Delta: The Brute-Force Search Approach
 
@@ -412,7 +410,7 @@ We implement this regime-based approach in Part 3's `run_cc_overlay()` engine.
 
 ![Two volatility series for MSFT, 2016–2026: trailing 30-day realized vol (gray) and the regime-scaled IV proxy (blue), with the gap between them shaded. Horizontal bands at the 15% and 25% thresholds label the low/normal/high regimes and their 1.5×/1.3×/1.1× multipliers. Realized vol spikes to ≈110% in the March 2020 crash, where the blue–gray gap visibly compresses.](docs/figures/05_implied_vs_realized_vol.png)
 
-*The proxy made visible. Four of the five Black-Scholes inputs are observable to the penny; this chart is the fifth. The shaded band is the assumed HV→IV markup, and it is not constant: it is widest in the low-vol regime (1.5×) and pinches shut in the 2020 panic (1.1×), exactly the regime-dependent behavior the multiplier table encodes. Every option price in the backtest inherits whatever error lives in that gap.*
+*Four of the five Black-Scholes inputs are observable to the penny; this chart is the fifth. The shaded band is the assumed HV→IV markup, and it is not constant: it is widest in the low-vol regime (1.5×) and pinches shut in the 2020 panic (1.1×), exactly the regime-dependent behavior the multiplier table encodes. Every option price in the backtest inherits whatever error lives in that gap.*
 
 ### Check Your Understanding
 
@@ -804,7 +802,7 @@ The strike dial is unanimous — `call_delta` is 0.25 in all 13 periods. `dte` f
 
 ![A schedule of 13 stacked rows, one per walk-forward cycle, time on the horizontal axis 2016–2026. Each row shows a 3-year training bar (blue) immediately followed by a 6-month test bar (orange); successive rows shift 6 months later, marching diagonally down and to the right. Rows whose chosen parameters left the 0.25Δ/21d/0.75 default are labelled with the combination the optimizer picked.](docs/figures/07_walk_forward_schematic.png)
 
-*The discipline, drawn out. Blue is in-sample (free to optimize); orange is the locked, never-tuned six months that actually counts. The labels make the per-axis story concrete: delta pins to 0.25 in every cycle, while DTE and close-pct drift between adjacent grid values — convergence to a region, not a point.*
+*Blue is in-sample (free to optimize); orange is the locked, never-tuned six months that actually counts. The labels make the per-axis story concrete: delta pins to 0.25 in every cycle, while DTE and close-pct drift between adjacent grid values — convergence to a region, not a point.*
 
 **Why these defaults make sense:**
 
@@ -834,7 +832,7 @@ The strike dial is unanimous — `call_delta` is 0.25 in all 13 periods. `dte` f
 <details>
 <summary>Reveal</summary>
 
-**Lower — and the lower number is the honest one.** Walk-forward underperforms fixed-params here by roughly 54 percentage points. That feels like the more rigorous method losing, but it's the reverse: fixed-params only "wins" because it was handed the answer key — the winning triple, chosen with full hindsight over the very data it's then scored on. Walk-forward is the return you'd have actually earned trading in real time. If a single full-period backtest looks great and walk-forward pulls it down, that's the methodology working. The numbers are below.
+**Lower — and the lower number is the honest one.** Walk-forward underperforms fixed-params here by roughly 54 percentage points. That feels like the more rigorous method losing, but it's the reverse: fixed-params only "wins" because it was handed the answer key — the winning triple, chosen with full hindsight over the very data it's then scored on. Walk-forward is the return you'd have actually earned trading in real time. The numbers are below.
 
 </details>
 
@@ -951,7 +949,7 @@ The implementation is [`cc_backtest.py::monte_carlo_shuffle`](https://github.com
 
 ![Histogram of total overlay returns across 500 shuffled price paths, roughly bell-shaped and centered near 657%. A dotted line marks the shuffle mean, a dashed line the best shuffle at ≈870%, and a solid red line at ≈915% sits to the right of the entire distribution — the real ordered path, beyond every shuffle.](docs/figures/09_monte_carlo.png)
 
-*The seed-42 sample, visualized. The shuffles keep the exact return set and destroy only the order, so the spread here is the return you'd get from MSFT's volatility with the trends and clusters removed. The real path sits in the far right tail — past every shuffle in this sample, around the 99th percentile of orderings: the overlay is harvesting a property of the return distribution, not a lucky sequence. But note the shuffle mean (\~657%) is itself enormous, the first hint that most of this return is the stock, not the overlay.*
+*The shuffles keep the exact return set and destroy only the order, so the spread here is the return you'd get from MSFT's volatility with the trends and clusters removed. The real path sits in the far right tail — past every shuffle in this sample, around the 99th percentile of orderings: the overlay is harvesting a property of the return distribution, not a lucky sequence. But note the shuffle mean (\~657%) is itself enormous, the first hint that most of this return is the stock, not the overlay.*
 
 ### Sensitivity Analysis: Perturb Each Parameter, See If Results Collapse
 
@@ -1018,7 +1016,7 @@ The implementations are [`cc_backtest.py::classify_regime`](https://github.com/l
 
 ![Bar chart of average overlay P&L per day by market regime: the bull bar is tiny at ≈$23/day, while the sideways bar towers at ≈$402/day and the bear bar at ≈$303/day.](docs/figures/10_regime_pnl.png)
 
-*The defensive signature in one picture. A bull-market strategy in disguise would put its tall bar on the left. This does the inverse: it barely registers while MSFT grinds up and earns \~13–17× as much per day once volatility returns. The day-count asymmetry (1,690 bull days vs. 625 bear+sideways) is exactly why the headline P&L still looks bull-driven in dollar terms even though the per-day edge is not.*
+*A bull-market strategy in disguise would put its tall bar on the left. This does the inverse: it barely registers while MSFT grinds up and earns \~13–17× as much per day once volatility returns. The day-count asymmetry (1,690 bull days vs. 625 bear+sideways) is exactly why the headline P&L still looks bull-driven in dollar terms even though the per-day edge is not.*
 
 ### Common Mistake: Only Testing in Bull Markets
 
@@ -1214,7 +1212,7 @@ When you average independent observations, random ups and downs partially cancel
 
 $$\text{SE} = \frac{\sigma}{\sqrt{n}}$$
 
-So with more data, the SE shrinks — but only as the *square root* of `n`. **To halve your SE you need 4× the data. To shrink it 10× you need 100× the data.** This is the iron law of statistical convergence, and it's what makes large samples expensive to obtain.
+So with more data, the SE shrinks — but only as the *square root* of `n`. **To halve your SE you need 4× the data. To shrink it 10× you need 100× the data.** That square-root scaling is what makes large samples expensive to obtain.
 
 **Plugging in our numbers:**
 
@@ -1241,7 +1239,7 @@ That ratio *is* the t-statistic. A mean less than half an SE from zero is comfor
 
 ![Line chart on a logarithmic x-axis showing the expected t-statistic as a function of years of data, given a Sharpe ratio of 0.126. The curve rises from about 0.13 at one year through 0.40 at ten years, crosses the conventional significance threshold of 2 at roughly 252 years, and crosses the Harvey-Liu-Zhu threshold of 3 at roughly 567 years. A dot at ten years marks the actual MSFT sample.](docs/figures/04_t_stat_vs_years.png)
 
-*The shortcut, visualized. At this strategy's Sharpe, each additional decade of data buys roughly four-tenths of a t-stat point. Clearing the conventional t=2 bar would take around 250 years; the HLZ bar of 3 would take around 570. The path to a confident conclusion on this setup isn't "run a longer backtest" — it's "find a strategy with a bigger Sharpe" (index VRP, delta-hedged short calls, multi-asset diversification).*
+*At this strategy's Sharpe, each additional decade of data buys roughly four-tenths of a t-stat point. Clearing the conventional t=2 bar would take around 250 years; the HLZ bar of 3 would take around 570. The path to a confident conclusion on this setup isn't "run a longer backtest" — it's "find a strategy with a bigger Sharpe" (index VRP, delta-hedged short calls, multi-asset diversification).*
 
 #### Why Naive Is *Smaller* Than Newey-West Here
 
@@ -1253,7 +1251,7 @@ Our excess returns show mild day-to-day mean reversion — likely from the way p
 
 ![Bar chart of the autocorrelation of daily excess P&L at lags 1–20. Most bars sit just below zero; the bars inside the Newey-West window (lags 1–8) are predominantly negative, and almost all lie within a shaded ±1.96/√n white-noise band.](docs/figures/11_excess_acf.png)
 
-*The sign that flips the correction's direction. The IID t-stat assumes every bar here is zero. They aren't — but they lean *negative* across the lags Newey-West actually weights, not positive. Negative short-lag autocovariance means the effective sample is slightly larger than a naive day-count, so the HAC correction nudges 0.40 up to 0.46 rather than shrinking it. This is the picture behind "Newey-West can move the t-stat either way." (Computation: standard sample autocovariance γₖ = (1/n)·Σ(eᵢ−ē)(eᵢ₊ₖ−ē) on daily excess returns — the same formula that feeds the NW SE in [`compute_statistics`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L599); the bars above are the normalized version γₖ/γ₀.)*
+*The IID t-stat assumes every bar here is zero. They aren't — but they lean *negative* across the lags Newey-West actually weights, not positive. Negative short-lag autocovariance means the effective sample is slightly larger than a naive day-count, so the HAC correction nudges 0.40 up to 0.46 rather than shrinking it. This is the picture behind "Newey-West can move the t-stat either way." (Computation: standard sample autocovariance γₖ = (1/n)·Σ(eᵢ−ē)(eᵢ₊ₖ−ē) on daily excess returns — the same formula that feeds the NW SE in [`compute_statistics`](https://github.com/l3a0/covered-call-backtesting/blob/main/cc_backtest.py#L599); the bars above are the normalized version γₖ/γ₀.)*
 
 #### Why Is This Lower Than the Volatility Risk Premium Literature?
 
@@ -1322,7 +1320,7 @@ Monte Carlo, sensitivity analysis, and regime testing (above) are the robustness
 | **Final holdout set** | All-of-the-above leakage | Reserve the last 1–2 years of data and *never touch it* until you're completely done designing and tuning. One shot, no do-overs. **How is this different from walk-forward's test set?** Walk-forward prevents the *code* from peeking at future data, but *you* still see the walk-forward results and make decisions based on them (e.g., "915% looks good, let's keep this approach"). That's information leakage through the human. The holdout prevents that second layer — data you literally never look at during the entire design process. No tuning, no validation, no "let me just check." After you've finalized everything, you run it once on the holdout. That result is your most honest estimate of real-world performance. |
 | **Paper trading** | Everything historical testing can't | Run the strategy live with fake money for 3–6 months. No amount of historical testing substitutes for this. |
 
-**The key insight:** No single check is enough. The more layers that agree your strategy works, the more confident you can be that you've found something real rather than a pattern in noise. Our backtest uses six of these layers (walk-forward, parameter stability, Monte Carlo, regime analysis, sensitivity, and the Newey-West t-stat on excess returns). Adding multi-asset testing and paper trading is the next step before risking real money.
+**The point:** No single check is enough. The more layers that agree your strategy works, the more confident you can be that you've found something real rather than a pattern in noise. Our backtest uses six of these layers (walk-forward, parameter stability, Monte Carlo, regime analysis, sensitivity, and the Newey-West t-stat on excess returns). Adding multi-asset testing and paper trading is the next step before risking real money.
 
 > **Rule of thumb:** If your strategy survives walk-forward + Monte Carlo + parameter stability + at least two different tickers, you have something worth paper trading. If it survives 3–6 months of paper trading, you have something worth deploying with small real capital.
 
@@ -1443,7 +1441,7 @@ The integrative one — these pull threads from every Part. Answer from memory b
 
 ## Part 7: Key Takeaways & Cheat Sheet
 
-### The 6 Most Important Lessons
+### The 6 Lessons
 
 1. **Covered calls are income, not capital appreciation.** Sell 0.25–0.30Δ calls and be happy when they're exercised. The premium is your profit, not the stock appreciation.
 
@@ -1628,7 +1626,7 @@ After reading this tutorial, you understand:
 4. **Study roll mechanics.** Our model close calls; professionals roll them for extra credit.
 5. **Explore earnings avoidance.** Add a function to detect earnings weeks and skip them.
 
-Good luck. Covered call trading is not exciting, but it's one of the most reliable ways to generate steady income from stock ownership.
+Good luck. Covered call trading is not exciting, but it's a dependable way to generate steady income from stock ownership.
 
 ---
 
