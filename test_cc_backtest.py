@@ -1417,6 +1417,17 @@ class TestMsftTenYearRegression:
           - Same-span buy-and-hold is ~317%, so the honest walk-forward edge
             over buy-and-hold is only ~7 pp over 6.5 years — even thinner
             than the 2-year window's ~16 pp. Pinned so prose stays honest.
+          - Convention note: these three pins deliberately mix accounting.
+            The ~324% chains per-window returns with capital restarting at
+            $100K each window; the ~378% / ~317% legs are single continuous
+            runs over the span. On one consistent convention the gaps shift
+            (fixed-vs-WF ~47-52 pp; WF-vs-BH ~+19 pp all-chained, ~+44 pp
+            carrying capital forward) without changing the ordering. Prose
+            on both surfaces (tutorial Part 4, blog Post 3) carries the
+            matching caveat and defers the edge verdict to the Newey-West
+            t-stat in test_significance, which no endpoint convention
+            touches. Keep the pins on the published mixed convention; if
+            re-pinning, update the caveat everywhere.
 
         Runtime is a few seconds (13 windows × 27 combos = 351 train
         backtests on 756-day windows).
@@ -1501,8 +1512,9 @@ class TestMsftTenYearRegression:
         # precision as the other headline total_return_pct regressions.
         assert fixed_summary['total_return_pct'] == pytest.approx(378.17, abs=0.05)
         # Same-span buy-and-hold baseline (~317%). The honest walk-forward edge
-        # over buy-and-hold is only ~7 pp over 6.5 years. Pinned so that
-        # framing is CI-verified wherever prose uses it.
+        # over buy-and-hold is ~7 pp over 6.5 years on this mixed convention
+        # (~19-44 pp on consistent ones — see the docstring's convention note).
+        # Pinned so that framing is CI-verified wherever prose uses it.
         assert fixed_summary['buy_hold_return_pct'] == pytest.approx(316.83, abs=0.05)
 
     def test_degrees_of_freedom_first_window(
