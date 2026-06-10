@@ -23,3 +23,5 @@ htmlcov/
 
 # Claude Code local settings
 .claude/settings.local.json
+*_option_dailies.csv
+*_option_dailies.csv.gz

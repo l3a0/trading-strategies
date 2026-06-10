@@ -169,12 +169,16 @@ def report_walk_forward(dates, prices, train_years: int) -> None:
         print(f"  {window:<25}{bp_str:<40}{r['train_sharpe']:>9}{r['n_trades']:>8}")
 
     # Compounded out-of-sample return: each window's equity restarts at capital,
-    # so chain per-window growth (eq_end / eq_start) across the non-overlapping windows.
+    # so chain per-window growth (eq_end / eq_start) across the windows. Use a
+    # HALF-OPEN interval [test_start, test_end): each window's test_end equals the
+    # next window's test_start, so a closed <= would double-count that shared
+    # boundary day and collapse the chained return. (Matches test_cc_backtest.py's
+    # test_walk_forward_optimization convention.)
     oos = oos_equity.copy()
     oos['date'] = pd.to_datetime(oos['date'])
     cum = 1.0
     for r in records:
-        mask = (oos['date'] >= pd.Timestamp(r['test_start'])) & (oos['date'] <= pd.Timestamp(r['test_end']))
+        mask = (oos['date'] >= pd.Timestamp(r['test_start'])) & (oos['date'] < pd.Timestamp(r['test_end']))
         eq = oos.loc[mask, 'equity'].to_numpy(dtype=float)
         if len(eq) >= 2:
             cum *= eq[-1] / eq[0]

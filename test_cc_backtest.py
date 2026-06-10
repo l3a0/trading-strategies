@@ -1107,6 +1107,184 @@ def _load_msft_csv() -> tuple[list[str], np.ndarray[Any, np.dtype[np.float64]]]:
     return dates, np.array(prices, dtype=np.float64)
 
 
+# Bundled QQQ 10-year data — same yfinance CSV format as the MSFT file.
+# Pins the headline figures the QQQ blog post (blog/05) quotes, the same way
+# the MSFT classes pin the tutorial's. The CSV ships in the repo so CI
+# reproduces the numbers without a network call.
+_QQQ_CSV = os.path.join(os.path.dirname(__file__), 'qqq_10yr_prices.csv')
+
+
+def _load_qqq_csv() -> tuple[list[str], np.ndarray[Any, np.dtype[np.float64]]]:
+    """Parse the bundled QQQ CSV (same parser as _load_msft_csv)."""
+    dates: list[str] = []
+    prices: list[float] = []
+    with open(_QQQ_CSV) as f:
+        for row in csv.reader(f):
+            if not row or not row[0][:4].isdigit():
+                continue
+            dates.append(row[0])
+            prices.append(float(row[1]))
+    return dates, np.array(prices, dtype=np.float64)
+
+
+class TestQqqTenYearRegression:
+    """Pin the headline numbers the QQQ blog post (blog/05) quotes for the
+    naive overlay.
+
+    QQQ counterpart to TestMsftTenYearRegression: locks the specific outputs
+    the post cites so an engine change that would silently move them fails CI
+    instead of leaving the post quietly wrong. Same _TUTORIAL_PARAMS, the
+    bundled qqq_10yr_prices.csv (2016-06 → 2026-06).
+    """
+
+    @pytest.fixture(scope='class')
+    def data(self) -> tuple[list[str], np.ndarray[Any, np.dtype[np.float64]]]:
+        return _load_qqq_csv()
+
+    @pytest.fixture(scope='class')
+    def result(
+        self, data: tuple[list[str], np.ndarray[Any, np.dtype[np.float64]]]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        dates, prices = data
+        summary, _, daily_equity = run_cc_overlay(dates, prices, _TUTORIAL_PARAMS)
+        stats = compute_statistics(
+            daily_equity,
+            num_contracts=summary['num_contracts'],
+            cash=summary['cash'],
+        )
+        return summary, stats
+
+    def test_capital_sizing(self, result: tuple[dict[str, Any], dict[str, Any]]) -> None:
+        """$100K sizes into 9 QQQ contracts: ~$92.6K stock + ~$7.4K cash."""
+        summary, _ = result
+        assert summary['num_contracts'] == 9
+        assert summary['initial_stock_cost'] == pytest.approx(92_622.08, abs=0.5)
+        assert summary['cash'] == pytest.approx(7_377.92, abs=0.5)
+
+    def test_returns_breakdown(self, result: tuple[dict[str, Any], dict[str, Any]]) -> None:
+        """Buy-and-hold $642K (+542%) + net overlay $104K = overlay $745K (+645%)."""
+        summary, _ = result
+        assert summary['buy_hold_final'] == pytest.approx(641_931.92, abs=1.0)
+        assert summary['buy_hold_return_pct'] == pytest.approx(541.93, abs=0.05)
+        assert summary['net_overlay_pnl'] == pytest.approx(103_522.06, abs=1.0)
+        assert summary['excess_return_pct'] == pytest.approx(103.52, abs=0.05)
+        assert summary['final_equity'] == pytest.approx(745_453.98, abs=1.0)
+        assert summary['total_return_pct'] == pytest.approx(645.45, abs=0.05)
+
+    def test_overlay_pnl_breakdown(self, result: tuple[dict[str, Any], dict[str, Any]]) -> None:
+        """182 calls sold; ~$493K premium gross, ~$390K paid back, 21.0% retained."""
+        summary, _ = result
+        assert summary['num_calls_sold'] == 182
+        assert summary['total_premium_collected'] == pytest.approx(493_471.64, abs=5.0)
+        assert summary['overlay_costs'] == pytest.approx(389_949.58, abs=5.0)
+        assert summary['premium_retention_pct'] == pytest.approx(21.0, abs=0.1)
+
+    def test_activity(self, result: tuple[dict[str, Any], dict[str, Any]]) -> None:
+        """~77.5% win rate, ~22% max drawdown."""
+        summary, _ = result
+        assert summary['win_rate'] == pytest.approx(77.5, abs=0.1)
+        assert summary['max_drawdown_pct'] == pytest.approx(21.96, abs=0.05)
+
+    def test_significance(self, result: tuple[dict[str, Any], dict[str, Any]]) -> None:
+        """The post's headline: Sharpe 0.027, naive t=0.09, NW t=0.10 at L=8.
+
+        Even weaker than MSFT's 0.46 — the naive QQQ overlay's excess over
+        buy-and-hold is statistically indistinguishable from zero.
+        """
+        _, stats = result
+        assert stats['n_days'] == 2514
+        assert stats['years_of_data'] == pytest.approx(9.98, abs=0.005)
+        assert stats['ann_excess_return_pct'] == pytest.approx(0.224, abs=0.002)
+        assert stats['ann_excess_vol_pct'] == pytest.approx(8.27, abs=0.02)
+        assert stats['sharpe_excess'] == pytest.approx(0.027, abs=0.002)
+        assert stats['t_stat_naive'] == pytest.approx(0.09, abs=0.005)
+        assert stats['t_stat_newey_west'] == pytest.approx(0.10, abs=0.005)
+        assert stats['nw_lag'] == 8
+        assert stats['passes_t_2'] is False
+        assert stats['passes_t_3'] is False
+
+    def test_monte_carlo_shuffle(
+        self, data: tuple[list[str], np.ndarray[Any, np.dtype[np.float64]]]
+    ) -> None:
+        """Pin monte_carlo_shuffle on QQQ (500 paths, seed=42).
+
+        The real ordered path (+645%) lands at the 80th percentile of the
+        shuffled distribution (mean +597%, best +821%) — suggestive of some
+        real price structure, but well short of MSFT's percentile-100 result.
+        """
+        dates, prices = data
+        mc = monte_carlo_shuffle(
+            dates, prices, _TUTORIAL_PARAMS,
+            n_shuffles=_MC_SHUFFLES, seed=_MC_SEED,
+        )
+        assert mc['n_completed'] == _MC_SHUFFLES
+        assert mc['real_return'] == pytest.approx(645.45, abs=0.05)
+        assert mc['percentile'] == 80
+        assert mc['mc_mean'] == pytest.approx(596.6, abs=2.0)
+        assert mc['mc_max'] == pytest.approx(821.3, abs=2.0)
+
+
+class TestQqqRiskManagedRegression:
+    """Pin the risk-managed (delta-hedged) QQQ numbers the blog post quotes.
+
+    QQQ counterpart to TestMsftRiskManagedRegression. Hedging the equity-timing
+    wiggle lifts the Sharpe of excess from 0.027 (naive) to 0.405 and the
+    Newey-West t-stat from 0.10 to 1.58 — a far larger proportional jump than
+    MSFT's, because QQQ's naive signal is thinner to begin with. Still short of
+    the t=2 bar: one index ETF over one decade can't clear it either.
+    """
+
+    @pytest.fixture(scope='class')
+    def data(self) -> tuple[list[str], np.ndarray[Any, np.dtype[np.float64]]]:
+        return _load_qqq_csv()
+
+    @pytest.fixture(scope='class')
+    def result(
+        self, data: tuple[list[str], np.ndarray[Any, np.dtype[np.float64]]]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        dates, prices = data
+        hedge_params: dict[str, float] = {**_TUTORIAL_PARAMS, 'delta_hedge': 1.0}
+        summary, _, daily_equity = run_cc_overlay(dates, prices, hedge_params)
+        stats = compute_statistics(
+            daily_equity, num_contracts=summary['num_contracts'], cash=summary['cash']
+        )
+        return summary, stats
+
+    def test_returns_breakdown(self, result: tuple[dict[str, Any], dict[str, Any]]) -> None:
+        """Hedged uplift: net overlay $217K (vs naive $104K) → overlay $859K (+759%).
+
+        Same 182 calls, same $493K gross premium, but capturing the call's
+        delta roughly doubles net overlay P&L and lifts premium retention from
+        21.0% (naive) to 44.0%. Max drawdown rises to ~27% (the hedge holds
+        extra long stock funded by negative cash, so it drops harder in
+        selloffs even though excess-return vol is lower).
+        """
+        summary, _ = result
+        assert summary['num_contracts'] == 9
+        assert summary['net_overlay_pnl'] == pytest.approx(217_118.92, abs=2.0)
+        assert summary['total_return_pct'] == pytest.approx(759.05, abs=0.05)
+        assert summary['total_premium_collected'] == pytest.approx(493_471.64, abs=5.0)
+        assert summary['premium_retention_pct'] == pytest.approx(44.0, abs=0.1)
+        assert summary['max_drawdown_pct'] == pytest.approx(26.59, abs=0.05)
+
+    def test_significance_uplift(self, result: tuple[dict[str, Any], dict[str, Any]]) -> None:
+        """Risk-managed: Sharpe 0.405, NW t-stat 1.58 vs. naive's 0.027 / 0.10.
+
+        Stripping the equity-timing wiggle cuts excess vol (8.27% → 5.19%) and
+        ~9× the annualized excess return (+0.224% → +2.099%), pushing the NW
+        t-stat from 0.10 to 1.58 — roughly a 15× Sharpe jump. Still below t=2:
+        a single index ETF over one decade can't clear the bar, same lesson as
+        MSFT (see blog/04 and the post's breadth argument).
+        """
+        _, stats = result
+        assert stats['ann_excess_return_pct'] == pytest.approx(2.099, abs=0.005)
+        assert stats['ann_excess_vol_pct'] == pytest.approx(5.19, abs=0.02)
+        assert stats['sharpe_excess'] == pytest.approx(0.405, abs=0.005)
+        assert stats['t_stat_newey_west'] == pytest.approx(1.58, abs=0.02)
+        assert stats['passes_t_2'] is False
+        assert stats['passes_t_3'] is False
+
+
 class TestDegreesOfFreedom:
     """Pardo-style degrees-of-freedom validation (degrees_of_freedom).
 
