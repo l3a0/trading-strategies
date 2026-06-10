@@ -47,10 +47,35 @@ jobs:
       - name: Type check
         run: pyright cc_backtest.py download_prices.py make_figures.py make_notebook.py test_cc_backtest.py
 
-      # Unit tests with branch coverage. Runs the test suite against the
-      # in-memory price fixtures — no network access required.
+      # The real-chain regression pins need the QQQ option-chain dataset,
+      # which is too large for git history. It ships as a release asset
+      # (tag data-2026-06), is cached between runs keyed on the committed
+      # checksum, and is verified against that checksum after download so a
+      # silently-replaced asset fails loudly. If the steps below are ever
+      # removed, the pins skip instead of failing (see the skipif in
+      # test_real_cc_backtest.py).
+      - name: Restore chain-data cache
+        id: chain-cache
+        uses: actions/cache@v4
+        with:
+          path: qqq_option_dailies.csv.gz
+          key: chain-data-${{ hashFiles('data_checksums.sha256') }}
+
+      - name: Fetch chain data from the data release
+        if: steps.chain-cache.outputs.cache-hit != 'true'
+        run: gh release download data-2026-06 --pattern 'qqq_option_dailies.csv.gz'
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Verify chain-data checksum
+        run: sha256sum -c data_checksums.sha256
+
+      # Unit tests with branch coverage: the engine suite against in-memory
+      # price fixtures plus the real-chain regression pins against the
+      # release-asset dataset fetched above (no other network access; the
+      # unadjusted price CSV is committed).
       - name: Run tests
-        run: pytest test_cc_backtest.py --cov=. --cov-branch -v
+        run: pytest test_cc_backtest.py test_real_cc_backtest.py --cov=. --cov-branch -v
 
       # Smoke test: run the actual backtest against the committed MSFT CSV
       # to catch any breakage in the main entry point that the unit tests

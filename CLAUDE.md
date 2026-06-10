@@ -254,7 +254,7 @@ Before reporting a code change done, run:
 rg '\.py#L\d+' README.md tutorial_covered_call_backtest.md blog/*.md
 
 # Every symbol name cited in prose — confirm names still exist in code
-rg -n '(run_cc_overlay|compute_statistics|calc_rolling_volatility|estimate_iv|detect_regime|find_strike_for_delta|classify_regime|regime_analysis|walk_forward_optimization|_param_combinations|degrees_of_freedom|monte_carlo_shuffle|sensitivity_analysis|risk_free_rate|TestScenario\w*|TestDegreesOfFreedom|TestMsftTenYearRegression|TestRiskManagedCoveredCall|TestMsftRiskManagedRegression|TestQqqTenYearRegression|TestQqqRiskManagedRegression)' README.md tutorial_covered_call_backtest.md blog/*.md
+rg -n '(run_cc_overlay|compute_statistics|calc_rolling_volatility|estimate_iv|detect_regime|find_strike_for_delta|classify_regime|regime_analysis|walk_forward_optimization|_param_combinations|degrees_of_freedom|monte_carlo_shuffle|sensitivity_analysis|risk_free_rate|TestScenario\w*|TestDegreesOfFreedom|TestMsftTenYearRegression|TestRiskManagedCoveredCall|TestMsftRiskManagedRegression|TestQqqTenYearRegression|TestQqqRiskManagedRegression|TestQqqRealChainRegression|run_real_cc_overlay)' README.md tutorial_covered_call_backtest.md blog/*.md
 
 # Every figure embed (blog ../docs/… and tutorial docs/…) resolves to a real PNG
 for f in blog/*.md tutorial_covered_call_backtest.md; do
