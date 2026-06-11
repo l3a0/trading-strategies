@@ -109,7 +109,8 @@ CI runs `ruff`, `pyright`, both test suites (fetching the checksum-verified chai
 | [cc_backtest.py](cc_backtest.py#L201) | Backtest engine: Black-Scholes pricing, rolling vol, regime-based IV, day-by-day overlay state machine, Newey-West t-stat reporting on excess returns |
 | [test_cc_backtest.py](test_cc_backtest.py#L38) | Unit and scenario tests covering pricing, the overlay state machine, and the statistics helper |
 | [real_cc_backtest.py](real_cc_backtest.py#L122) | Real-chain adapter: the same overlay on traded option quotes (bid entries, ask buybacks, real deltas and expirations), printed REAL vs PROXY |
-| [test_real_cc_backtest.py](test_real_cc_backtest.py) | Adapter unit tests plus the MSFT/QQQ real-chain regression pins (skip when the datasets are absent) |
+| [test_real_cc_backtest.py](test_real_cc_backtest.py) | Adapter unit tests plus the MSFT/QQQ real-chain regression pins and the MSFT real-chain walk-forward pin (skip when the datasets are absent) |
+| [walk_forward_real.py](walk_forward_real.py) | Walk-forward optimization driving the real-chain adapter: calendar-day grid, per-window Pardo trade stats, chained OOS vs fixed-defaults vs buy-and-hold on one convention |
 | [download_prices.py](download_prices.py#L11) | yfinance data downloader |
 | [download_option_chains.py](download_option_chains.py) | Alpha Vantage fetcher for per-roll entry snapshots (one target call per monthly roll, six tickers) |
 | [download_option_dailies.py](download_option_dailies.py) | Alpha Vantage fetcher for daily chain slices — the datasets `real_cc_backtest.py` consumes |
