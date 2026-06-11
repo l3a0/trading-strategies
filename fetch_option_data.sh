@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Fetch the large option-chain datasets from the repo's data release.
-# They are deliberately NOT in git history (65MB+ each); CI runs this too.
+# They are deliberately NOT in git history (raw CSVs run 77-281MB,
+# 17-65MB gzipped); CI runs this too.
 # Requires: gh CLI authenticated with repo access.
 set -euo pipefail
 cd "$(dirname "$0")"

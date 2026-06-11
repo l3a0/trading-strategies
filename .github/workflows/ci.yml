@@ -47,23 +47,25 @@ jobs:
       - name: Type check
         run: pyright cc_backtest.py download_prices.py make_figures.py make_notebook.py test_cc_backtest.py
 
-      # The real-chain regression pins need the QQQ option-chain dataset,
-      # which is too large for git history. It ships as a release asset
-      # (tag data-2026-06), is cached between runs keyed on the committed
-      # checksum, and is verified against that checksum after download so a
-      # silently-replaced asset fails loudly. If the steps below are ever
-      # removed, the pins skip instead of failing (see the skipif in
-      # test_real_cc_backtest.py).
+      # The real-chain regression pins need the QQQ and MSFT option-chain
+      # datasets, which are too large for git history. They ship as release
+      # assets (tag data-2026-06), are cached between runs keyed on the
+      # committed checksums, and are verified against those checksums after
+      # download so a silently-replaced asset fails loudly. If the steps
+      # below are ever removed, the pins skip instead of failing (see the
+      # skipif markers in test_real_cc_backtest.py).
       - name: Restore chain-data cache
         id: chain-cache
         uses: actions/cache@v4
         with:
-          path: qqq_option_dailies.csv.gz
+          path: |
+            qqq_option_dailies.csv.gz
+            msft_option_dailies.csv.gz
           key: chain-data-${{ hashFiles('data_checksums.sha256') }}
 
       - name: Fetch chain data from the data release
         if: steps.chain-cache.outputs.cache-hit != 'true'
-        run: gh release download data-2026-06 --pattern 'qqq_option_dailies.csv.gz'
+        run: gh release download data-2026-06 --pattern '*_option_dailies.csv.gz' --clobber
         env:
           GH_TOKEN: ${{ github.token }}
 
