@@ -66,7 +66,7 @@ jobs:
 
       - name: Fetch chain data from the data release
         if: steps.chain-cache.outputs.cache-hit != 'true'
-        run: gh release download data-2026-06 --pattern '*_option_dailies.csv.gz' --clobber
+        run: gh release download data-2026-06 --pattern '*_option_dailies*.csv.gz' --clobber
         env:
           GH_TOKEN: ${{ github.token }}
 
