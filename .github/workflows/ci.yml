@@ -60,6 +60,7 @@ jobs:
         with:
           path: |
             qqq_option_dailies.csv.gz
+            qqq_option_dailies_2011_2016.csv.gz
             msft_option_dailies.csv.gz
             msft_option_dailies_2008_2016.csv.gz
             spy_option_dailies.csv.gz
