@@ -1,10 +1,20 @@
-"""Walk-forward optimization on REAL option chains.
+"""Walk-forward optimization on REAL option chains (or the proxy, aligned).
 
 Mirrors cc_backtest.walk_forward_optimization exactly — same 3-year train /
 6-month test / 6-month roll windows, same in-sample-Sharpe selection, same
 per-window $100K restarts — but every backtest inside it is
 real_cc_backtest.run_real_cc_overlay on actual market quotes instead of the
 Black-Scholes + estimate_iv proxy.
+
+`--prices proxy` swaps the engine back to run_cc_overlay while keeping
+everything else identical — the same unadjusted close series clipped to the
+chain span, the same windows, and the same CALENDAR-day grid (converted to
+the proxy's trading-day clock at the engine boundary: 21/30/45 calendar ->
+14/21/31 trading, and the dte=30 fixed-defaults comparator -> 21 trading
+days, the published default). A real-vs-proxy gap in this report is
+therefore attributable to the option-pricing source alone. The proxy has no
+fill model (it carries its own 3% slippage + commission), so --fill is
+rejected under --prices proxy.
 
 Parameter-grid convention: `dte` values are CALENDAR days to expiration
 (run_real_cc_overlay's convention) — 21/30/45, the same numerals as the
@@ -20,8 +30,8 @@ buy-and-hold OOS — is chained from per-window restarts over the SAME test
 windows, so the three are directly comparable.
 
 Usage:
-    python walk_forward_real.py MSFT [--fill bid_ask|mid] [--train-years N]
-                                     [--min-trades N]
+    python walk_forward_real.py MSFT [--prices real|proxy] [--fill bid_ask|mid]
+                                     [--train-years N] [--min-trades N]
 """
 
 from __future__ import annotations
@@ -33,9 +43,10 @@ import sys
 from collections import Counter
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
-from cc_backtest import _param_combinations
+from cc_backtest import _param_combinations, run_cc_overlay
 from real_cc_backtest import load_chain_store, load_unadjusted_prices, run_real_cc_overlay
 
 PARAM_GRID: dict[str, list[float]] = {
@@ -67,8 +78,9 @@ def walk_forward_real(
     test_months: int = 6,
     roll_months: int = 6,
     min_trades: int = 0,
+    engine: str = 'real',
 ) -> list[dict[str, Any]]:
-    """Walk-forward optimization driving run_real_cc_overlay.
+    """Walk-forward optimization driving run_real_cc_overlay (or the proxy).
 
     Window arithmetic, train/test boundary semantics (>= start, < end), the
     in-sample Sharpe selection rule, and the per-period record schema all
@@ -79,9 +91,26 @@ def walk_forward_real(
     stats for the Pardo sample-size check. `min_trades > 0` enforces that
     floor at selection time: in-sample fits with fewer trades are
     disqualified rather than trusted.
+
+    `engine='proxy'` runs run_cc_overlay instead, on the same dates/prices
+    and the same calendar-day grid: the dte of every combo (and of the
+    fixed-defaults comparator) is converted to the proxy's trading-day
+    clock at this boundary (round(cal * 252 / 365)), and the real-only
+    'fill' param is dropped. `store` is unused in that mode.
     """
     if fixed_params is None:
         fixed_params = dict(FIXED_PARAMS)
+
+    if engine == 'proxy':
+        def run(d: list[str], p: list[float], prm: dict[str, Any]) -> tuple[Any, Any, Any]:
+            prm = {k: v for k, v in prm.items() if k != 'fill'}
+            prm['dte'] = max(1, round(prm['dte'] * 252 / 365))
+            return run_cc_overlay(d, np.asarray(p, dtype=float), prm)
+    elif engine == 'real':
+        def run(d: list[str], p: list[float], prm: dict[str, Any]) -> tuple[Any, Any, Any]:
+            return run_real_cc_overlay(d, p, store, prm)
+    else:
+        raise ValueError(f"unknown engine {engine!r} — use 'real' or 'proxy'")
 
     df = pd.DataFrame({'date': pd.to_datetime(dates), 'd': dates, 'price': prices})
     start_date = df['date'].min()
@@ -111,8 +140,8 @@ def walk_forward_real(
         grid_trades: list[int] = []  # IS trade count of every combo (Pardo floor stats)
         for combo in _param_combinations(param_grid):
             try:
-                summary, _trades, daily_eq = run_real_cc_overlay(
-                    train_dates, train_prices, store, {**fixed_params, **combo})
+                summary, _trades, daily_eq = run(
+                    train_dates, train_prices, {**fixed_params, **combo})
             except Exception:
                 continue
             n_trades = int(summary['num_calls_sold'])
@@ -130,10 +159,8 @@ def walk_forward_real(
             continue
 
         # === Step 2: TEST out-of-sample with locked rules ===
-        oos_sum, _, _ = run_real_cc_overlay(
-            test_dates, test_prices, store, {**fixed_params, **best_params})
-        fix_sum, _, _ = run_real_cc_overlay(
-            test_dates, test_prices, store, {**fixed_params, **DEFAULTS})
+        oos_sum, _, _ = run(test_dates, test_prices, {**fixed_params, **best_params})
+        fix_sum, _, _ = run(test_dates, test_prices, {**fixed_params, **DEFAULTS})
 
         records.append({
             'train_start': train_start.date().isoformat(),
@@ -168,13 +195,19 @@ def _chain(returns_pct: list[float]) -> float:
 def main() -> None:
     ap = argparse.ArgumentParser(description='Walk-forward optimization on real option chains')
     ap.add_argument('ticker', nargs='?', default='MSFT')
-    ap.add_argument('--fill', choices=('bid_ask', 'mid'), default='bid_ask')
+    ap.add_argument('--prices', choices=('real', 'proxy'), default='real',
+                    help='option-pricing source: real chains (default) or the '
+                         'BS + estimate_iv proxy on the same series/windows/grid')
+    ap.add_argument('--fill', choices=('bid_ask', 'mid'), default=None,
+                    help='real-chain fill model (default bid_ask); rejected with --prices proxy')
     ap.add_argument('--train-years', type=int, default=3)
     ap.add_argument('--min-trades', type=int, default=0,
                     help='disqualify in-sample fits with fewer trades (Pardo floor)')
     args = ap.parse_args()
     ticker = args.ticker.upper()
-    fill = args.fill
+    if args.prices == 'proxy' and args.fill is not None:
+        ap.error('--fill applies to real chains only (the proxy has its own slippage model)')
+    fill = args.fill or 'bid_ask'
     dailies_path = f'{ticker.lower()}_option_dailies.csv'
     if not (os.path.exists(dailies_path) or os.path.exists(dailies_path + '.gz')):
         sys.exit(f'{dailies_path}[.gz] not found — run fetch_option_data.sh first')
@@ -189,14 +222,24 @@ def main() -> None:
     print(f'{ticker}: {len(dates)} trading days {dates[0]} -> {dates[-1]}, '
           f'{len(days)} chain days', flush=True)
 
+    if args.prices == 'proxy':
+        fixed_params: dict[str, Any] = {**FIXED_PARAMS, 'risk_free_rate': 0.045}
+        engine_tag = 'PROXY engine (BS + estimate_iv), unadjusted closes'
+    else:
+        fixed_params = {**FIXED_PARAMS, 'fill': fill}
+        engine_tag = f'REAL chains, {fill} fills'
     records = walk_forward_real(dates, prices, store, PARAM_GRID,
-                                fixed_params={**FIXED_PARAMS, 'fill': fill},
+                                fixed_params=fixed_params,
                                 train_years=args.train_years,
-                                min_trades=args.min_trades)
+                                min_trades=args.min_trades,
+                                engine=args.prices)
 
     floor_tag = f', >={args.min_trades}-trade selection floor' if args.min_trades else ''
-    print(f'\n=== {ticker} walk-forward on REAL chains '
-          f'({len(records)} periods, {fill} fills, {args.train_years}y train{floor_tag}) ===')
+    print(f'\n=== {ticker} walk-forward on {engine_tag} '
+          f'({len(records)} periods, {args.train_years}y train{floor_tag}) ===')
+    if args.prices == 'proxy':
+        print('  dte grid is CALENDAR days on both engines; proxy trading-day '
+              'equivalents: 21->14, 30->21, 45->31 (defaults comparator 30->21)')
     print(f"  {'test window':<24}{'delta':>6}{'dte':>5}{'close':>6}"
           f"{'IS-shp':>8}{'IS-tr':>6}{'<30':>5}{'OOS%':>8}{'FIX%':>8}{'B&H%':>8}")
     for r in records:
