@@ -149,6 +149,13 @@ def run_real_cc_overlay(
     # 'mid': both legs at the quoted mark — the academic convention; isolates
     # how much of the result is bid/ask spread vs the premium level itself.
     fill = str(params.get('fill', 'bid_ask'))
+    # Optional stop-loss buyback: close the short call when its buyback price
+    # reaches this multiple of the (net) premium collected, e.g. 2.0 = the
+    # classic "stop at 2x entry". Evaluated once per day on the close quote
+    # (like the profit target), so gap-throughs fill at the day's ask, not at
+    # the stop level — a stop-market approximation, the honest daily-bar
+    # reading of a stop order. None/absent = off (byte-identical baseline).
+    stop_loss_mult = params.get('stop_loss_mult')
 
     initial_price = prices[0]
     contract_cost = initial_price * 100
@@ -248,11 +255,14 @@ def run_real_cc_overlay(
                     # Profit target: what the buyback actually costs vs premium kept.
                     hit_target = buy_px <= position['premium_collected'] * (1 - close_at_pct)
                     deep_itm = delta_q > 0.70
-                    if hit_target or deep_itm:
+                    hit_stop = (stop_loss_mult is not None
+                                and buy_px >= position['premium_collected'] * float(stop_loss_mult))
+                    if hit_target or deep_itm or hit_stop:
                         pnl = (position['premium_collected'] - buyback_cost) * shares
                         realized_pnl += pnl
                         wins, losses = (wins + 1, losses) if pnl >= 0 else (wins, losses + 1)
-                        action = 'close' if hit_target else 'close_itm'
+                        action = ('close' if hit_target
+                                  else 'close_stop' if hit_stop else 'close_itm')
                         position = None
                         trades.append({'date': date, 'price': price, 'action': action,
                                        'call_value': ask_q, 'pnl': pnl,
