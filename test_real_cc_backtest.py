@@ -3,7 +3,7 @@
 Two layers:
 
 - Pure-logic unit tests (always run, including CI): entry selection, the
-  chain-store vendor-junk quarantine, and fill-model arithmetic against
+  chain store's era clip and mark clamp, and fill-model arithmetic against
   synthetic chain slices.
 - TestQqqRealChainRegression / TestMsftRealChainRegression: pin the headline
   numbers of the real-premium runs. Each requires its {ticker}_option_dailies
@@ -19,26 +19,27 @@ Two layers:
   the MSFT chains (walk_forward_real.py, 4-year train, bid/ask fills) —
   the optimizer's minimum-engagement drift and the chained OOS scoreboard.
   Same dataset/skip mechanics as the MSFT class above.
-- TestMsftExtendedSpanRegression: pins the 18-year run (2008-2026) on the
-  merged canonical + backfill chains — the GFC and the 2008-2013 sideways
-  era do not rescue the overlay (net -$315K, NW t = -1.29, vs the proxy's
-  +$460K on the same series). The vendor-junk quarantine leaves MSFT
-  2008-2009 nearly untradable (~2 clean entry days a year), so the overlay
-  rides through the GFC mostly long-stock-only. Additionally requires
-  msft_option_dailies_2008_2016.csv[.gz] (same release/CI mechanics).
+- TestMsftExtendedSpanRegression: pins the 16-year run (2010-05 -> 2026-04)
+  on the merged canonical + backfill chains — the 2010-2013 sideways era
+  does not rescue the overlay (net -$382K, NW t = -1.28, vs the proxy's
+  +$533K on the same series). The 2008 -> mid-2010 placeholder-greeks era
+  is EXCLUDED at load time (CHAIN_CLEAN_START): its entry band is vendor
+  junk, so the GFC itself is untestable on these chains. Additionally
+  requires msft_option_dailies_2008_2016.csv[.gz] (same release/CI
+  mechanics).
 - TestMsftStopLossRegression: pins the stop_loss_mult variant (buy back
   the short call at a multiple of the premium collected) — the stop makes
   the loss WORSE at every level and monotonically worse as it tightens
-  (whipsaw on a trending stock), on both the 10- and 18-year spans.
-- TestSpyRealWalkForwardRegression: pins the SPY 18-year walk-forward on
-  real chains (28 windows, 4-year train): tuned overlay +218% chained OOS
-  vs +292% buy-and-hold, beating it in only 8/28 windows. Requires
-  spy_option_dailies.csv[.gz] (same release/CI mechanics).
+  (whipsaw on a trending stock), on both the 10- and 16-year spans.
+- TestSpyRealWalkForwardRegression: pins the SPY walk-forward on real
+  chains (2010-12 -> 2026-06, 23 windows, 4-year train): tuned overlay
+  +143% chained OOS vs +171% buy-and-hold, beating it in 10/23 windows.
+  Requires spy_option_dailies.csv[.gz] (same release/CI mechanics).
 - TestQqqExtendedWalkForwardRegression: pins the QQQ 15-year walk-forward
   on the merged canonical + 2011-2016 backfill chains (22 windows): tuned
   overlay +283% chained OOS vs +418% buy-and-hold, beating it in only
-  5/22 windows. Completes the three-ticker matrix: 24/78 real-chain
-  windows beat buy-and-hold vs 62/78 on the proxy.
+  5/22 windows. Completes the three-ticker matrix: 22/68 real-chain
+  windows beat buy-and-hold vs 55/68 on the proxy.
 """
 
 from __future__ import annotations
@@ -52,6 +53,7 @@ import pytest
 
 from cc_backtest import compute_statistics, run_cc_overlay
 from real_cc_backtest import (
+    CHAIN_CLEAN_START,
     load_chain_store,
     load_unadjusted_prices,
     run_real_cc_overlay,
@@ -129,27 +131,31 @@ class TestSelectEntry:
         assert select_entry({'candidates': []}, 30, 0.25) is None
 
 
-class TestChainStoreQuarantine:
-    """load_chain_store: vendor-junk rows still mark, but never become candidates.
+class TestChainStoreEraClip:
+    """load_chain_store: the placeholder-greeks era is excluded, not repaired.
 
-    The 2008-2010 era of the Alpha Vantage dailies carries rows whose mark
-    sits outside [bid, ask] and whose greeks are placeholder garbage (IVs on
-    the quantized lattice {0.01488, 0.02463, ...}, deltas that jump 0.505 ->
-    0.087 between adjacent strikes). The loader quarantines those rows from
-    entry selection — the out-of-band mark is the sole criterion — while
-    keeping a midpoint-repaired mark so already-held positions still close.
-    A low-IV test is deliberately NOT part of the guard: lattice-quantized
-    IVs also appear on legitimate modern rows (SPY 2017) whose deltas are
-    sane, and delta plus quotes are all the engine consumes.
+    The 2008 -> mid/late-2010 era of the Alpha Vantage dailies carries
+    vendor placeholder greeks inside the entry band (IVs on the quantized
+    lattice {0.01488, 0.02463, ...}, deltas that jump 0.505 -> 0.087
+    between adjacent strikes, marks like 0.01 on a 10.15/10.35 quote). No
+    delta-targeted entry can trade that data, so runs drop the era at load
+    time via `start` (per-ticker boundaries in CHAIN_CLEAN_START). Two
+    row-level alternatives were evaluated and set aside: quarantining
+    mark-outside-quote rows from entry is byte-identical to the clip on
+    every pinned surface (nothing defective survives the boundary), and an
+    IV < 0.05 filter falsely flags legitimate low-vol rows (SPY 2017). The
+    modern files' small tail of out-of-band marks (0.05-0.14% of rows)
+    keeps the midpoint clamp.
     """
 
     HEADER = ('date,expiration,dte,strike,bid,ask,mark,last,volume,'
               'open_interest,implied_volatility,delta,contractID')
 
-    def _store_from(self, tmp_path: Path, rows: list[str]) -> dict[str, dict[str, Any]]:
+    def _store_from(self, tmp_path: Path, rows: list[str],
+                    start: str | None = None) -> dict[str, dict[str, Any]]:
         p = tmp_path / 'dailies.csv'
         p.write_text('\n'.join([self.HEADER, *rows]) + '\n')
-        return load_chain_store(str(p))
+        return load_chain_store(str(p), start=start)
 
     def test_clean_row_is_candidate(self, tmp_path: Path) -> None:
         store = self._store_from(tmp_path, [
@@ -159,27 +165,39 @@ class TestChainStoreQuarantine:
         assert [c[7] for c in day['candidates']] == ['OK']
         assert day['marks']['OK'] == (2.00, 2.20, 2.10, 0.25)
 
-    def test_out_of_band_mark_quarantined_but_still_marked(self, tmp_path: Path) -> None:
-        # The 2008-2010 defect verbatim: mark 0.01 on a 10.15/10.35 quote.
+    def test_start_clips_era_rows_entirely(self, tmp_path: Path) -> None:
+        # The 2008-2010 defect verbatim: mark 0.01 on a 10.15/10.35 quote,
+        # lattice IV, placeholder delta. With `start` at the clean boundary
+        # the row vanishes from candidates AND marks.
         store = self._store_from(tmp_path, [
             '2008-01-30,2008-03-22,52,32.5,10.15,10.35,0.01,0,0,0,0.01488,0.20567,BAD',
+            '2024-01-02,2024-02-02,31,110.0,2.00,2.20,2.10,0,0,0,0.21000,0.25000,OK',
+        ], start=CHAIN_CLEAN_START['MSFT'])
+        assert '2008-01-30' not in store
+        assert [c[7] for c in store['2024-01-02']['candidates']] == ['OK']
+
+    def test_out_of_band_mark_clamped_to_midpoint(self, tmp_path: Path) -> None:
+        # Without a clip the row stays a candidate but its mark is repaired
+        # to the quote midpoint — the modern files' 0.05-0.14% tail.
+        store = self._store_from(tmp_path, [
+            '2024-01-03,2024-02-02,30,110.0,2.00,2.20,9.99,0,0,0,0.21000,0.25000,OOB',
         ])
-        day = store['2008-01-30']
-        assert day['candidates'] == []
-        assert day['marks']['BAD'] == (10.15, 10.35, pytest.approx(10.25), 0.20567)
+        day = store['2024-01-03']
+        assert [c[7] for c in day['candidates']] == ['OOB']
+        assert day['marks']['OOB'] == (2.00, 2.20, pytest.approx(2.10), 0.25)
 
     def test_lattice_iv_with_clean_mark_stays(self, tmp_path: Path) -> None:
         # SPY 2017-09-13 verbatim: lattice IV (0.03439) but a sane delta and
         # an in-band mark — legitimate low-vol data, deliberately kept. An
-        # IV < 0.05 quarantine was considered and rejected over rows like
-        # this one (it flips entry selection on 8 clean 2017 days).
+        # IV < 0.05 row filter was considered and rejected over rows like
+        # this one (it would flip entry selection on 8 clean 2017 days).
         store = self._store_from(tmp_path, [
             '2017-09-13,2017-09-20,7,251.0,0.22,0.24,0.23,0,0,0,0.03439,0.25901,LAT',
         ])
         assert [c[7] for c in store['2017-09-13']['candidates']] == ['LAT']
 
     def test_blank_iv_is_fine(self, tmp_path: Path) -> None:
-        # The guard never reads the IV column; a blank one must not matter.
+        # The loader never reads the IV column; a blank one must not matter.
         store = self._store_from(tmp_path, [
             '2024-01-02,2024-02-02,31,110.0,2.00,2.20,2.10,0,0,0,,0.25000,NOIV',
         ])
@@ -526,39 +544,35 @@ class TestMsftRealWalkForwardRegression:
            '(or their .gz twins)',
 )
 class TestMsftExtendedSpanRegression:
-    """Pin the 18-year MSFT run (2008-01 -> 2026-04) on merged real chains.
+    """Pin the 16-year MSFT run (2010-05 -> 2026-04) on merged real chains.
 
-    The 2008-2016 backfill exists to answer one question: was the 'no edge'
-    verdict an artifact of testing a covered call on a 10x bull run? The
-    extended span adds the GFC crash and the 2008-2013 sideways era — the
-    regime covered calls are supposedly for — and the verdict survives:
-    the overlay loses MORE (-$315K vs -$184K on the 10-year span), premium
-    retention is negative, and the same proxy engine on the same series
-    still reports +$460K. The walk-forward (28 windows, 4-year train)
-    chains to +797% OOS vs +1,410% for buy-and-hold.
+    The 2008-2016 backfill was bought to answer one question: was the 'no
+    edge' verdict an artifact of testing a covered call on a 10x bull run?
+    The honest answer after the data audit: the GFC itself is UNTESTABLE
+    on these chains — the 2008 -> mid-2010 era carries vendor placeholder
+    greeks inside the entry band (entries there would have run a median
+    vendor delta of 0.074 against the 0.25 target), so runs exclude the
+    era at load time (CHAIN_CLEAN_START['MSFT'] = '2010-05-10', the first
+    trading day past the last in-band placeholder row). What the span CAN
+    test — the 2010-2013 sideways era the strategy is supposedly for,
+    plus the full 2010s bull — still says no: the overlay loses MORE than
+    on the 10-year span (-$382K vs -$184K), premium retention is negative,
+    and the same proxy engine on the same series reports +$533K. The
+    walk-forward (23 windows, 4-year train, every grid fit above the Pardo
+    floor) chains to +521% OOS vs +913% for buy-and-hold.
 
-    Era honesty caveat, carried with the pin: the 2008 -> mid-2010 chains
-    carry vendor placeholder greeks that leaked into the entry band before
-    the loader's quarantine (2008-09 entries ran a median vendor delta of
-    0.074 against the 0.25 target). With those rows quarantined, MSFT
-    2008-2009 offers ~2 clean entry days a year: the overlay sells only 4
-    calls in those two years, so 'includes the GFC' means the portfolio
-    rode through it nearly long-stock-only, not that the call overlay
-    traded through it. The same starvation pushes part of the grid below
-    the Pardo 30-trade floor in the four 2008-2012-trained walk-forward
-    windows (pinned below) — the early windows' picks are thin-sample fits.
-
-    These runs exercise the two era-specific engine paths: pre-2015
+    These runs still exercise the era-specific engine paths: pre-Feb-2015
     Saturday-dated expirations settle against the prior Friday close, and
-    the quarantine repairs the era's degenerate marks for position marking
-    while excluding those rows from entry. The backfill ships on the same
-    data-2026-06 release with the same checksum/CI mechanics as the
-    canonical datasets; the class skips when either file is absent.
+    the loader's midpoint clamp repairs the modern files' small tail of
+    out-of-band marks. The backfill ships on the same data-2026-06 release
+    with the same checksum/CI mechanics as the canonical datasets; the
+    class skips when either file is absent.
     """
 
     @pytest.fixture(scope='class')
     def market(self) -> tuple[list[str], list[float], dict[str, dict[str, Any]]]:
-        store = load_chain_store(_MSFT_DAILIES, [_MSFT_BACKFILL])
+        store = load_chain_store(_MSFT_DAILIES, [_MSFT_BACKFILL],
+                                 start=CHAIN_CLEAN_START['MSFT'])
         days = sorted(store)
         dates, prices = load_unadjusted_prices('MSFT', days[0], '2026-06-06')
         pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
@@ -570,84 +584,73 @@ class TestMsftExtendedSpanRegression:
         return run_real_cc_overlay(dates, prices, store, _PARAMS)
 
     def test_span(self, market) -> None:
-        """4,597 trading days, 2008-01-02 -> 2026-04-10, gap-free merge."""
+        """4,005 trading days, 2010-05-10 -> 2026-04-10; era rows clipped."""
         dates, _, store = market
-        assert (dates[0], dates[-1], len(dates)) == ('2008-01-02', '2026-04-10', 4597)
-        assert len(store) == 4592  # chain days (a handful of price days lack chains)
+        assert (dates[0], dates[-1], len(dates)) == ('2010-05-10', '2026-04-10', 4005)
+        assert len(store) == 4000  # chain days (a handful of price days lack chains)
 
     def test_overlay_headline(self, real) -> None:
-        """Net overlay -$315K over 18 years: more history, bigger loss."""
+        """Net overlay -$382K over 16 years: more history, bigger loss."""
         s, _, _ = real
-        assert s['num_contracts'] == 28
-        assert s['net_overlay_pnl'] == pytest.approx(-314_721.45, abs=1.0)
-        assert s['total_premium_collected'] == pytest.approx(1_220_275.00, abs=1.0)
-        assert s['final_equity'] == pytest.approx(725_098.53, abs=1.0)
-        assert s['total_return_pct'] == pytest.approx(625.10, abs=0.05)
-        assert s['buy_hold_return_pct'] == pytest.approx(939.82, abs=0.05)
+        assert s['num_contracts'] == 34
+        assert s['net_overlay_pnl'] == pytest.approx(-382_209.36, abs=1.0)
+        assert s['total_premium_collected'] == pytest.approx(1_481_714.90, abs=1.0)
+        assert s['final_equity'] == pytest.approx(880_352.62, abs=1.0)
+        assert s['total_return_pct'] == pytest.approx(780.35, abs=0.05)
+        assert s['buy_hold_return_pct'] == pytest.approx(1162.56, abs=0.05)
         assert s['premium_retention_pct'] == pytest.approx(-25.8, abs=0.1)
-        assert s['max_drawdown_pct'] == pytest.approx(56.35, abs=0.05)
+        assert s['max_drawdown_pct'] == pytest.approx(42.70, abs=0.05)
 
     def test_activity(self, real) -> None:
-        """295 calls — only 4 in 2008-2009, where the quarantine leaves ~2
-        clean entry days a year; the 12 expirations include Saturday-settled
-        pre-2015 cycles."""
+        """291 calls; the 8 expirations include Saturday-settled pre-2015 cycles."""
         s, trades, _ = real
-        assert s['num_calls_sold'] == 295
-        assert (s['wins'], s['losses']) == (208, 86)
+        assert s['num_calls_sold'] == 291
+        assert (s['wins'], s['losses']) == (204, 86)
         actions = [t['action'] for t in trades]
         assert actions.count('close') == 200
         assert actions.count('close_itm') == 82
-        assert actions.count('expiration') == 12
+        assert actions.count('expiration') == 8
 
     def test_significance(self, real) -> None:
-        """NW t = -1.29: no edge, sign negative, 18 years of data."""
+        """NW t = -1.28: no edge, sign negative, 16 years of data."""
         s, _, eq = real
         st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
-        assert st['t_stat_newey_west'] == pytest.approx(-1.29, abs=0.02)
-        assert st['sharpe_excess'] == pytest.approx(-0.284, abs=0.005)
+        assert st['t_stat_newey_west'] == pytest.approx(-1.28, abs=0.02)
+        assert st['sharpe_excess'] == pytest.approx(-0.303, abs=0.005)
         assert st['passes_t_2'] is False
 
     def test_proxy_same_series(self, real, market) -> None:
-        """The proxy on the identical 18-year series: +$460K — a $784K swing."""
+        """The proxy on the identical 16-year series: +$533K — a $915K swing."""
         dates, prices, _ = market
         import numpy as np
         s, _, eq = run_cc_overlay(dates, np.array(prices),
                                   {**_PARAMS, 'dte': 21})  # engine dte is trading days
         st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
-        assert s['net_overlay_pnl'] == pytest.approx(460_188.49, abs=1.0)
-        assert s['num_calls_sold'] == 348
-        assert st['t_stat_newey_west'] == pytest.approx(-0.16, abs=0.02)
+        assert s['net_overlay_pnl'] == pytest.approx(533_159.94, abs=1.0)
+        assert s['num_calls_sold'] == 301
+        assert st['t_stat_newey_west'] == pytest.approx(0.20, abs=0.02)
 
     def test_walk_forward(self, market) -> None:
-        """28 windows; WF +797% vs B&H +1,410% chained; era floors break.
-
-        The four 2008-2012-trained windows carry grid combos below the
-        Pardo 30-trade floor once the quarantine sidelines the era's
-        placeholder rows — the 2012-01 window's winning fit itself runs 26
-        trades. The early picks are thin-sample fits, and the pin says so.
-        """
+        """23 windows, all Pardo floors clear; WF +521% vs B&H +913% chained."""
         dates, prices, store = market
         records = walk_forward_real(dates, prices, store, PARAM_GRID,
                                     fixed_params={**FIXED_PARAMS, 'fill': 'bid_ask'},
                                     train_years=4)
-        assert len(records) == 28
-        assert records[0]['train_start'] == '2008-01-02'
-        assert records[0]['test_start'] == '2012-01-02'
-        assert records[-1]['test_end'] == '2026-01-02'
-        assert [(r['test_start'], r['n_below_30']) for r in records
-                if r['n_below_30']] == [('2012-01-02', 12), ('2012-07-02', 4),
-                                        ('2013-01-02', 3), ('2013-07-02', 3)]
-        assert min(r['min_grid_trades'] for r in records) == 17
-        assert min(r['n_trades'] for r in records) == 26  # below the floor
-        assert _chain([r['oos_return_pct'] for r in records]) == pytest.approx(796.64, abs=0.01)
-        assert _chain([r['fixed_return_pct'] for r in records]) == pytest.approx(548.14, abs=0.01)
-        assert _chain([r['bh_return_pct'] for r in records]) == pytest.approx(1410.41, abs=0.01)
-        assert sum(r['oos_return_pct'] > r['fixed_return_pct'] for r in records) == 19
-        assert sum(r['oos_return_pct'] > r['bh_return_pct'] for r in records) == 11
+        assert len(records) == 23
+        assert records[0]['train_start'] == '2010-05-10'
+        assert records[0]['test_start'] == '2014-05-10'
+        assert records[-1]['test_end'] == '2025-11-10'
+        assert all(r['n_below_30'] == 0 for r in records)
+        assert min(r['n_trades'] for r in records) == 33
+        assert _chain([r['oos_return_pct'] for r in records]) == pytest.approx(520.95, abs=0.01)
+        assert _chain([r['fixed_return_pct'] for r in records]) == pytest.approx(464.66, abs=0.01)
+        assert _chain([r['bh_return_pct'] for r in records]) == pytest.approx(912.55, abs=0.01)
+        assert sum(r['oos_return_pct'] > r['fixed_return_pct'] for r in records) == 13
+        assert sum(r['oos_return_pct'] > r['bh_return_pct'] for r in records) == 7
         deltas = Counter(r['best_params']['call_delta'] for r in records)
         closes = Counter(r['best_params']['close_at_pct'] for r in records)
-        assert deltas == {0.15: 15, 0.20: 9, 0.25: 4}
-        assert closes == {1.00: 16, 0.75: 12}
+        assert deltas == {0.15: 14, 0.20: 9}
+        assert closes == {1.00: 17, 0.75: 6}
 
 
 @pytest.mark.skipif(
@@ -667,7 +670,8 @@ class TestMsftStopLossRegression:
     locks in ~1x premium plus a spread crossing, and the engine re-sells
     into the same rally. Tightening the stop is monotonically worse, and no
     level improves on the no-stop baseline (-$183,552 over 10 years,
-    -$314,721 over 18 — pinned in the headline classes above). Max
+    -$382,209 over the 16-year span — pinned in the headline classes
+    above). Max
     drawdown RISES with the stop (the drawdown driver is the stock leg,
     not the short call), and no variant moves the NW t-stat off "no edge."
 
@@ -678,7 +682,8 @@ class TestMsftStopLossRegression:
 
     @pytest.fixture(scope='class')
     def market(self) -> tuple[list[str], list[float], dict[str, dict[str, Any]]]:
-        store = load_chain_store(_MSFT_DAILIES, [_MSFT_BACKFILL])
+        store = load_chain_store(_MSFT_DAILIES, [_MSFT_BACKFILL],
+                                 start=CHAIN_CLEAN_START['MSFT'])
         days = sorted(store)
         dates, prices = load_unadjusted_prices('MSFT', days[0], '2026-06-06')
         pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
@@ -709,16 +714,16 @@ class TestMsftStopLossRegression:
         assert st['t_stat_newey_west'] == pytest.approx(-1.58, abs=0.02)
         assert st['passes_t_2'] is False
 
-    def test_eighteen_year_stop_2x(self, market) -> None:
-        """18y, 2x stop: -$423K vs -$315K baseline. More history, same lesson."""
+    def test_sixteen_year_stop_2x(self, market) -> None:
+        """16y, 2x stop: -$514K vs -$382K baseline. More history, same lesson."""
         dates, prices, store = market
         s, trades, eq = run_real_cc_overlay(dates, prices, store,
                                             {**_PARAMS, 'stop_loss_mult': 2.0})
         st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
-        assert s['net_overlay_pnl'] == pytest.approx(-423_455.26, abs=1.0)
-        assert s['num_calls_sold'] == 392
-        assert [t['action'] for t in trades].count('close_stop') == 169
-        assert st['t_stat_newey_west'] == pytest.approx(-1.15, abs=0.02)
+        assert s['net_overlay_pnl'] == pytest.approx(-514_187.18, abs=1.0)
+        assert s['num_calls_sold'] == 388
+        assert [t['action'] for t in trades].count('close_stop') == 168
+        assert st['t_stat_newey_west'] == pytest.approx(-1.14, abs=0.02)
         assert st['passes_t_2'] is False
 
     def test_tightening_is_monotonically_worse(self, market) -> None:
@@ -740,12 +745,12 @@ class TestMsftStopLossRegression:
         Given the chance to re-tune in every training window, the optimizer
         retreats to the grid's minimum-engagement corner — delta 0.15 and
         close_at_pct 1.00 in 11/11 windows — and still can't make the stop
-        pay: beats-B&H windows drop from 6/11 to 3/11. (On the 18-year span
-        the unpinned comparison is +816.98% with the stop vs +796.64%
-        without — the stop noses ahead there, but the margin lives in the
-        thin-sample 2008-2012-trained windows flagged in
-        TestMsftExtendedSpanRegression, and both still trail buy-and-hold's
-        +1,410% badly; not pinned here to keep the suite fast.)
+        pay: beats-B&H windows drop from 6/11 to 3/11. (On the 16-year span
+        the unpinned comparison is +593.89% with the stop vs +520.95%
+        without, close=1.00 in 23/23 — the tuned stop variant noses ahead
+        there, but both trail buy-and-hold's +913% badly, and the
+        fixed-rule stop pinned above is still strictly worse than its
+        baseline; not pinned here to keep the suite fast.)
         """
         dates, prices, store = self._ten_year(market)
         records = walk_forward_real(dates, prices, store, PARAM_GRID,
@@ -766,22 +771,23 @@ class TestMsftStopLossRegression:
     reason='needs spy_option_dailies.csv or its committed .gz twin',
 )
 class TestSpyRealWalkForwardRegression:
-    """Pin the SPY 18-year walk-forward on real chains (4y train, bid/ask).
+    """Pin the SPY walk-forward on real chains (2010-12 -> 2026-06, 4y train).
 
-    Third underlying, same verdict: across 28 half-year test windows
-    (2012-01 -> 2026-01) the tuned covered call chains to +218% OOS vs
-    +292% for buy-and-hold, beating it in only 8/28 windows. SPY-specific
-    wrinkle worth keeping pinned: the optimizer is LESS extreme here than
-    on MSFT — 0.25 delta wins 11/28 windows (index premiums are lean but
-    spreads are tight, so moderate deltas punish less) — while close=1.00
-    still dominates at 22/28. The winning fits all clear the Pardo
-    30-trade floor (leanest 34), but the three 2008-2012-trained windows
-    each carry 3 grid combos below it (leanest 26): the vendor-junk
-    quarantine thins the era's tradable rows — SPY keeps ~45% of 2008-09
-    days entry-capable, against MSFT's ~2 days a year.
+    Third underlying, same verdict: across 23 half-year test windows
+    (2014-12 -> 2026-06) the tuned covered call chains to +143% OOS vs
+    +171% for buy-and-hold, beating it in 10/23 windows — the closest race
+    in the matrix, and still a loss. The 2008 -> late-2010 placeholder-
+    greeks era is excluded at load time (CHAIN_CLEAN_START['SPY'] =
+    '2010-12-01'; the in-band vendor-junk signature straggles through
+    2010-11 on SPY). SPY-specific wrinkle worth keeping pinned: the
+    optimizer is LESS extreme here than on MSFT — 0.25 delta wins 9/23
+    windows (index premiums are lean but spreads are tight, so moderate
+    deltas punish less) — while close=1.00 still dominates at 21/23.
+    Every grid fit clears the Pardo 30-trade floor in every window
+    (leanest 32).
 
     The proxy twin (deliberately NOT pinned, per review scope) claims the
-    opposite on the same series: +687% chained, beating B&H in 27/28
+    opposite on the same span: +365% chained, beating B&H in 22/23
     windows — the starkest real-vs-proxy inversion in the repo. If that
     comparison is ever published, pin it first.
 
@@ -792,7 +798,7 @@ class TestSpyRealWalkForwardRegression:
 
     @pytest.fixture(scope='class')
     def records(self) -> list[dict[str, Any]]:
-        store = load_chain_store(_SPY_DAILIES)
+        store = load_chain_store(_SPY_DAILIES, start=CHAIN_CLEAN_START['SPY'])
         days = sorted(store)
         dates, prices = load_unadjusted_prices('SPY', days[0], '2026-06-06')
         pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
@@ -802,42 +808,39 @@ class TestSpyRealWalkForwardRegression:
                                  train_years=4)
 
     def test_window_layout(self, records) -> None:
-        """28 non-overlapping 6-month test windows, 2012-01 -> 2026-01."""
-        assert len(records) == 28
-        assert records[0]['train_start'] == '2008-01-02'
-        assert records[0]['test_start'] == '2012-01-02'
-        assert records[-1]['test_start'] == '2025-07-02'
-        assert records[-1]['test_end'] == '2026-01-02'
+        """23 non-overlapping 6-month test windows, 2014-12 -> 2026-06."""
+        assert len(records) == 23
+        assert records[0]['train_start'] == '2010-12-01'
+        assert records[0]['test_start'] == '2014-12-01'
+        assert records[-1]['test_start'] == '2025-12-01'
+        assert records[-1]['test_end'] == '2026-06-01'
 
     def test_optimizer_choices(self, records) -> None:
-        """Delta is less extreme than MSFT's (0.25 wins 11/28); close=1.00 still rules."""
+        """Delta is less extreme than MSFT's (0.25 wins 9/23); close=1.00 still rules."""
         assert Counter(r['best_params']['call_delta'] for r in records) == \
-            {0.15: 12, 0.20: 5, 0.25: 11}
+            {0.15: 11, 0.20: 3, 0.25: 9}
         assert Counter(int(r['best_params']['dte']) for r in records) == \
-            {21: 17, 30: 7, 45: 4}
+            {21: 11, 30: 7, 45: 5}
         assert Counter(r['best_params']['close_at_pct'] for r in records) == \
-            {1.00: 22, 0.50: 1, 0.75: 5}
-        assert records[0]['best_params'] == {'call_delta': 0.15, 'dte': 21,
-                                             'close_at_pct': 0.75}
-        assert records[0]['train_sharpe'] == pytest.approx(0.030, abs=5e-4)
-        assert records[-1]['train_sharpe'] == pytest.approx(0.678, abs=5e-4)
+            {1.00: 21, 0.50: 1, 0.75: 1}
+        assert records[0]['best_params'] == {'call_delta': 0.20, 'dte': 21,
+                                             'close_at_pct': 1.00}
+        assert records[0]['train_sharpe'] == pytest.approx(1.026, abs=5e-4)
+        assert records[-1]['train_sharpe'] == pytest.approx(0.749, abs=5e-4)
 
     def test_pardo_floor(self, records) -> None:
-        """Winning fits clear 30 IS trades everywhere (leanest 34), but the
-        three GFC-trained windows carry sub-floor grid combos (leanest 26)."""
-        assert [(r['test_start'], r['n_below_30']) for r in records
-                if r['n_below_30']] == [('2012-01-02', 3), ('2012-07-02', 3),
-                                        ('2013-01-02', 3)]
-        assert min(r['min_grid_trades'] for r in records) == 26
+        """Every grid combo clears 30 IS trades in every window (leanest: 32)."""
+        assert all(r['n_below_30'] == 0 for r in records)
+        assert min(r['min_grid_trades'] for r in records) == 32
         assert min(r['n_trades'] for r in records) == 34
 
     def test_oos_scoreboard(self, records) -> None:
-        """WF +218.0% vs fixed +184.3% vs B&H +291.7%; beats B&H in 8/28."""
-        assert _chain([r['oos_return_pct'] for r in records]) == pytest.approx(218.02, abs=0.01)
-        assert _chain([r['fixed_return_pct'] for r in records]) == pytest.approx(184.28, abs=0.01)
-        assert _chain([r['bh_return_pct'] for r in records]) == pytest.approx(291.71, abs=0.01)
-        assert sum(r['oos_return_pct'] > r['fixed_return_pct'] for r in records) == 20
-        assert sum(r['oos_return_pct'] > r['bh_return_pct'] for r in records) == 8
+        """WF +143.0% vs fixed +95.8% vs B&H +170.9%; beats B&H in 10/23."""
+        assert _chain([r['oos_return_pct'] for r in records]) == pytest.approx(143.01, abs=0.01)
+        assert _chain([r['fixed_return_pct'] for r in records]) == pytest.approx(95.78, abs=0.01)
+        assert _chain([r['bh_return_pct'] for r in records]) == pytest.approx(170.87, abs=0.01)
+        assert sum(r['oos_return_pct'] > r['fixed_return_pct'] for r in records) == 19
+        assert sum(r['oos_return_pct'] > r['bh_return_pct'] for r in records) == 10
 
 
 @pytest.mark.skipif(
@@ -851,9 +854,9 @@ class TestQqqExtendedWalkForwardRegression:
     Third underlying, same verdict, completing the matrix: across 22
     half-year test windows (2015-03 -> 2026-03) the tuned covered call
     chains to +283% OOS vs +418% buy-and-hold, beating it in only 5/22
-    windows. Cross-ticker tally at this pin: 24/78 real-chain windows beat
-    buy-and-hold (MSFT 11/28, SPY 8/28, QQQ 5/22) vs 62/78 for the proxy
-    on the same series. QQQ's quirk: the optimizer prefers the 45-day
+    windows. Cross-ticker tally at this pin: 22/68 real-chain windows beat
+    buy-and-hold (MSFT 7/23, SPY 10/23, QQQ 5/22) vs 55/68 for the proxy
+    on the same spans. QQQ's quirk: the optimizer prefers the 45-day
     cycle more than any other ticker (10/22 windows, mostly 2016-2019)
     before converging on low-delta/short-cycle post-2020; close=1.00 still
     dominates at 19/22. Every grid fit clears the Pardo floor in every

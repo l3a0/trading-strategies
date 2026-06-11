@@ -39,6 +39,18 @@ from cc_backtest import compute_statistics, run_cc_overlay
 
 COMMISSION_PER_SHARE = 0.0065  # $0.65 per 100-share contract, both legs (engine convention)
 
+# First trading day after the last vendor-placeholder row inside the entry
+# band (bid > 0, 0.05 < delta < 0.60), measured per dataset. The 2008 ->
+# mid/late-2010 era of the Alpha Vantage chains carries quantized lattice
+# IVs (0.01488 + k*0.00976) and garbage deltas (adjacent strikes jumping
+# 0.505 -> 0.087) on ~99.5% of MSFT's and ~33% of SPY's 2008-09 entry-band
+# rows - data no delta-targeted entry can trade. Runs EXCLUDE that era
+# (pass `start=` to load_chain_store) rather than repairing it: on MSFT,
+# 2008-2009 offers ~2 trustworthy entry days a year, far too few to trade,
+# so the GFC itself is untestable on these chains. QQQ needs no boundary
+# (its store begins 2011-03-23, past the era - see CLAUDE.md's era gotchas).
+CHAIN_CLEAN_START: dict[str, str] = {'MSFT': '2010-05-10', 'SPY': '2010-12-01'}
+
 
 def open_dailies(path: str) -> TextIO:
     """Open a dailies CSV, transparently falling back to its .gz twin.
@@ -81,7 +93,7 @@ def load_unadjusted_prices(ticker: str, start: str, end: str) -> tuple[list[str]
 
 
 def load_chain_store(
-    path: str, extra_paths: Sequence[str] = ()
+    path: str, extra_paths: Sequence[str] = (), start: str | None = None
 ) -> dict[str, dict[str, Any]]:
     """One pass over the dailies CSV(s) -> per-date entry candidates + mark index.
 
@@ -92,28 +104,29 @@ def load_chain_store(
     2008-2016 MSFT backfill alongside the canonical 2016-2026 file); the
     per-date setdefault makes the merge order-independent.
 
-    Vendor-junk quarantine: a quoted mark outside [bid, ask] is bad vendor
-    data — the 2008-2010 era carries marks like 0.01 on a 10.15/10.35 quote —
-    and the greeks riding on those rows are placeholder garbage too (IVs on a
-    quantized lattice {0.01488, 0.02463, 0.03439, 0.04415}; deltas that jump
-    0.505 -> 0.087 between adjacent strikes), so trusting them poisons the
-    delta-targeted entry. Such rows keep a midpoint-repaired mark in the
-    marks index, so positions already held still mark and close, but are
-    never entry candidates. The out-of-band mark is the sole criterion: it
-    overlaps the in-band lattice-IV signature 99.6-99.8% in the poisoned
-    era, and the modern files carry only a small tail of these rows
-    (0.05-0.14%), so the quarantine applies uniformly, not per-era. An
-    `IV < 0.05` test was considered and rejected: SPY's 2017 low-vol chains
-    quote lattice-quantized IVs on rows whose deltas are sane (monotone in
-    strike, consistent with the quotes), and delta and quotes are all this
-    engine consumes — anything reading vendor IV as a *signal* needs its own
-    sidecar guard instead.
+    `start` drops every row dated before it. This is how the 2008 ->
+    mid/late-2010 placeholder-greeks era is handled (see CHAIN_CLEAN_START):
+    the era is EXCLUDED, not repaired — its in-band rows carry lattice IVs
+    and deltas unrelated to moneyness, so no delta-targeted entry could have
+    traded there. On the post-boundary spans the exclusion is provably
+    sufficient: no pinned run ever selects a defective row (verified by
+    re-running every pinned surface with a row-level guard — byte-identical).
+    A row-level `IV < 0.05` filter was likewise considered and rejected:
+    SPY's 2017 low-vol chains quote lattice-quantized IVs on rows whose
+    deltas are sane, and delta and quotes are all this engine consumes —
+    anything reading vendor IV as a *signal* needs its own sidecar guard.
+
+    Mark sanity clamp: a quoted mark outside [bid, ask] is bad vendor data —
+    the modern files carry a small tail of these (0.05-0.14% of rows) — so
+    out-of-band marks are replaced by the quote midpoint.
     """
     store: dict[str, dict[str, Any]] = {}
     for p in (path, *extra_paths):
         with open_dailies(p) as f:
             for r in csv.DictReader(f):
                 d = r['date']
+                if start is not None and d < start:
+                    continue
                 try:
                     dte = int(r['dte'])
                     delta = float(r['delta'])
@@ -123,14 +136,12 @@ def load_chain_store(
                     strike = float(r['strike'])
                 except (TypeError, ValueError):
                     continue
-                junk_greeks = not (bid <= mid <= ask)
-                if junk_greeks:
+                if not (bid <= mid <= ask):
                     mid = (bid + ask) / 2
                 day = store.setdefault(d, {'candidates': [], 'marks': {}})
-                if not junk_greeks:
-                    day['candidates'].append(
-                        (dte, delta, bid, ask, mid, r['expiration'], strike, r['contractID'])
-                    )
+                day['candidates'].append(
+                    (dte, delta, bid, ask, mid, r['expiration'], strike, r['contractID'])
+                )
                 day['marks'][r['contractID']] = (bid, ask, mid, delta)
     return store
 
@@ -339,9 +350,11 @@ def main() -> None:
     # sells shorter, cheaper calls on a faster cycle than the proxy ever did.
     real_params = {**params, 'dte': round(params['dte'] / 252 * 365)}  # ~30 calendar days
 
+    start = CHAIN_CLEAN_START.get(ticker)
     print(f'Loading chain store ({dailies_path}'
-          + (f' + {", ".join(extra_dailies)}' if extra_dailies else '') + ') ...', flush=True)
-    store = load_chain_store(dailies_path, extra_dailies)
+          + (f' + {", ".join(extra_dailies)}' if extra_dailies else '')
+          + (f', from {start}' if start else '') + ') ...', flush=True)
+    store = load_chain_store(dailies_path, extra_dailies, start=start)
     days = sorted(store)
     dates, prices = load_unadjusted_prices(ticker, days[0], '2026-06-06')
     # Clip the price series to the chain-covered span.

@@ -47,7 +47,12 @@ import numpy as np
 import pandas as pd
 
 from cc_backtest import _param_combinations, run_cc_overlay
-from real_cc_backtest import load_chain_store, load_unadjusted_prices, run_real_cc_overlay
+from real_cc_backtest import (
+    CHAIN_CLEAN_START,
+    load_chain_store,
+    load_unadjusted_prices,
+    run_real_cc_overlay,
+)
 
 PARAM_GRID: dict[str, list[float]] = {
     'call_delta': [0.15, 0.20, 0.25],
@@ -222,10 +227,12 @@ def main() -> None:
         if not (os.path.exists(p) or os.path.exists(p + '.gz')):
             sys.exit(f'{p}[.gz] not found — run fetch_option_data.sh first')
 
+    start = CHAIN_CLEAN_START.get(ticker)
     print(f'Loading chain store ({dailies_path}'
-          + (f' + {", ".join(args.extra_dailies)}' if args.extra_dailies else '') + ') ...',
+          + (f' + {", ".join(args.extra_dailies)}' if args.extra_dailies else '')
+          + (f', from {start}' if start else '') + ') ...',
           flush=True)
-    store = load_chain_store(dailies_path, args.extra_dailies)
+    store = load_chain_store(dailies_path, args.extra_dailies, start=start)
     days = sorted(store)
     dates, prices = load_unadjusted_prices(ticker, days[0], '2026-06-06')
     pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
