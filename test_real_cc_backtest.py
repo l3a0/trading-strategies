@@ -23,6 +23,10 @@ Two layers:
   era do not rescue the overlay (net -$324K, NW t = -1.14, vs the proxy's
   +$460K on the same series). Additionally requires
   msft_option_dailies_2008_2016.csv[.gz] (same release/CI mechanics).
+- TestMsftStopLossRegression: pins the stop_loss_mult variant (buy back
+  the short call at a multiple of the premium collected) — the stop makes
+  the loss WORSE at every level and monotonically worse as it tightens
+  (whipsaw on a trending stock), on both the 10- and 18-year spans.
 """
 
 from __future__ import annotations
@@ -544,3 +548,88 @@ class TestMsftExtendedSpanRegression:
         closes = Counter(r['best_params']['close_at_pct'] for r in records)
         assert deltas == {0.15: 16, 0.20: 9, 0.25: 3}
         assert closes == {1.00: 19, 0.75: 9}
+
+
+@pytest.mark.skipif(
+    not (_HAVE_MSFT_DAILIES and _HAVE_MSFT_BACKFILL),
+    reason='needs msft_option_dailies.csv and msft_option_dailies_2008_2016.csv '
+           '(or their .gz twins)',
+)
+class TestMsftStopLossRegression:
+    """Pin the stop-loss variant: a 2x-premium stop makes the loss WORSE.
+
+    stop_loss_mult buys the short call back when its ask reaches that
+    multiple of the net premium collected (the classic "stop at 2x entry"),
+    evaluated daily at the close like the engine's other exit rules. On a
+    relentlessly trending stock the stop is whipsaw machinery: a 0.25-delta
+    call doubles on a moderate rally, so the stop fires constantly (118
+    times in ten years vs the baseline's 54 deep-ITM closes), each firing
+    locks in ~1x premium plus a spread crossing, and the engine re-sells
+    into the same rally. Tightening the stop is monotonically worse, and no
+    level improves on the no-stop baseline (-$183,552 over 10 years,
+    -$323,996 over 18 — pinned in the headline classes above). Max
+    drawdown RISES with the stop (the drawdown driver is the stock leg,
+    not the short call), and no variant moves the NW t-stat off "no edge."
+
+    Convention caveat carried with the pin: this is a stop-MARKET on daily
+    closes — intraday touches would fire even more often, so these numbers
+    flatter the stop if anything.
+    """
+
+    @pytest.fixture(scope='class')
+    def market(self) -> tuple[list[str], list[float], dict[str, dict[str, Any]]]:
+        store = load_chain_store(_MSFT_DAILIES, [_MSFT_BACKFILL])
+        days = sorted(store)
+        dates, prices = load_unadjusted_prices('MSFT', days[0], '2026-06-06')
+        pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
+        return [d for d, _ in pairs], [p for _, p in pairs], store
+
+    @staticmethod
+    def _ten_year(market) -> tuple[list[str], list[float], dict[str, dict[str, Any]]]:
+        dates, prices, store = market
+        pairs = [(d, p) for d, p in zip(dates, prices) if d >= '2016-04-11']
+        return [d for d, _ in pairs], [p for _, p in pairs], store
+
+    def test_ten_year_stop_2x(self, market) -> None:
+        """10y, 2x stop: -$252K vs -$184K baseline; 118 stops preempt deep-ITM."""
+        dates, prices, store = self._ten_year(market)
+        s, trades, eq = run_real_cc_overlay(dates, prices, store,
+                                            {**_PARAMS, 'stop_loss_mult': 2.0})
+        st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
+        assert s['net_overlay_pnl'] == pytest.approx(-251_775.94, abs=1.0)
+        assert s['total_premium_collected'] == pytest.approx(1_000_234.80, abs=1.0)
+        assert s['num_calls_sold'] == 256
+        actions = [t['action'] for t in trades]
+        assert actions.count('close') == 131
+        assert actions.count('close_stop') == 118
+        assert actions.count('close_itm') == 2
+        assert actions.count('expiration') == 4
+        assert (s['wins'], s['losses']) == (134, 121)
+        assert s['max_drawdown_pct'] == pytest.approx(50.74, abs=0.05)
+        assert st['t_stat_newey_west'] == pytest.approx(-1.58, abs=0.02)
+        assert st['passes_t_2'] is False
+
+    def test_eighteen_year_stop_2x(self, market) -> None:
+        """18y, 2x stop: -$433K vs -$324K baseline. More history, same lesson."""
+        dates, prices, store = market
+        s, trades, eq = run_real_cc_overlay(dates, prices, store,
+                                            {**_PARAMS, 'stop_loss_mult': 2.0})
+        st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
+        assert s['net_overlay_pnl'] == pytest.approx(-433_262.26, abs=1.0)
+        assert s['num_calls_sold'] == 474
+        assert [t['action'] for t in trades].count('close_stop') == 178
+        assert st['t_stat_newey_west'] == pytest.approx(-1.00, abs=0.02)
+        assert st['passes_t_2'] is False
+
+    def test_tightening_is_monotonically_worse(self, market) -> None:
+        """10y P&L ordering: 1.5x < 2x < 3x < no-stop baseline."""
+        dates, prices, store = self._ten_year(market)
+        pnl = {}
+        for mult in (1.5, 3.0):
+            s, _, _ = run_real_cc_overlay(dates, prices, store,
+                                          {**_PARAMS, 'stop_loss_mult': mult})
+            pnl[mult] = s['net_overlay_pnl']
+        assert pnl[1.5] == pytest.approx(-374_845.50, abs=1.0)
+        assert pnl[3.0] == pytest.approx(-232_950.60, abs=1.0)
+        # baseline -183,552.34 is pinned by TestMsftRealChainRegression
+        assert pnl[1.5] < -251_775.94 < pnl[3.0] < -183_552.34
