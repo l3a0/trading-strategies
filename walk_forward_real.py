@@ -203,17 +203,23 @@ def main() -> None:
     ap.add_argument('--train-years', type=int, default=3)
     ap.add_argument('--min-trades', type=int, default=0,
                     help='disqualify in-sample fits with fewer trades (Pardo floor)')
+    ap.add_argument('--extra-dailies', nargs='*', default=[],
+                    help='additional dailies CSVs merged into the chain store '
+                         '(e.g. msft_option_dailies_2008_2016.csv, the backfill)')
     args = ap.parse_args()
     ticker = args.ticker.upper()
     if args.prices == 'proxy' and args.fill is not None:
         ap.error('--fill applies to real chains only (the proxy has its own slippage model)')
     fill = args.fill or 'bid_ask'
     dailies_path = f'{ticker.lower()}_option_dailies.csv'
-    if not (os.path.exists(dailies_path) or os.path.exists(dailies_path + '.gz')):
-        sys.exit(f'{dailies_path}[.gz] not found — run fetch_option_data.sh first')
+    for p in (dailies_path, *args.extra_dailies):
+        if not (os.path.exists(p) or os.path.exists(p + '.gz')):
+            sys.exit(f'{p}[.gz] not found — run fetch_option_data.sh first')
 
-    print(f'Loading chain store ({dailies_path}) ...', flush=True)
-    store = load_chain_store(dailies_path)
+    print(f'Loading chain store ({dailies_path}'
+          + (f' + {", ".join(args.extra_dailies)}' if args.extra_dailies else '') + ') ...',
+          flush=True)
+    store = load_chain_store(dailies_path, args.extra_dailies)
     days = sorted(store)
     dates, prices = load_unadjusted_prices(ticker, days[0], '2026-06-06')
     pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]

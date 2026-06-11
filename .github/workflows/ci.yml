@@ -61,6 +61,7 @@ jobs:
           path: |
             qqq_option_dailies.csv.gz
             msft_option_dailies.csv.gz
+            msft_option_dailies_2008_2016.csv.gz
           key: chain-data-${{ hashFiles('data_checksums.sha256') }}
 
       - name: Fetch chain data from the data release
