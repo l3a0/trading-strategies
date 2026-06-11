@@ -14,11 +14,16 @@ Two layers:
   net overlay P&L on QQQ loses $157K on real premiums (Newey-West t = -1.78),
   and the proxy's +$270K on MSFT — the series' published $268K headline —
   loses $184K (Newey-West t = -1.73).
+- TestMsftRealWalkForwardRegression: pins the walk-forward optimization on
+  the MSFT chains (walk_forward_real.py, 4-year train, bid/ask fills) —
+  the optimizer's minimum-engagement drift and the chained OOS scoreboard.
+  Same dataset/skip mechanics as the MSFT class above.
 """
 
 from __future__ import annotations
 
 import os
+from collections import Counter
 from typing import Any
 
 import pytest
@@ -30,6 +35,7 @@ from real_cc_backtest import (
     run_real_cc_overlay,
     select_entry,
 )
+from walk_forward_real import FIXED_PARAMS, PARAM_GRID, _chain, walk_forward_real
 
 _DAILIES = os.path.join(os.path.dirname(__file__), 'qqq_option_dailies.csv')
 _UNADJ = os.path.join(os.path.dirname(__file__), 'qqq_10yr_prices_unadjusted.csv')
@@ -330,3 +336,86 @@ class TestMsftRealChainRegression:
         st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
         assert s['net_overlay_pnl'] == pytest.approx(269_948.12, abs=1.0)
         assert st['t_stat_newey_west'] == pytest.approx(0.58, abs=0.02)
+
+
+@pytest.mark.skipif(
+    not _HAVE_MSFT_DAILIES,
+    reason='needs msft_option_dailies.csv or its committed .gz twin',
+)
+class TestMsftRealWalkForwardRegression:
+    """Pin the walk-forward optimization on real MSFT chains (4y train, bid/ask).
+
+    walk_forward_real mirrors walk_forward_optimization's window arithmetic
+    (6-month test/roll, in-sample-Sharpe selection) with run_real_cc_overlay
+    as the engine and a 21/30/45 CALENDAR-day grid. The 4-year train window
+    is the smallest integer size that clears Pardo's ~30-trade sample-size
+    floor for every grid combo: the binding corner — a 45-day call held to
+    expiration — completes at most ~24 cycles in 3 years (3*365/45) but ~32
+    in 4; empirically the leanest 4-year fit runs 33 trades. The price is
+    two fewer OOS windows than the 3-year default (13 -> 11).
+
+    What this locks (2020-04 -> 2025-10 OOS span, per-window $100K restarts,
+    the same convention for all three curves):
+
+    - The optimizer's minimum-engagement drift on real quotes:
+      close_at_pct=1.00 (never pay the ask to take profit early) wins all
+      11 windows, and (0.15 delta, 21-day) is the modal triple.
+    - The scoreboard: walk-forward picks chain to +185.0% OOS vs +114.3%
+      for the fixed published defaults and +184.8% for buy-and-hold — a
+      dead heat with holding the stock (and the heat does not survive mid
+      fills, which are not pinned here). Tuning on real chains is damage
+      control, not edge.
+    """
+
+    @pytest.fixture(scope='class')
+    def market(self) -> tuple[list[str], list[float], dict[str, dict[str, Any]]]:
+        store = load_chain_store(_MSFT_DAILIES)
+        days = sorted(store)
+        dates, prices = load_unadjusted_prices('MSFT', days[0], '2026-06-06')
+        pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
+        return [d for d, _ in pairs], [p for _, p in pairs], store
+
+    @pytest.fixture(scope='class')
+    def records(self, market) -> list[dict[str, Any]]:
+        dates, prices, store = market
+        return walk_forward_real(dates, prices, store, PARAM_GRID,
+                                 fixed_params={**FIXED_PARAMS, 'fill': 'bid_ask'},
+                                 train_years=4)
+
+    def test_window_layout(self, records) -> None:
+        """11 non-overlapping 6-month test windows, 2020-04 -> 2025-10."""
+        assert len(records) == 11
+        assert records[0]['train_start'] == '2016-04-11'
+        assert records[0]['train_end'] == '2020-04-11'
+        assert records[0]['test_start'] == '2020-04-11'
+        assert records[-1]['test_start'] == '2025-04-11'
+        assert records[-1]['test_end'] == '2025-10-11'
+
+    def test_optimizer_choices(self, records) -> None:
+        """close=1.00 in 11/11 windows; (0.15, 21) modal — minimum engagement."""
+        triples = [(r['best_params']['call_delta'], int(r['best_params']['dte']),
+                    r['best_params']['close_at_pct']) for r in records]
+        assert triples == [
+            (0.15, 21, 1.0), (0.15, 21, 1.0), (0.15, 21, 1.0), (0.15, 21, 1.0),
+            (0.15, 45, 1.0), (0.20, 30, 1.0), (0.15, 21, 1.0), (0.15, 21, 1.0),
+            (0.20, 30, 1.0), (0.20, 30, 1.0), (0.20, 30, 1.0),
+        ]
+        assert Counter(t[:2] for t in triples) == {(0.15, 21): 6, (0.20, 30): 4,
+                                                   (0.15, 45): 1}
+        assert records[0]['train_sharpe'] == pytest.approx(1.133, abs=5e-4)
+        assert records[-1]['train_sharpe'] == pytest.approx(0.598, abs=5e-4)
+
+    def test_pardo_floor(self, records) -> None:
+        """Every grid combo clears 30 IS trades in every window (leanest: 33)."""
+        assert all(r['n_below_30'] == 0 for r in records)
+        assert min(r['min_grid_trades'] for r in records) == 33
+        assert [r['n_trades'] for r in records] == [69, 69, 68, 69, 33, 46,
+                                                    70, 70, 46, 46, 46]
+
+    def test_oos_scoreboard(self, records) -> None:
+        """WF +185.0% vs fixed +114.3% vs B&H +184.8%, chained per-window restarts."""
+        assert _chain([r['oos_return_pct'] for r in records]) == pytest.approx(184.97, abs=0.01)
+        assert _chain([r['fixed_return_pct'] for r in records]) == pytest.approx(114.27, abs=0.01)
+        assert _chain([r['bh_return_pct'] for r in records]) == pytest.approx(184.82, abs=0.01)
+        assert sum(r['oos_return_pct'] > r['fixed_return_pct'] for r in records) == 9
+        assert sum(r['oos_return_pct'] > r['bh_return_pct'] for r in records) == 6
