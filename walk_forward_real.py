@@ -206,10 +206,16 @@ def main() -> None:
     ap.add_argument('--extra-dailies', nargs='*', default=[],
                     help='additional dailies CSVs merged into the chain store '
                          '(e.g. msft_option_dailies_2008_2016.csv, the backfill)')
+    ap.add_argument('--stop-loss-mult', type=float, default=None,
+                    help='real-chain stop-loss: buy the call back when its ask reaches '
+                         'this multiple of the premium collected (e.g. 2.0); applied to '
+                         'every train/test run including the fixed-defaults comparator')
     args = ap.parse_args()
     ticker = args.ticker.upper()
     if args.prices == 'proxy' and args.fill is not None:
         ap.error('--fill applies to real chains only (the proxy has its own slippage model)')
+    if args.prices == 'proxy' and args.stop_loss_mult is not None:
+        ap.error('--stop-loss-mult applies to real chains only (no proxy stop rule)')
     fill = args.fill or 'bid_ask'
     dailies_path = f'{ticker.lower()}_option_dailies.csv'
     for p in (dailies_path, *args.extra_dailies):
@@ -234,6 +240,9 @@ def main() -> None:
     else:
         fixed_params = {**FIXED_PARAMS, 'fill': fill}
         engine_tag = f'REAL chains, {fill} fills'
+        if args.stop_loss_mult is not None:
+            fixed_params['stop_loss_mult'] = args.stop_loss_mult
+            engine_tag += f', {args.stop_loss_mult:g}x stop'
     records = walk_forward_real(dates, prices, store, PARAM_GRID,
                                 fixed_params=fixed_params,
                                 train_years=args.train_years,

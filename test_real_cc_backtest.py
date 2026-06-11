@@ -633,3 +633,26 @@ class TestMsftStopLossRegression:
         assert pnl[3.0] == pytest.approx(-232_950.60, abs=1.0)
         # baseline -183,552.34 is pinned by TestMsftRealChainRegression
         assert pnl[1.5] < -251_775.94 < pnl[3.0] < -183_552.34
+
+    def test_walk_forward_cannot_tune_around_the_stop(self, market) -> None:
+        """WF with the 2x stop chains to +154.53% vs +184.97% without (10y, 4y train).
+
+        Given the chance to re-tune in every training window, the optimizer
+        retreats to the grid's minimum-engagement corner — delta 0.15 and
+        close_at_pct 1.00 in 11/11 windows — and still can't make the stop
+        pay: beats-B&H windows drop from 6/11 to 3/11. (The 18-year run
+        tells the same story, +862.80% vs +890.62%, close=1.00 in 28/28 —
+        not pinned here to keep the suite fast.)
+        """
+        dates, prices, store = self._ten_year(market)
+        records = walk_forward_real(dates, prices, store, PARAM_GRID,
+                                    fixed_params={**FIXED_PARAMS, 'fill': 'bid_ask',
+                                                  'stop_loss_mult': 2.0},
+                                    train_years=4)
+        assert len(records) == 11
+        assert _chain([r['oos_return_pct'] for r in records]) == pytest.approx(154.53, abs=0.01)
+        assert _chain([r['fixed_return_pct'] for r in records]) == pytest.approx(110.61, abs=0.01)
+        assert _chain([r['bh_return_pct'] for r in records]) == pytest.approx(184.82, abs=0.01)
+        assert Counter(r['best_params']['call_delta'] for r in records) == {0.15: 11}
+        assert Counter(r['best_params']['close_at_pct'] for r in records) == {1.00: 11}
+        assert sum(r['oos_return_pct'] > r['bh_return_pct'] for r in records) == 3
