@@ -72,7 +72,7 @@ For an explanation of each output line — including what "assignment loss" mean
 
 ## Reality check: real option chains
 
-The engine above has never seen an option chain — it manufactures implied volatility from realized volatility. To measure what that assumption costs, the repo carries real daily chain slices — ten years for QQQ, eighteen for MSFT and SPY (2008–2026, including the GFC and the 2008–2013 sideways era; \~9.2M quotes via Alpha Vantage) — per-roll entry snapshots for six underlyings, and an adapter ([real_cc_backtest.py](real_cc_backtest.py#L139)) that re-runs the identical strategy on traded quotes: sell at the bid, buy back at the ask, real deltas and expirations, unadjusted closes.
+The engine above has never seen an option chain — it manufactures implied volatility from realized volatility. To measure what that assumption costs, the repo carries real daily chain slices — fifteen years for QQQ (2011–2026), eighteen for MSFT and SPY (2008–2026, including the GFC and the 2008–2013 sideways era; \~9.6M quotes via Alpha Vantage) — per-roll entry snapshots for six underlyings, and an adapter ([real_cc_backtest.py](real_cc_backtest.py#L139)) that re-runs the identical strategy on traded quotes: sell at the bid, buy back at the ask, real deltas and expirations, unadjusted closes.
 
 The proxy's results do not survive the trial:
 
