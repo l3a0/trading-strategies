@@ -3,7 +3,7 @@
 [![CI](https://github.com/l3a0/covered-call-backtesting/actions/workflows/ci.yml/badge.svg)](https://github.com/l3a0/covered-call-backtesting/actions/workflows/ci.yml)
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/l3a0/covered-call-backtesting/blob/main/covered_call_backtest.ipynb)
 
-A from-scratch Python backtester for the covered call overlay strategy. Prices options with Black-Scholes (using `math.erf` for high-precision CDF), estimates IV from rolling historical volatility with regime-based multipliers, and simulates day-by-day trade decisions over multi-year price histories.
+A from-scratch Python backtester for the covered call overlay strategy. Prices options with Black-Scholes (using `math.erf` for high-precision CDF), estimates IV from rolling historical volatility with regime-based multipliers, and simulates day-by-day trade decisions over multi-year price histories. A companion adapter re-runs the same strategy on ten years of real option chains — and reverses the headline result; see [Reality check](#reality-check-real-option-chains) below.
 
 ## Quick start
 
@@ -64,21 +64,43 @@ Degrees of Freedom — 3-year in-sample window (Pardo 2008)
 
 The portfolio is sized into whole 100-share contracts at the initial price; any leftover (here, $4,426 of $100K with MSFT at ~$48) sits as 0%-yield cash. Returns are measured against `capital`, so the cash drag is included. To run a single-contract simulation, omit `capital` from `params`.
 
-The bottom block tests whether the overlay's excess return over buy-and-hold is statistically distinguishable from zero, using Newey-West HAC standard errors that correct for the autocorrelation introduced by holding the same option position across multiple days. On this MSFT sample the t-stat is 0.46 — well below the conventional significance bar of 2 — meaning the $268K of headline overlay P&L isn't reliably distinguishable from noise. See the [tutorial's Part 5](tutorial_covered_call_backtest.md#part-5-robustness-checks--proving-its-not-luck) for the full reasoning.
+The bottom block tests whether the overlay's excess return over buy-and-hold is statistically distinguishable from zero, using Newey-West HAC standard errors that correct for the autocorrelation introduced by holding the same option position across multiple days. On this MSFT sample the t-stat is 0.46 — well below the conventional significance bar of 2 — meaning the $268K of headline overlay P&L isn't reliably distinguishable from noise. On real option chains the verdict is harsher still: the same overlay run on traded quotes *loses* $183,552 (see [Reality check](#reality-check-real-option-chains)). See the [tutorial's Part 5](tutorial_covered_call_backtest.md#part-5-robustness-checks--proving-its-not-luck) for the full significance reasoning.
 
 The final block reports Robert Pardo's degrees-of-freedom check for the default 3-year walk-forward training window. Both checks pass: the bar-level test (756 observations minus 3 free parameters and a 30-bar indicator lookback leaves 95.6% free, above Pardo's ~90% floor) and — the binding one — the ~30-trade sample-size floor, which the 3-year window clears (median 36 trades). The window is sized to 3 years precisely for that: a 2-year window leaves the median grid fit at ~24 trades, short of the floor. Note this is necessary, not sufficient — a clean DOF check means the model isn't over-parameterized, not that the edge is real (the t-stat above settles that). See [tutorial Part 4](tutorial_covered_call_backtest.md#part-4-walk-forward-optimization).
 
 For an explanation of each output line — including what "assignment loss" means and why buybacks can dominate the overlay's gross premium income — see the [tutorial](tutorial_covered_call_backtest.md) (its Glossary defines the terms; Part 3 walks through the trade-by-trade math).
 
+## Reality check: real option chains
+
+The engine above has never seen an option chain — it manufactures implied volatility from realized volatility. To measure what that assumption costs, the repo carries ten years of real daily chain slices for MSFT and QQQ (\~3.9M quotes via Alpha Vantage), per-roll entry snapshots for six underlyings, and an adapter ([real_cc_backtest.py](real_cc_backtest.py#L122)) that re-runs the identical strategy on traded quotes: sell at the bid, buy back at the ask, real deltas and expirations, unadjusted closes.
+
+The proxy's results do not survive the trial:
+
+| Net overlay P&L, 2016–2026 | Proxy (same series) | Real chains | NW t-stat (real) |
+| --- | --- | --- | --- |
+| MSFT | +$269,948 | **−$183,552** | −1.73 |
+| QQQ | +$120,217 | **−$156,628** | −1.78 |
+
+(The proxy column re-runs the engine on the unadjusted series the chains require. The sample output above — the published $268,424.87 — is the same engine on the dividend-adjusted series; the dollar proximity between the two is partly coincidental, the verdict identical.)
+
+The loss anatomy is the same on both underlyings: profit-target wins (MSFT: 122 closes, +$429K) overwhelmed by deep-ITM forced buybacks (54 closes, −$611K). The driver differs by instrument. On QQQ, mid-quote fills recover only \~$12K of the loss — the premium economics are simply absent. On MSFT, mid fills recover \~$108K (single-name spreads are expensive), but the overlay still loses $76K with the spread given away for free. Across all six underlyings sampled (QQQ, MSFT, SPY, IWM, GLD, TLT), the proxy inflates IV 1.27–1.56× and same-contract premiums 1.55–2.33×, worst where realized volatility is lowest.
+
+```bash
+./fetch_option_data.sh            # pull the chain datasets from the data release (checksum-verified)
+python real_cc_backtest.py MSFT   # REAL vs PROXY side by side (also: QQQ)
+```
+
+Every number in this section is pinned by `TestMsftRealChainRegression` and `TestQqqRealChainRegression` in [test_real_cc_backtest.py](test_real_cc_backtest.py), which CI runs against the same checksum-verified datasets.
+
 ## Tests
 
 ```bash
-pytest test_cc_backtest.py          # run the full test suite
-pytest test_cc_backtest.py -v       # verbose
-pytest --cov=. --cov-branch         # with coverage
+pytest test_cc_backtest.py          # the engine suite
+pytest test_real_cc_backtest.py     # the real-chain adapter (pins skip without the datasets)
+pytest --cov=. --cov-branch         # everything, with coverage
 ```
 
-CI runs `ruff`, `pyright`, the test suite, and a backtest smoke test on every PR — see [.github/workflows/ci.yml](.github/workflows/ci.yml).
+CI runs `ruff`, `pyright`, both test suites (fetching the checksum-verified chain datasets so the real-chain pins run, not skip), a backtest smoke test, a figure-regeneration check, and a notebook drift check on every PR — see [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
 ## Project layout
 
@@ -86,10 +108,16 @@ CI runs `ruff`, `pyright`, the test suite, and a backtest smoke test on every PR
 | --- | --- |
 | [cc_backtest.py](cc_backtest.py#L201) | Backtest engine: Black-Scholes pricing, rolling vol, regime-based IV, day-by-day overlay state machine, Newey-West t-stat reporting on excess returns |
 | [test_cc_backtest.py](test_cc_backtest.py#L38) | Unit and scenario tests covering pricing, the overlay state machine, and the statistics helper |
+| [real_cc_backtest.py](real_cc_backtest.py#L122) | Real-chain adapter: the same overlay on traded option quotes (bid entries, ask buybacks, real deltas and expirations), printed REAL vs PROXY |
+| [test_real_cc_backtest.py](test_real_cc_backtest.py) | Adapter unit tests plus the MSFT/QQQ real-chain regression pins (skip when the datasets are absent) |
 | [download_prices.py](download_prices.py#L11) | yfinance data downloader |
+| [download_option_chains.py](download_option_chains.py) | Alpha Vantage fetcher for per-roll entry snapshots (one target call per monthly roll, six tickers) |
+| [download_option_dailies.py](download_option_dailies.py) | Alpha Vantage fetcher for daily chain slices — the datasets `real_cc_backtest.py` consumes |
+| [fetch_option_data.sh](fetch_option_data.sh) | Pulls the big chain datasets from the `data-2026-06` release and verifies them against [data_checksums.sha256](data_checksums.sha256) |
 | [make_figures.py](make_figures.py#L888) | Regenerates the tutorial and blog figures (`fig1`–`fig13`) into `docs/figures/` |
 | [make_notebook.py](make_notebook.py#L1) | Regenerates the runnable notebook from the tutorial markdown + figure script |
 | [msft_10yr_prices.csv](msft_10yr_prices.csv) | Sample MSFT price data, 2016-04 to 2026-04 |
+| [msft_10yr_prices_unadjusted.csv](msft_10yr_prices_unadjusted.csv) / [qqq_10yr_prices_unadjusted.csv](qqq_10yr_prices_unadjusted.csv) | Unadjusted closes (actual traded prices, matching option strikes) for the real-chain runs |
 | [tutorial_covered_call_backtest.md](tutorial_covered_call_backtest.md) | Long-form tutorial — theory, math, code walkthrough, and statistical-significance testing |
 | [covered_call_backtest.ipynb](covered_call_backtest.ipynb) | Runnable notebook companion to the tutorial — open in Colab via the badge above, or generate locally with `python make_notebook.py` |
 | [docs/figures/](docs/figures/) | Generated PNGs embedded in the tutorial; regenerable from `make_figures.py` |
@@ -115,6 +143,6 @@ IV is no longer a tunable param — it's derived from rolling 30-day historical 
 
 This is an educational backtester, not a production trading system. Notable limitations:
 
-- IV is estimated, not real (no historical option chain data).
+- The engine's IV is estimated, not real — and the [Reality check](#reality-check-real-option-chains) above quantifies the cost: on real chains the proxy's premiums prove 1.55–2.33× too rich, and both flagship results flip from profit to loss.
 - No earnings-week avoidance, no dividend handling, no rolling logic.
 - Single-stock, single-period results — see the tutorial's robustness section for how to evaluate generalizability.

@@ -180,6 +180,16 @@ def run_real_cc_overlay(
         else:
             if date >= position['expiration']:
                 # Real expiration: settle against the unadjusted close.
+                # Settlement must land ON the expiration date — every
+                # expiration in the shipped datasets is a trading day
+                # (verified lag-0 for all settled positions). If a future
+                # dataset carries a weekend/holiday-dated expiry, settling
+                # against a LATER close would misprice the payoff, so fail
+                # loudly instead of silently drifting the convention.
+                assert date == position['expiration'], (
+                    f'settlement {date} after expiration '
+                    f'{position["expiration"]} — non-trading-day expiry?'
+                )
                 if price >= position['strike']:
                     pnl = (position['premium_collected'] - (price - position['strike'])) * shares
                 else:
