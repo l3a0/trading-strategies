@@ -27,6 +27,10 @@ Two layers:
   the short call at a multiple of the premium collected) — the stop makes
   the loss WORSE at every level and monotonically worse as it tightens
   (whipsaw on a trending stock), on both the 10- and 18-year spans.
+- TestSpyRealWalkForwardRegression: pins the SPY 18-year walk-forward on
+  real chains (28 windows, 4-year train): tuned overlay +214% chained OOS
+  vs +292% buy-and-hold, beating it in only 8/28 windows. Requires
+  spy_option_dailies.csv[.gz] (same release/CI mechanics).
 """
 
 from __future__ import annotations
@@ -58,6 +62,10 @@ _MSFT_BACKFILL = os.path.join(os.path.dirname(__file__),
                               'msft_option_dailies_2008_2016.csv')
 _HAVE_MSFT_BACKFILL = (os.path.exists(_MSFT_BACKFILL)
                        or os.path.exists(_MSFT_BACKFILL + '.gz'))
+
+_SPY_DAILIES = os.path.join(os.path.dirname(__file__), 'spy_option_dailies.csv')
+_HAVE_SPY_DAILIES = (os.path.exists(_SPY_DAILIES)
+                     or os.path.exists(_SPY_DAILIES + '.gz'))
 
 _PARAMS: dict[str, float] = {
     'call_delta': 0.25,
@@ -656,3 +664,75 @@ class TestMsftStopLossRegression:
         assert Counter(r['best_params']['call_delta'] for r in records) == {0.15: 11}
         assert Counter(r['best_params']['close_at_pct'] for r in records) == {1.00: 11}
         assert sum(r['oos_return_pct'] > r['bh_return_pct'] for r in records) == 3
+
+
+@pytest.mark.skipif(
+    not _HAVE_SPY_DAILIES,
+    reason='needs spy_option_dailies.csv or its committed .gz twin',
+)
+class TestSpyRealWalkForwardRegression:
+    """Pin the SPY 18-year walk-forward on real chains (4y train, bid/ask).
+
+    Third underlying, same verdict: across 28 half-year test windows
+    (2012-01 -> 2026-01) the tuned covered call chains to +214% OOS vs
+    +292% for buy-and-hold, beating it in only 8/28 windows. SPY-specific
+    wrinkle worth keeping pinned: the optimizer is LESS extreme here than
+    on MSFT — 0.25 delta wins 12/28 windows (index premiums are lean but
+    spreads are tight, so moderate deltas punish less) — while close=1.00
+    still dominates at 24/28. Every grid fit clears the Pardo 30-trade
+    floor in every window (leanest 34).
+
+    The proxy twin (deliberately NOT pinned, per review scope) claims the
+    opposite on the same series: +687% chained, beating B&H in 27/28
+    windows — the starkest real-vs-proxy inversion in the repo. If that
+    comparison is ever published, pin it first.
+
+    Data: spy_option_dailies.csv.gz ships on the data-2026-06 release
+    (checksum-verified by CI); the unadjusted close series is committed in
+    git like the other tickers'.
+    """
+
+    @pytest.fixture(scope='class')
+    def records(self) -> list[dict[str, Any]]:
+        store = load_chain_store(_SPY_DAILIES)
+        days = sorted(store)
+        dates, prices = load_unadjusted_prices('SPY', days[0], '2026-06-06')
+        pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
+        return walk_forward_real([d for d, _ in pairs], [p for _, p in pairs], store,
+                                 PARAM_GRID,
+                                 fixed_params={**FIXED_PARAMS, 'fill': 'bid_ask'},
+                                 train_years=4)
+
+    def test_window_layout(self, records) -> None:
+        """28 non-overlapping 6-month test windows, 2012-01 -> 2026-01."""
+        assert len(records) == 28
+        assert records[0]['train_start'] == '2008-01-02'
+        assert records[0]['test_start'] == '2012-01-02'
+        assert records[-1]['test_start'] == '2025-07-02'
+        assert records[-1]['test_end'] == '2026-01-02'
+
+    def test_optimizer_choices(self, records) -> None:
+        """Delta is less extreme than MSFT's (0.25 wins 12/28); close=1.00 still rules."""
+        assert Counter(r['best_params']['call_delta'] for r in records) == \
+            {0.15: 8, 0.20: 8, 0.25: 12}
+        assert Counter(int(r['best_params']['dte']) for r in records) == \
+            {21: 15, 30: 8, 45: 5}
+        assert Counter(r['best_params']['close_at_pct'] for r in records) == \
+            {1.00: 24, 0.50: 3, 0.75: 1}
+        assert records[0]['best_params'] == {'call_delta': 0.20, 'dte': 30,
+                                             'close_at_pct': 1.00}
+        assert records[0]['train_sharpe'] == pytest.approx(0.106, abs=5e-4)
+        assert records[-1]['train_sharpe'] == pytest.approx(0.678, abs=5e-4)
+
+    def test_pardo_floor(self, records) -> None:
+        """Every grid combo clears 30 IS trades in every window (leanest: 34)."""
+        assert all(r['n_below_30'] == 0 for r in records)
+        assert min(r['n_trades'] for r in records) == 34
+
+    def test_oos_scoreboard(self, records) -> None:
+        """WF +214.1% vs fixed +184.3% vs B&H +291.7%; beats B&H in 8/28."""
+        assert _chain([r['oos_return_pct'] for r in records]) == pytest.approx(214.13, abs=0.01)
+        assert _chain([r['fixed_return_pct'] for r in records]) == pytest.approx(184.28, abs=0.01)
+        assert _chain([r['bh_return_pct'] for r in records]) == pytest.approx(291.71, abs=0.01)
+        assert sum(r['oos_return_pct'] > r['fixed_return_pct'] for r in records) == 19
+        assert sum(r['oos_return_pct'] > r['bh_return_pct'] for r in records) == 8
