@@ -18,6 +18,11 @@ Two layers:
   the MSFT chains (walk_forward_real.py, 4-year train, bid/ask fills) —
   the optimizer's minimum-engagement drift and the chained OOS scoreboard.
   Same dataset/skip mechanics as the MSFT class above.
+- TestMsftExtendedSpanRegression: pins the 18-year run (2008-2026) on the
+  merged canonical + backfill chains — the GFC and the 2008-2013 sideways
+  era do not rescue the overlay (net -$324K, NW t = -1.14, vs the proxy's
+  +$460K on the same series). Additionally requires
+  msft_option_dailies_2008_2016.csv[.gz] (same release/CI mechanics).
 """
 
 from __future__ import annotations
@@ -44,6 +49,11 @@ _HAVE_DAILIES = os.path.exists(_DAILIES) or os.path.exists(_DAILIES + '.gz')
 _MSFT_DAILIES = os.path.join(os.path.dirname(__file__), 'msft_option_dailies.csv')
 _HAVE_MSFT_DAILIES = (os.path.exists(_MSFT_DAILIES)
                       or os.path.exists(_MSFT_DAILIES + '.gz'))
+
+_MSFT_BACKFILL = os.path.join(os.path.dirname(__file__),
+                              'msft_option_dailies_2008_2016.csv')
+_HAVE_MSFT_BACKFILL = (os.path.exists(_MSFT_BACKFILL)
+                       or os.path.exists(_MSFT_BACKFILL + '.gz'))
 
 _PARAMS: dict[str, float] = {
     'call_delta': 0.25,
@@ -207,11 +217,17 @@ class TestQqqRealChainRegression:
         assert st['passes_t_2'] is False
 
     def test_mid_fill_variant(self, market) -> None:
-        """Mid fills recover only ~$12K of the loss: spread is not the driver."""
+        """Mid fills recover only ~$12K of the loss: spread is not the driver.
+
+        Re-pinned -144,744.30 -> -144,735.30 (a $9 shift) when the loader
+        gained the mark sanity clamp: ~0.14% of QQQ rows carried marks
+        outside [bid, ask], and mid fills trade at the mark. The bid/ask
+        pins were unaffected.
+        """
         dates, prices, store = market
         s, _, eq = run_real_cc_overlay(dates, prices, store, {**_PARAMS, 'fill': 'mid'})
         st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
-        assert s['net_overlay_pnl'] == pytest.approx(-144_744.30, abs=1.0)
+        assert s['net_overlay_pnl'] == pytest.approx(-144_735.30, abs=1.0)
         assert s['num_calls_sold'] == 210
         assert st['t_stat_newey_west'] == pytest.approx(-1.76, abs=0.02)
 
@@ -419,3 +435,112 @@ class TestMsftRealWalkForwardRegression:
         assert _chain([r['bh_return_pct'] for r in records]) == pytest.approx(184.82, abs=0.01)
         assert sum(r['oos_return_pct'] > r['fixed_return_pct'] for r in records) == 9
         assert sum(r['oos_return_pct'] > r['bh_return_pct'] for r in records) == 6
+
+
+@pytest.mark.skipif(
+    not (_HAVE_MSFT_DAILIES and _HAVE_MSFT_BACKFILL),
+    reason='needs msft_option_dailies.csv and msft_option_dailies_2008_2016.csv '
+           '(or their .gz twins)',
+)
+class TestMsftExtendedSpanRegression:
+    """Pin the 18-year MSFT run (2008-01 -> 2026-04) on merged real chains.
+
+    The 2008-2016 backfill exists to answer one question: was the 'no edge'
+    verdict an artifact of testing a covered call on a 10x bull run? The
+    extended span adds the GFC crash and the 2008-2013 sideways era — the
+    regime covered calls are supposedly for — and the verdict survives:
+    the overlay loses MORE (-$324K vs -$184K on the 10-year span), premium
+    retention is negative, and the same proxy engine on the same series
+    still reports +$460K. The walk-forward (28 windows, 4-year train, every
+    grid fit above the Pardo floor) chains to +891% OOS vs +1,410% for
+    buy-and-hold.
+
+    These runs exercise the two era-specific engine paths: pre-2015
+    Saturday-dated expirations settle against the prior Friday close, and
+    the mark sanity clamp rewrites the 2008-2010 degenerate marks. The
+    backfill ships on the same data-2026-06 release with the same
+    checksum/CI mechanics as the canonical datasets; the class skips when
+    either file is absent.
+    """
+
+    @pytest.fixture(scope='class')
+    def market(self) -> tuple[list[str], list[float], dict[str, dict[str, Any]]]:
+        store = load_chain_store(_MSFT_DAILIES, [_MSFT_BACKFILL])
+        days = sorted(store)
+        dates, prices = load_unadjusted_prices('MSFT', days[0], '2026-06-06')
+        pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
+        return [d for d, _ in pairs], [p for _, p in pairs], store
+
+    @pytest.fixture(scope='class')
+    def real(self, market) -> tuple[dict[str, Any], list[dict[str, Any]], Any]:
+        dates, prices, store = market
+        return run_real_cc_overlay(dates, prices, store, _PARAMS)
+
+    def test_span(self, market) -> None:
+        """4,597 trading days, 2008-01-02 -> 2026-04-10, gap-free merge."""
+        dates, _, store = market
+        assert (dates[0], dates[-1], len(dates)) == ('2008-01-02', '2026-04-10', 4597)
+        assert len(store) == 4592  # chain days (a handful of price days lack chains)
+
+    def test_overlay_headline(self, real) -> None:
+        """Net overlay -$324K over 18 years: more history, bigger loss."""
+        s, _, _ = real
+        assert s['num_contracts'] == 28
+        assert s['net_overlay_pnl'] == pytest.approx(-323_996.45, abs=1.0)
+        assert s['total_premium_collected'] == pytest.approx(1_389_134.60, abs=1.0)
+        assert s['final_equity'] == pytest.approx(715_823.53, abs=1.0)
+        assert s['total_return_pct'] == pytest.approx(615.82, abs=0.05)
+        assert s['buy_hold_return_pct'] == pytest.approx(939.82, abs=0.05)
+        assert s['premium_retention_pct'] == pytest.approx(-23.3, abs=0.1)
+        assert s['max_drawdown_pct'] == pytest.approx(50.52, abs=0.05)
+
+    def test_activity(self, real) -> None:
+        """377 calls; the 11 expirations include Saturday-settled pre-2015 cycles."""
+        s, trades, _ = real
+        assert s['num_calls_sold'] == 377
+        assert (s['wins'], s['losses']) == (240, 136)
+        actions = [t['action'] for t in trades]
+        assert actions.count('close') == 226
+        assert actions.count('close_itm') == 139
+        assert actions.count('expiration') == 11
+
+    def test_significance(self, real) -> None:
+        """NW t = -1.14: no edge, sign negative, 18 years of data."""
+        s, _, eq = real
+        st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
+        assert st['t_stat_newey_west'] == pytest.approx(-1.14, abs=0.02)
+        assert st['sharpe_excess'] == pytest.approx(-0.251, abs=0.005)
+        assert st['passes_t_2'] is False
+
+    def test_proxy_same_series(self, real, market) -> None:
+        """The proxy on the identical 18-year series: +$460K — a $784K swing."""
+        dates, prices, _ = market
+        import numpy as np
+        s, _, eq = run_cc_overlay(dates, np.array(prices),
+                                  {**_PARAMS, 'dte': 21})  # engine dte is trading days
+        st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
+        assert s['net_overlay_pnl'] == pytest.approx(460_188.49, abs=1.0)
+        assert s['num_calls_sold'] == 348
+        assert st['t_stat_newey_west'] == pytest.approx(-0.16, abs=0.02)
+
+    def test_walk_forward(self, market) -> None:
+        """28 windows, all Pardo floors clear; WF +891% vs B&H +1,410% chained."""
+        dates, prices, store = market
+        records = walk_forward_real(dates, prices, store, PARAM_GRID,
+                                    fixed_params={**FIXED_PARAMS, 'fill': 'bid_ask'},
+                                    train_years=4)
+        assert len(records) == 28
+        assert records[0]['train_start'] == '2008-01-02'
+        assert records[0]['test_start'] == '2012-01-02'
+        assert records[-1]['test_end'] == '2026-01-02'
+        assert all(r['n_below_30'] == 0 for r in records)
+        assert min(r['n_trades'] for r in records) == 33
+        assert _chain([r['oos_return_pct'] for r in records]) == pytest.approx(890.62, abs=0.01)
+        assert _chain([r['fixed_return_pct'] for r in records]) == pytest.approx(548.14, abs=0.01)
+        assert _chain([r['bh_return_pct'] for r in records]) == pytest.approx(1410.41, abs=0.01)
+        assert sum(r['oos_return_pct'] > r['fixed_return_pct'] for r in records) == 19
+        assert sum(r['oos_return_pct'] > r['bh_return_pct'] for r in records) == 12
+        deltas = Counter(r['best_params']['call_delta'] for r in records)
+        closes = Counter(r['best_params']['close_at_pct'] for r in records)
+        assert deltas == {0.15: 16, 0.20: 9, 0.25: 3}
+        assert closes == {1.00: 19, 0.75: 9}

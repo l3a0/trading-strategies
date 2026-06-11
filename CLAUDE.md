@@ -254,7 +254,7 @@ Before reporting a code change done, run:
 rg '\.py#L\d+' README.md tutorial_covered_call_backtest.md blog/*.md
 
 # Every symbol name cited in prose — confirm names still exist in code
-rg -n '(run_cc_overlay|compute_statistics|calc_rolling_volatility|estimate_iv|detect_regime|find_strike_for_delta|classify_regime|regime_analysis|walk_forward_optimization|walk_forward_real|_param_combinations|degrees_of_freedom|monte_carlo_shuffle|sensitivity_analysis|risk_free_rate|TestScenario\w*|TestDegreesOfFreedom|TestMsftTenYearRegression|TestRiskManagedCoveredCall|TestMsftRiskManagedRegression|TestQqqTenYearRegression|TestQqqRiskManagedRegression|TestQqqRealChainRegression|TestMsftRealChainRegression|TestMsftRealWalkForwardRegression|run_real_cc_overlay)' README.md tutorial_covered_call_backtest.md blog/*.md
+rg -n '(run_cc_overlay|compute_statistics|calc_rolling_volatility|estimate_iv|detect_regime|find_strike_for_delta|classify_regime|regime_analysis|walk_forward_optimization|walk_forward_real|_param_combinations|degrees_of_freedom|monte_carlo_shuffle|sensitivity_analysis|risk_free_rate|TestScenario\w*|TestDegreesOfFreedom|TestMsftTenYearRegression|TestRiskManagedCoveredCall|TestMsftRiskManagedRegression|TestQqqTenYearRegression|TestQqqRiskManagedRegression|TestQqqRealChainRegression|TestMsftRealChainRegression|TestMsftRealWalkForwardRegression|TestMsftExtendedSpanRegression|run_real_cc_overlay)' README.md tutorial_covered_call_backtest.md blog/*.md
 
 # Every figure embed (blog ../docs/… and tutorial docs/…) resolves to a real PNG
 for f in blog/*.md tutorial_covered_call_backtest.md; do
@@ -283,6 +283,19 @@ End any code-change response with a short **Consistency sweep** note listing wha
 ### When to skip
 
 Pure-internal refactors that don't move line numbers and don't change observable behavior (renaming a local variable inside a function body, reordering imports). Say "no prose-facing surfaces affected" so it's clear the check was considered, not forgotten.
+
+---
+
+## Option-Chain Data Pipeline
+
+The real-chain datasets are the one asset in this repo that costs money to replace: Alpha Vantage's `HISTORICAL_OPTIONS` endpoint is premium-gated, its history floor is 2008-01-01 (earlier dates return empty chains, not errors), and the 2008–2012 era is rare at retail prices. Price CSVs, by contrast, are free-regenerable from yfinance and live in git. Every dataset change follows this lifecycle:
+
+- **Naming & pin protection.** Canonical files `{ticker}_option_dailies.csv[.gz]` carry the published, pinned spans. **Never append to a canonical file** — every pinned regression clips its run to the canonical store's span, so extending the file silently re-pins every published number. Backfills are separate `{ticker}_option_dailies_<era>.csv[.gz]` files (e.g. `msft_option_dailies_2008_2016.csv`); extended-span analyses merge at load time (`load_chain_store(path, extra_paths)`, `--extra-dailies` on `walk_forward_real.py`, extra argv paths to `real_cc_backtest.py`).
+- **Fetching.** `download_option_dailies.py` — resumable (skips days already present), needs a trading-day calendar CSV (`--dates-from`, e.g. a `{ticker}_20yr_prices.csv` from `download_prices.py`) and `ALPHAVANTAGE_API_KEY` in the environment (premium tier, \~75 req/min, default 0.85s sleep). Always wrap in a retry loop: the fetcher catches API-level errors but dies on socket timeouts, and re-running resumes cleanly. Run fetches **sequentially — one ticker to completion before the next starts** (shared rate budget; standing user preference).
+- **Era gotchas** (handled in code; re-verify in any new dataset): pre-Feb-2015 standard expirations are **Saturday-dated** — `run_real_cc_overlay` settles against the last close on or before expiration (today's close for modern trading-day expiries, Friday's for Saturday expiries, Thursday's in Good-Friday weeks; asserts the gap ≤ 4 calendar days). 2008–2010 **marks can sit outside [bid, ask]** — `load_chain_store` clamps those to the quote midpoint (even the modern files carry a 0.05–0.14% tail of these). **Monthlies-only listings ≲2011** coarsen DTE targeting (best-available |dte−30| ran a median \~8 days off target in 2008–2012).
+- **Validation battery** before shipping any dataset: coverage vs. the trading calendar (expect zero missing days), Saturday-expiry counts by era, mark-outside-quote counts by year, zero-bid rates, and per-day entry-band availability (`bid > 0`, `0.05 < delta < 0.60`).
+- **Publishing:** `gzip -k -9` the CSV → append its sha256 to `data_checksums.sha256` → `gh release upload data-2026-06 <file>.gz` → add the filename to the CI cache `path` list in `ci.yml` and confirm the fetch glob `*_option_dailies*.csv.gz` (ci.yml + fetch_option_data.sh) matches the new name — backfill names like `msft_option_dailies_2008_2016.csv.gz` do NOT match the narrower `*_option_dailies.csv.gz`, which broke CI once (PR #5) — → round-trip verify by downloading **with the same glob CI uses** (an exact-name download can mask a glob miss) and running `shasum -a 256 -c` → copy the `.gz` + checksums file to the personal cold-storage folder (location lives in private memory, deliberately not in this file — CLAUDE.md is carried by the public mirror).
+- **Recovery story** (why the ceremony): release assets are the primary Alpha-Vantage-independent home; cold storage survives account-level mishaps; checksums protect *integrity*, not *existence*. The real-chain tests skip rather than fail when datasets are absent, so a fresh clone still runs the engine suite without any of this.
 
 ---
 

@@ -25,3 +25,6 @@ htmlcov/
 .claude/settings.local.json
 *_option_dailies.csv
 *_option_dailies.csv.gz
+# backfill datasets (release assets, e.g. msft_option_dailies_2008_2016.csv[.gz])
+*_option_dailies_*.csv
+*_option_dailies_*.csv.gz

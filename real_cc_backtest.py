@@ -20,6 +20,7 @@ unadjusted close series (auto-downloaded to {ticker}_10yr_prices_unadjusted.csv)
 
 Usage:
     python real_cc_backtest.py QQQ
+    python real_cc_backtest.py MSFT msft_option_dailies_2008_2016.csv   # merge a backfill
 """
 
 from __future__ import annotations
@@ -29,7 +30,8 @@ import gzip
 import io
 import os
 import sys
-from typing import Any, TextIO
+from datetime import datetime
+from typing import Any, Sequence, TextIO
 
 import pandas as pd
 
@@ -78,30 +80,45 @@ def load_unadjusted_prices(ticker: str, start: str, end: str) -> tuple[list[str]
     return dates, closes
 
 
-def load_chain_store(path: str) -> dict[str, dict[str, Any]]:
-    """One pass over the dailies CSV -> per-date entry candidates + mark index.
+def load_chain_store(
+    path: str, extra_paths: Sequence[str] = ()
+) -> dict[str, dict[str, Any]]:
+    """One pass over the dailies CSV(s) -> per-date entry candidates + mark index.
 
     Returns {date: {'candidates': [(dte, delta, bid, ask, mid, expiration,
     strike, contractID), ...], 'marks': {contractID: (bid, ask, mid, delta)}}}.
+
+    `extra_paths` merge additional dailies CSVs into the same store (e.g. the
+    2008-2016 MSFT backfill alongside the canonical 2016-2026 file); the
+    per-date setdefault makes the merge order-independent.
+
+    Mark sanity clamp: a quoted mark outside [bid, ask] is bad vendor data —
+    the 2008-2010 era of the backfill carries marks like 0.01 on a
+    10.15/10.35 quote — so out-of-band marks are replaced by the quote
+    midpoint. The canonical 2016+ files carry a small tail of these too
+    (0.05-0.14% of rows), so the clamp applies uniformly, not per-era.
     """
     store: dict[str, dict[str, Any]] = {}
-    with open_dailies(path) as f:
-        for r in csv.DictReader(f):
-            d = r['date']
-            try:
-                dte = int(r['dte'])
-                delta = float(r['delta'])
-                bid = float(r['bid'])
-                ask = float(r['ask'])
-                mid = float(r['mark'])
-                strike = float(r['strike'])
-            except (TypeError, ValueError):
-                continue
-            day = store.setdefault(d, {'candidates': [], 'marks': {}})
-            day['candidates'].append(
-                (dte, delta, bid, ask, mid, r['expiration'], strike, r['contractID'])
-            )
-            day['marks'][r['contractID']] = (bid, ask, mid, delta)
+    for p in (path, *extra_paths):
+        with open_dailies(p) as f:
+            for r in csv.DictReader(f):
+                d = r['date']
+                try:
+                    dte = int(r['dte'])
+                    delta = float(r['delta'])
+                    bid = float(r['bid'])
+                    ask = float(r['ask'])
+                    mid = float(r['mark'])
+                    strike = float(r['strike'])
+                except (TypeError, ValueError):
+                    continue
+                if not (bid <= mid <= ask):
+                    mid = (bid + ask) / 2
+                day = store.setdefault(d, {'candidates': [], 'marks': {}})
+                day['candidates'].append(
+                    (dte, delta, bid, ask, mid, r['expiration'], strike, r['contractID'])
+                )
+                day['marks'][r['contractID']] = (bid, ask, mid, delta)
     return store
 
 
@@ -149,6 +166,8 @@ def run_real_cc_overlay(
     wins = losses = 0
     trades: list[dict[str, Any]] = []
     daily_rows: list[dict[str, Any]] = []
+    prev_date: str | None = None
+    prev_price: float | None = None
 
     for i, (date, price) in enumerate(zip(dates, prices)):
         day = store.get(date)
@@ -179,25 +198,44 @@ def run_real_cc_overlay(
                                        'pnl': 0, 'realized_pnl': realized_pnl})
         else:
             if date >= position['expiration']:
-                # Real expiration: settle against the unadjusted close.
-                # Settlement must land ON the expiration date — every
-                # expiration in the shipped datasets is a trading day
-                # (verified lag-0 for all settled positions). If a future
-                # dataset carries a weekend/holiday-dated expiry, settling
-                # against a LATER close would misprice the payoff, so fail
-                # loudly instead of silently drifting the convention.
-                assert date == position['expiration'], (
-                    f'settlement {date} after expiration '
-                    f'{position["expiration"]} — non-trading-day expiry?'
-                )
-                if price >= position['strike']:
-                    pnl = (position['premium_collected'] - (price - position['strike'])) * shares
+                # Real expiration: settle against the unadjusted close of the
+                # last trading day ON or BEFORE the expiration date. Every
+                # expiration in the 2016+ datasets is a trading day, so this
+                # is today's close — identical to the original lag-0
+                # convention, and the pinned regressions hold. Pre-Feb-2015
+                # standard expirations are SATURDAY-dated (the old listing
+                # convention), so the first loop date past expiration is the
+                # following Monday: settle against Friday's close, the last
+                # day the option traded (a Good-Friday week settles against
+                # Thursday's, for the same reason). A gap larger than a long
+                # weekend means corrupt data, so fail loudly on that instead.
+                if date == position['expiration']:
+                    settle_price = price
+                else:
+                    assert prev_date is not None and prev_price is not None, (
+                        f'position expired {position["expiration"]} before the '
+                        f'first trading day of the series'
+                    )
+                    assert prev_date <= position['expiration'], (
+                        f'last close {prev_date} is after expiration '
+                        f'{position["expiration"]} — settlement logic error'
+                    )
+                    gap = (datetime.strptime(position['expiration'], '%Y-%m-%d')
+                           - datetime.strptime(prev_date, '%Y-%m-%d')).days
+                    assert gap <= 4, (
+                        f'{gap} calendar days between last close {prev_date} and '
+                        f'expiration {position["expiration"]} — missing data?'
+                    )
+                    settle_price = prev_price
+                if settle_price >= position['strike']:
+                    pnl = (position['premium_collected']
+                           - (settle_price - position['strike'])) * shares
                 else:
                     pnl = position['premium_collected'] * shares
                 realized_pnl += pnl
                 wins, losses = (wins + 1, losses) if pnl >= 0 else (wins, losses + 1)
                 position = None
-                trades.append({'date': date, 'price': price, 'action': 'expiration',
+                trades.append({'date': date, 'price': settle_price, 'action': 'expiration',
                                'pnl': pnl, 'realized_pnl': realized_pnl})
             else:
                 quote = day['marks'].get(position['contract']) if day else None
@@ -225,6 +263,7 @@ def run_real_cc_overlay(
         if position is not None:
             equity += (position['premium_collected'] - position['last_mid']) * shares
         daily_rows.append({'date': date, 'equity': round(equity, 2), 'price': price})
+        prev_date, prev_price = date, price
 
     daily_equity = pd.DataFrame(daily_rows, columns=['date', 'equity', 'price'])
     final_equity = float(daily_equity['equity'].iloc[-1])
@@ -264,9 +303,11 @@ def run_real_cc_overlay(
 
 def main() -> None:
     ticker = (sys.argv[1] if len(sys.argv) > 1 else 'QQQ').upper()
+    extra_dailies = sys.argv[2:]  # e.g. msft_option_dailies_2008_2016.csv (the backfill)
     dailies_path = f'{ticker.lower()}_option_dailies.csv'
-    if not (os.path.exists(dailies_path) or os.path.exists(dailies_path + '.gz')):
-        sys.exit(f'{dailies_path}[.gz] not found — run download_option_dailies.py first')
+    for p in (dailies_path, *extra_dailies):
+        if not (os.path.exists(p) or os.path.exists(p + '.gz')):
+            sys.exit(f'{p}[.gz] not found — run download_option_dailies.py first')
 
     params = {'call_delta': 0.25, 'close_at_pct': 0.75, 'dte': 21,
               'risk_free_rate': 0.045, 'capital': 100_000}
@@ -275,8 +316,9 @@ def main() -> None:
     # sells shorter, cheaper calls on a faster cycle than the proxy ever did.
     real_params = {**params, 'dte': round(params['dte'] / 252 * 365)}  # ~30 calendar days
 
-    print(f'Loading chain store ({dailies_path}) ...', flush=True)
-    store = load_chain_store(dailies_path)
+    print(f'Loading chain store ({dailies_path}'
+          + (f' + {", ".join(extra_dailies)}' if extra_dailies else '') + ') ...', flush=True)
+    store = load_chain_store(dailies_path, extra_dailies)
     days = sorted(store)
     dates, prices = load_unadjusted_prices(ticker, days[0], '2026-06-06')
     # Clip the price series to the chain-covered span.
