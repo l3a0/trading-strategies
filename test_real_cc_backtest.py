@@ -31,6 +31,11 @@ Two layers:
   real chains (28 windows, 4-year train): tuned overlay +214% chained OOS
   vs +292% buy-and-hold, beating it in only 8/28 windows. Requires
   spy_option_dailies.csv[.gz] (same release/CI mechanics).
+- TestQqqExtendedWalkForwardRegression: pins the QQQ 15-year walk-forward
+  on the merged canonical + 2011-2016 backfill chains (22 windows): tuned
+  overlay +283% chained OOS vs +418% buy-and-hold, beating it in only
+  5/22 windows. Completes the three-ticker matrix: 25/78 real-chain
+  windows beat buy-and-hold vs 62/78 on the proxy.
 """
 
 from __future__ import annotations
@@ -66,6 +71,11 @@ _HAVE_MSFT_BACKFILL = (os.path.exists(_MSFT_BACKFILL)
 _SPY_DAILIES = os.path.join(os.path.dirname(__file__), 'spy_option_dailies.csv')
 _HAVE_SPY_DAILIES = (os.path.exists(_SPY_DAILIES)
                      or os.path.exists(_SPY_DAILIES + '.gz'))
+
+_QQQ_BACKFILL = os.path.join(os.path.dirname(__file__),
+                             'qqq_option_dailies_2011_2016.csv')
+_HAVE_QQQ_BACKFILL = (os.path.exists(_QQQ_BACKFILL)
+                      or os.path.exists(_QQQ_BACKFILL + '.gz'))
 
 _PARAMS: dict[str, float] = {
     'call_delta': 0.25,
@@ -736,3 +746,77 @@ class TestSpyRealWalkForwardRegression:
         assert _chain([r['bh_return_pct'] for r in records]) == pytest.approx(291.71, abs=0.01)
         assert sum(r['oos_return_pct'] > r['fixed_return_pct'] for r in records) == 19
         assert sum(r['oos_return_pct'] > r['bh_return_pct'] for r in records) == 8
+
+
+@pytest.mark.skipif(
+    not (_HAVE_DAILIES and _HAVE_QQQ_BACKFILL),
+    reason='needs qqq_option_dailies.csv and qqq_option_dailies_2011_2016.csv '
+           '(or their .gz twins)',
+)
+class TestQqqExtendedWalkForwardRegression:
+    """Pin the QQQ 15-year walk-forward on merged real chains (4y train, bid/ask).
+
+    Third underlying, same verdict, completing the matrix: across 22
+    half-year test windows (2015-03 -> 2026-03) the tuned covered call
+    chains to +283% OOS vs +418% buy-and-hold, beating it in only 5/22
+    windows. Cross-ticker tally at this pin: 25/78 real-chain windows beat
+    buy-and-hold (MSFT 12/28, SPY 8/28, QQQ 5/22) vs 62/78 for the proxy
+    on the same series. QQQ's quirk: the optimizer prefers the 45-day
+    cycle more than any other ticker (10/22 windows, mostly 2016-2019)
+    before converging on low-delta/short-cycle post-2020; close=1.00 still
+    dominates at 19/22. Every grid fit clears the Pardo floor in every
+    window (leanest 34).
+
+    The proxy twin (not pinned, per the SPY precedent): +749.72% chained,
+    beats B&H 17/22, maximum-engagement picks. Pin before publishing.
+
+    Data: requires both the canonical QQQ dailies and the 2011-2016
+    backfill (which begins at the QQQQ->QQQ ticker rename; the QQQQ era
+    carries placeholder vendor greeks and is excluded — see CLAUDE.md's
+    pipeline era-gotchas). The unadjusted close series extends to 2011 in
+    git; the canonical-span QQQ pins are unaffected (they clip to their
+    own store's span).
+    """
+
+    @pytest.fixture(scope='class')
+    def records(self) -> list[dict[str, Any]]:
+        store = load_chain_store(_DAILIES, [_QQQ_BACKFILL])
+        days = sorted(store)
+        dates, prices = load_unadjusted_prices('QQQ', days[0], '2026-06-06')
+        pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
+        return walk_forward_real([d for d, _ in pairs], [p for _, p in pairs], store,
+                                 PARAM_GRID,
+                                 fixed_params={**FIXED_PARAMS, 'fill': 'bid_ask'},
+                                 train_years=4)
+
+    def test_window_layout(self, records) -> None:
+        """22 non-overlapping 6-month test windows, 2015-03 -> 2026-03."""
+        assert len(records) == 22
+        assert records[0]['train_start'] == '2011-03-23'
+        assert records[0]['test_start'] == '2015-03-23'
+        assert records[-1]['test_start'] == '2025-09-23'
+        assert records[-1]['test_end'] == '2026-03-23'
+
+    def test_optimizer_choices(self, records) -> None:
+        """The 45-day cycle wins a plurality (10/22) — a QQQ-specific quirk."""
+        assert Counter(r['best_params']['call_delta'] for r in records) == \
+            {0.15: 10, 0.20: 6, 0.25: 6}
+        assert Counter(int(r['best_params']['dte']) for r in records) == \
+            {45: 10, 21: 6, 30: 6}
+        assert Counter(r['best_params']['close_at_pct'] for r in records) == \
+            {1.00: 19, 0.50: 2, 0.75: 1}
+        assert records[0]['train_sharpe'] == pytest.approx(1.201, abs=5e-4)
+        assert records[-1]['train_sharpe'] == pytest.approx(0.672, abs=5e-4)
+
+    def test_pardo_floor(self, records) -> None:
+        """Every grid combo clears 30 IS trades in every window (leanest: 34)."""
+        assert all(r['n_below_30'] == 0 for r in records)
+        assert min(r['n_trades'] for r in records) == 34
+
+    def test_oos_scoreboard(self, records) -> None:
+        """WF +283.2% vs fixed +208.8% vs B&H +418.0%; beats B&H in 5/22."""
+        assert _chain([r['oos_return_pct'] for r in records]) == pytest.approx(283.25, abs=0.01)
+        assert _chain([r['fixed_return_pct'] for r in records]) == pytest.approx(208.75, abs=0.01)
+        assert _chain([r['bh_return_pct'] for r in records]) == pytest.approx(417.96, abs=0.01)
+        assert sum(r['oos_return_pct'] > r['fixed_return_pct'] for r in records) == 15
+        assert sum(r['oos_return_pct'] > r['bh_return_pct'] for r in records) == 5
