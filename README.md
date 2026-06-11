@@ -72,7 +72,7 @@ For an explanation of each output line — including what "assignment loss" mean
 
 ## Reality check: real option chains
 
-The engine above has never seen an option chain — it manufactures implied volatility from realized volatility. To measure what that assumption costs, the repo carries real daily chain slices — fifteen years for QQQ (2011–2026), eighteen for MSFT and SPY (2008–2026, including the GFC and the 2008–2013 sideways era; \~9.6M quotes via Alpha Vantage) — per-roll entry snapshots for six underlyings, and an adapter ([real_cc_backtest.py](real_cc_backtest.py#L139)) that re-runs the identical strategy on traded quotes: sell at the bid, buy back at the ask, real deltas and expirations, unadjusted closes.
+The engine above has never seen an option chain — it manufactures implied volatility from realized volatility. To measure what that assumption costs, the repo carries real daily chain slices — fifteen years for QQQ (2011–2026), eighteen for MSFT and SPY (2008–2026, including the GFC and the 2008–2013 sideways era; \~9.6M quotes via Alpha Vantage) — per-roll entry snapshots for six underlyings, and an adapter ([real_cc_backtest.py](real_cc_backtest.py#L152)) that re-runs the identical strategy on traded quotes: sell at the bid, buy back at the ask, real deltas and expirations, unadjusted closes. One data-integrity guard applies: the 2008 → mid-2010 era of those chains carries vendor placeholder greeks (lattice-quantized IVs, deltas unrelated to moneyness) on rows whose quoted mark also sits outside its own bid/ask, so the loader quarantines such rows from entry selection — on MSFT that leaves 2008–2009 nearly untradable (\~2 clean entry days a year), and the 18-year results read accordingly: through the GFC itself the portfolio mostly rode long stock, unable to sell calls against garbage quotes.
 
 The proxy's results do not survive the trial:
 
@@ -108,8 +108,8 @@ CI runs `ruff`, `pyright`, both test suites (fetching the checksum-verified chai
 | --- | --- |
 | [cc_backtest.py](cc_backtest.py#L201) | Backtest engine: Black-Scholes pricing, rolling vol, regime-based IV, day-by-day overlay state machine, Newey-West t-stat reporting on excess returns |
 | [test_cc_backtest.py](test_cc_backtest.py#L38) | Unit and scenario tests covering pricing, the overlay state machine, and the statistics helper |
-| [real_cc_backtest.py](real_cc_backtest.py#L139) | Real-chain adapter: the same overlay on traded option quotes (bid entries, ask buybacks, real deltas and expirations), printed REAL vs PROXY |
-| [test_real_cc_backtest.py](test_real_cc_backtest.py) | Adapter unit tests plus the MSFT/QQQ real-chain regression pins and the MSFT real-chain walk-forward pin (skip when the datasets are absent) |
+| [real_cc_backtest.py](real_cc_backtest.py#L152) | Real-chain adapter: the same overlay on traded option quotes (bid entries, ask buybacks, real deltas and expirations, vendor-junk rows quarantined from entry), printed REAL vs PROXY |
+| [test_real_cc_backtest.py](test_real_cc_backtest.py) | Adapter unit tests (entry selection, vendor-junk quarantine, fill models) plus the MSFT/SPY/QQQ real-chain regression and walk-forward pins (skip when the datasets are absent) |
 | [walk_forward_real.py](walk_forward_real.py) | Walk-forward optimization driving the real-chain adapter (or, via `--prices proxy`, the proxy engine on the same series/windows/calendar-day grid): per-window Pardo trade stats, chained OOS vs fixed-defaults vs buy-and-hold on one convention |
 | [download_prices.py](download_prices.py#L11) | yfinance data downloader |
 | [download_option_chains.py](download_option_chains.py) | Alpha Vantage fetcher for per-roll entry snapshots (one target call per monthly roll, six tickers) |

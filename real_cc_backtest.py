@@ -92,11 +92,22 @@ def load_chain_store(
     2008-2016 MSFT backfill alongside the canonical 2016-2026 file); the
     per-date setdefault makes the merge order-independent.
 
-    Mark sanity clamp: a quoted mark outside [bid, ask] is bad vendor data —
-    the 2008-2010 era of the backfill carries marks like 0.01 on a
-    10.15/10.35 quote — so out-of-band marks are replaced by the quote
-    midpoint. The canonical 2016+ files carry a small tail of these too
-    (0.05-0.14% of rows), so the clamp applies uniformly, not per-era.
+    Vendor-junk quarantine: a quoted mark outside [bid, ask] is bad vendor
+    data — the 2008-2010 era carries marks like 0.01 on a 10.15/10.35 quote —
+    and the greeks riding on those rows are placeholder garbage too (IVs on a
+    quantized lattice {0.01488, 0.02463, 0.03439, 0.04415}; deltas that jump
+    0.505 -> 0.087 between adjacent strikes), so trusting them poisons the
+    delta-targeted entry. Such rows keep a midpoint-repaired mark in the
+    marks index, so positions already held still mark and close, but are
+    never entry candidates. The out-of-band mark is the sole criterion: it
+    overlaps the in-band lattice-IV signature 99.6-99.8% in the poisoned
+    era, and the modern files carry only a small tail of these rows
+    (0.05-0.14%), so the quarantine applies uniformly, not per-era. An
+    `IV < 0.05` test was considered and rejected: SPY's 2017 low-vol chains
+    quote lattice-quantized IVs on rows whose deltas are sane (monotone in
+    strike, consistent with the quotes), and delta and quotes are all this
+    engine consumes — anything reading vendor IV as a *signal* needs its own
+    sidecar guard instead.
     """
     store: dict[str, dict[str, Any]] = {}
     for p in (path, *extra_paths):
@@ -112,12 +123,14 @@ def load_chain_store(
                     strike = float(r['strike'])
                 except (TypeError, ValueError):
                     continue
-                if not (bid <= mid <= ask):
+                junk_greeks = not (bid <= mid <= ask)
+                if junk_greeks:
                     mid = (bid + ask) / 2
                 day = store.setdefault(d, {'candidates': [], 'marks': {}})
-                day['candidates'].append(
-                    (dte, delta, bid, ask, mid, r['expiration'], strike, r['contractID'])
-                )
+                if not junk_greeks:
+                    day['candidates'].append(
+                        (dte, delta, bid, ask, mid, r['expiration'], strike, r['contractID'])
+                    )
                 day['marks'][r['contractID']] = (bid, ask, mid, delta)
     return store
 
