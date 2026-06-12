@@ -15,6 +15,14 @@ Two layers:
   net overlay P&L on QQQ loses $157K on real premiums (Newey-West t = -1.78),
   and the proxy's +$270K on MSFT — the series' published $268K headline —
   loses $184K (Newey-West t = -1.73).
+- TestMsftRealRiskManagedRegression: pins the delta-hedged (Israelov-Nielsen)
+  variant on the same MSFT chains — the last proxy-priced signal re-measured
+  on real quotes. The proxy's NW t = 1.63 (1.76 on this unadjusted series)
+  collapses to -0.23 at bid/ask fills and +0.73 at mid: the hedge still cuts
+  excess vol and recovers ~$101K of the naive loss (net -$82K), but there is
+  no volatility premium to isolate at real quote levels.
+  TestDeltaHedgeMechanics covers the hedge arithmetic on synthetic chains in
+  the always-run layer.
 - TestMsftRealWalkForwardRegression: pins the walk-forward optimization on
   the MSFT chains (walk_forward_real.py, 4-year train, bid/ask fills) —
   the optimizer's minimum-engagement drift and the chained OOS scoreboard.
@@ -242,6 +250,77 @@ class TestFillModel:
         assert close['pnl'] == pytest.approx((2.0935 - 0.2065) * 100, abs=1e-6)
 
 
+class TestDeltaHedgeMechanics:
+    """delta_hedge on a hand-computable synthetic market.
+
+    Mirrors run_cc_overlay's Israelov-Nielsen semantics with the vendor delta
+    as the hedge ratio: while a call is short, hold round(delta x shares)
+    extra shares, rebalanced daily at the unadjusted close; unwind the day the
+    call closes; fund trades from a working cash account at 0% (no commission
+    on share legs). The quoted delta carries forward on missing-quote days,
+    exactly like the mark.
+    """
+
+    DATES = ['2024-01-02', '2024-01-03', '2024-01-04']
+    PRICES = [100.0, 102.0, 101.0]
+
+    @staticmethod
+    def _store(day2_quote: bool = True) -> dict[str, dict[str, Any]]:
+        # Day 1: sell the 30-DTE 0.25-delta call (bid 2.00/ask 2.20/mid 2.10).
+        # Day 2: stock up, call richer (delta 0.35) -> hedge tops up 25 -> 35.
+        # Day 3: option collapses -> profit target fires, hedge unwinds.
+        c1 = _cand(30, 0.25, bid=2.00, ask=2.20, mid=2.10, exp='2099-01-01',
+                   strike=110.0, cid='C')
+        store = {
+            '2024-01-02': {'candidates': [c1], 'marks': {'C': (2.00, 2.20, 2.10, 0.25)}},
+            '2024-01-03': {'candidates': [], 'marks': {'C': (2.50, 2.70, 2.60, 0.35)}},
+            '2024-01-04': {'candidates': [], 'marks': {'C': (0.10, 0.30, 0.20, 0.05)}},
+        }
+        if not day2_quote:
+            store['2024-01-03'] = {'candidates': [], 'marks': {}}
+        return store
+
+    def test_rebalance_and_unwind(self) -> None:
+        # $10K -> 1 contract at $100, zero initial cash. Entry day: +25 shares
+        # at 100 (cash -2500); day 2: +10 at 102 (cash -3520); close day:
+        # -35 at 101 (cash +15). Equity per day, by hand:
+        #   d1: 100*125 - 2500 + (1.9935-2.10)*100            =  9,989.35
+        #   d2: 102*135 - 3520 + (1.9935-2.60)*100            = 10,189.35
+        #   d3: 101*100 +   15 + 168.70 (close pnl)           = 10,283.70
+        s, trades, eq = run_real_cc_overlay(
+            self.DATES, self.PRICES, self._store(),
+            {**_PARAMS, 'capital': 10_000, 'delta_hedge': 1.0},
+        )
+        assert list(eq['equity']) == [9_989.35, 10_189.35, 10_283.70]
+        close = next(t for t in trades if t['action'] == 'close')
+        assert close['pnl'] == pytest.approx((1.9935 - 0.3065) * 100, abs=1e-6)
+        # Net overlay = close pnl + hedge round trip (-2500 - 1020 + 3535 = +15).
+        assert s['net_overlay_pnl'] == pytest.approx(168.70 + 15.00, abs=1e-6)
+        assert s['cash'] == 0.0  # summary reports INITIAL cash, not working
+
+    def test_missing_quote_carries_delta_forward(self) -> None:
+        # No day-2 quote: the 0.25 delta (and 2.10 mark) carry forward, so no
+        # rebalance trades -- d2 equity = 102*125 - 2500 + (1.9935-2.10)*100.
+        # Day 3 quotes again and the close fires; unwind sells 25 at 101.
+        _, _, eq = run_real_cc_overlay(
+            self.DATES, self.PRICES, self._store(day2_quote=False),
+            {**_PARAMS, 'capital': 10_000, 'delta_hedge': 1.0},
+        )
+        assert list(eq['equity']) == [9_989.35, 10_239.35, 10_293.70]
+
+    def test_trading_decisions_unchanged(self) -> None:
+        # The hedge only reshapes the equity path: entries, closes, and trade
+        # P&L are identical to the unhedged run.
+        plain = run_real_cc_overlay(self.DATES, self.PRICES, self._store(),
+                                    {**_PARAMS, 'capital': 10_000})
+        hedged = run_real_cc_overlay(self.DATES, self.PRICES, self._store(),
+                                     {**_PARAMS, 'capital': 10_000, 'delta_hedge': 1.0})
+        assert plain[1] == hedged[1]
+        for k in ('num_calls_sold', 'wins', 'losses', 'win_rate',
+                  'total_premium_collected', 'buy_hold_final', 'cash'):
+            assert plain[0][k] == hedged[0][k]
+
+
 @pytest.mark.skipif(
     not _HAVE_DAILIES,
     reason='needs qqq_option_dailies.csv or its committed .gz twin',
@@ -427,6 +506,10 @@ class TestMsftRealChainRegression:
         st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
         assert st['t_stat_newey_west'] == pytest.approx(-1.73, abs=0.02)
         assert st['sharpe_excess'] == pytest.approx(-0.49, abs=0.01)
+        # The naive side of the README's "excess vol cut from 6.64% to 4.80%"
+        # comparison (the hedged 4.80 is pinned in
+        # TestMsftRealRiskManagedRegression::test_significance).
+        assert st['ann_excess_vol_pct'] == pytest.approx(6.64, abs=0.02)
         assert st['passes_t_2'] is False
 
     def test_mid_fill_variant(self, market) -> None:
@@ -453,6 +536,135 @@ class TestMsftRealChainRegression:
         st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
         assert s['net_overlay_pnl'] == pytest.approx(269_948.12, abs=1.0)
         assert st['t_stat_newey_west'] == pytest.approx(0.58, abs=0.02)
+
+
+@pytest.mark.skipif(
+    not _HAVE_MSFT_DAILIES,
+    reason='needs msft_option_dailies.csv or its committed .gz twin',
+)
+class TestMsftRealRiskManagedRegression:
+    """Pin the delta-hedged (Israelov-Nielsen risk-managed) MSFT run on real
+    chains — the answer to the open question the proxy left behind.
+
+    On simulated chains the delta hedge was the strongest refinement in the
+    repo: it lifted the overlay's NW t-stat from 0.46 to 1.63 (published,
+    adjusted series; 1.76 for the proxy twin on this unadjusted series,
+    pinned below) — tantalizingly close to significance, and the last
+    proxy-priced signal never re-measured on real quotes. Measured: on real
+    premiums at bid/ask fills the hedged t-stat is -0.23. At mid fills,
+    +0.73. The volatility premium the hedge isolates simply isn't there at
+    real quote levels — the 1.63 was an artifact of the proxy minting
+    premiums ~1.6x richer than the market's.
+
+    The hedge itself still does its mechanical job, exactly as on simulated
+    chains: same 183 calls as the naive run (hedging never changes a trading
+    decision), excess vol cut 6.64% -> 4.80%, and ~$101K of the naive run's
+    -$184K loss recovered (net -$82K) by riding hedge shares through the
+    rallies that deep-ITM buybacks pay for. And the same fine print: max
+    drawdown RISES 41.00% -> 44.34% (the hedge holds extra stock on negative
+    cash — a levered long in selloffs), mirroring the simulated 22.86% ->
+    30.25%. What it cannot do is conjure the premium edge the proxy promised:
+    every fill convention lands within noise of zero, where the simulated
+    twin sits at +1.76 with 30.9% retention.
+
+    Accounting note: hedge shares are marked on the unadjusted series, so
+    their dividends go uncredited (~$12K across the span — an unpinned
+    estimate from the adjusted/unadjusted ratio — about the size of the
+    measured hedged excess itself). The proxy twin below shares the
+    omission, so the collapse comparison is apples-to-apples; the absolute
+    hedged figures are conservative, and the bid/ask run's negative sign
+    sits within that error band (its t-stat does not: -0.23 vs +1.76 is a
+    2-point gap no dividend credit closes).
+
+    Same dataset/skip mechanics as TestMsftRealChainRegression.
+    """
+
+    @pytest.fixture(scope='class')
+    def market(self) -> tuple[list[str], list[float], dict[str, dict[str, Any]]]:
+        store = load_chain_store(_MSFT_DAILIES)
+        days = sorted(store)
+        dates, prices = load_unadjusted_prices('MSFT', days[0], '2026-06-06')
+        pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
+        return [d for d, _ in pairs], [p for _, p in pairs], store
+
+    @pytest.fixture(scope='class')
+    def hedged(self, market) -> tuple[dict[str, Any], list[dict[str, Any]], Any]:
+        dates, prices, store = market
+        return run_real_cc_overlay(dates, prices, store,
+                                   {**_PARAMS, 'delta_hedge': 1.0})
+
+    def test_headline(self, hedged) -> None:
+        """Net overlay -$82.4K: the hedge recovers ~$101K of the naive -$183.6K
+        but the overlay still loses money on real premiums."""
+        s, _, _ = hedged
+        assert s['num_contracts'] == 18
+        assert s['net_overlay_pnl'] == pytest.approx(-82_372.00, abs=1.0)
+        assert s['total_premium_collected'] == pytest.approx(729_054.90, abs=1.0)
+        assert s['final_equity'] == pytest.approx(587_435.99, abs=1.0)
+        assert s['buy_hold_final'] == pytest.approx(669_807.99, abs=1.0)
+        assert s['total_return_pct'] == pytest.approx(487.44, abs=0.05)
+        assert s['premium_retention_pct'] == pytest.approx(-11.3, abs=0.1)
+        assert s['max_drawdown_pct'] == pytest.approx(44.34, abs=0.05)
+
+    def test_same_trades_as_naive(self, hedged) -> None:
+        """Identical 183 calls, 124/58 record: the hedge reshapes the equity
+        path without touching a single entry or exit (same invariant the
+        synthetic TestDeltaHedgeMechanics pins, here at dataset scale)."""
+        s, trades, _ = hedged
+        assert s['num_calls_sold'] == 183
+        assert s['wins'] == 124
+        assert s['losses'] == 58
+        assert s['win_rate'] == pytest.approx(68.1, abs=0.1)
+        actions = Counter(t['action'] for t in trades)
+        assert actions['close'] == 122
+        assert actions['close_itm'] == 54
+        assert actions['expiration'] == 6
+
+    def test_significance(self, hedged) -> None:
+        """NW t = -0.23: the proxy's 1.63 does not survive real premiums.
+
+        The hedge still halves excess vol (6.64% -> 4.80% annualized), but
+        annualized excess return is -0.30% — there is no volatility premium
+        to isolate at real MSFT quote levels under worst-case fills."""
+        s, _, eq = hedged
+        st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
+        assert st['ann_excess_return_pct'] == pytest.approx(-0.297, abs=0.005)
+        assert st['ann_excess_vol_pct'] == pytest.approx(4.80, abs=0.02)
+        assert st['sharpe_excess'] == pytest.approx(-0.062, abs=0.005)
+        assert st['t_stat_newey_west'] == pytest.approx(-0.23, abs=0.02)
+        assert st['passes_t_2'] is False
+
+    def test_mid_fill_variant(self, market) -> None:
+        """Mid fills: +$16.6K, NW t = +0.73 — positive but noise. Even on the
+        academic convention the hedged edge is ~0.7%/yr with a Sharpe of 0.2,
+        nowhere near the proxy's promise."""
+        dates, prices, store = market
+        s, _, eq = run_real_cc_overlay(
+            dates, prices, store,
+            {**_PARAMS, 'fill': 'mid', 'delta_hedge': 1.0})
+        st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
+        assert s['net_overlay_pnl'] == pytest.approx(16_637.63, abs=1.0)
+        assert s['num_calls_sold'] == 195  # mid fills shift entries, as in the naive variant
+        assert st['sharpe_excess'] == pytest.approx(0.199, abs=0.005)
+        assert st['t_stat_newey_west'] == pytest.approx(0.73, abs=0.02)
+        assert st['passes_t_2'] is False
+
+    def test_proxy_same_series(self, market) -> None:
+        """The hedged proxy twin on the identical unadjusted series: +$289K,
+        NW t = +1.76 (the published 1.63 re-based to this price series and
+        18-contract sizing). Pinned beside the real runs so the hedged
+        real-vs-proxy swing — a full 2 points of t-stat — is CI-verified
+        from one data lineage."""
+        dates, prices, _ = market
+        import numpy as np
+        s, _, eq = run_cc_overlay(dates, np.array(prices),
+                                  {**_PARAMS, 'dte': 21, 'delta_hedge': 1.0})
+        st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
+        assert s['net_overlay_pnl'] == pytest.approx(289_266.98, abs=2.0)
+        assert s['premium_retention_pct'] == pytest.approx(30.9, abs=0.1)
+        assert st['sharpe_excess'] == pytest.approx(0.49, abs=0.005)
+        assert st['t_stat_newey_west'] == pytest.approx(1.76, abs=0.02)
+        assert st['passes_t_2'] is False
 
 
 @pytest.mark.skipif(

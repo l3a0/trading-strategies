@@ -13,7 +13,18 @@ comes from the market instead of the Black-Scholes + estimate_iv proxy:
 - Expiration: the contract's real expiration date (not a trading-day clock),
   settled against the UNADJUSTED close (strikes live in actual price space).
 - Buy-and-hold benchmark: same unadjusted series, so dividends cancel in the
-  excess-return comparison.
+  excess-return comparison (for the base shares — see the delta_hedge caveat).
+- Optional delta_hedge param: the Israelov-Nielsen risk-managed variant on
+  real chains — hold the short call's quoted delta in extra shares, rebalanced
+  daily at the close (same semantics as run_cc_overlay's delta_hedge, but the
+  hedge ratio is the vendor delta instead of a Black-Scholes one). Caveat:
+  hedge shares are marked on the unadjusted closes, so their dividends go
+  uncredited — buy-and-hold never holds them, so nothing cancels (~$12K
+  across the canonical MSFT span, about the size of the measured hedged
+  excess itself; unpinned estimate from the adjusted/unadjusted ratio). The
+  proxy-twin comparison runs on the same series and shares the omission, so
+  real-vs-proxy stays apples-to-apples; absolute hedged figures are
+  conservatively understated by roughly that much.
 
 Data: {ticker}_option_dailies.csv from download_option_dailies.py and an
 unadjusted close series (auto-downloaded to {ticker}_10yr_prices_unadjusted.csv).
@@ -180,6 +191,16 @@ def run_real_cc_overlay(
     # the stop level — a stop-market approximation, the honest daily-bar
     # reading of a stop order. None/absent = off (byte-identical baseline).
     stop_loss_mult = params.get('stop_loss_mult')
+    # Israelov-Nielsen risk-managed variant: when truthy, hold extra long
+    # shares equal to the short call's current delta × base shares, rebalanced
+    # daily at the close, so the portfolio's net delta stays pinned at the
+    # buy-and-hold equivalent. Mirrors run_cc_overlay's delta_hedge semantics
+    # (hedge trades draw on a working cash account that may go negative — a
+    # zero-interest financing simplification; no transaction costs on the
+    # share legs) with one real-chain substitution: the hedge ratio is the
+    # vendor delta from the day's quote, carried forward on missing-quote
+    # days exactly like the mark. False/absent = off (byte-identical baseline).
+    delta_hedge = bool(params.get('delta_hedge', False))
 
     initial_price = prices[0]
     contract_cost = initial_price * 100
@@ -189,6 +210,11 @@ def run_real_cc_overlay(
         raise ValueError('capital insufficient for one contract')
     shares = 100 * num_contracts
     initial_cash = capital - shares * initial_price
+    current_cash = initial_cash  # working balance; drained/refilled by hedge
+                                 # share trades when delta_hedge is on, else
+                                 # constant at initial_cash.
+    hedge_shares = 0             # extra long stock offsetting the short call's
+                                 # delta; stays 0 when delta_hedge is off.
 
     position: dict[str, Any] | None = None
     realized_pnl = 0.0
@@ -293,7 +319,28 @@ def run_real_cc_overlay(
                                        'realized_pnl': realized_pnl})
                 # No quote today: no close can trigger; mark carries forward below.
 
-        equity = price * shares + initial_cash + realized_pnl
+        # Risk-managed rebalance (after the entry/close logic, like the proxy
+        # engine): while a call is short, hold its delta in extra shares;
+        # target 0 the day it closes. position['real_delta'] is today's quoted
+        # delta when one printed, else carried forward — the same convention
+        # as the mark used for equity. Trades fill at the unadjusted close.
+        # The delta is clamped to [0, 1] before sizing: vendor deltas are not
+        # the engine's BS output, and a placeholder row could otherwise short
+        # the hedge (no pinned run consumes an out-of-range delta — the clamp
+        # is a guard, not a repair). Convention note: on Saturday-dated
+        # expirations (pre-2015 backfill era) the option settles against
+        # Friday's close but the loop reaches the expiration branch on Monday,
+        # so the hedge unwinds at Monday's close — one weekend of hedge
+        # exposure the option leg no longer has. No pinned hedged run spans
+        # that era (the canonical chains are 2016+, trading-day expiries).
+        target_hedge = (int(round(min(max(position['real_delta'], 0.0), 1.0) * shares))
+                        if delta_hedge and position is not None else 0)
+        hedge_trade = target_hedge - hedge_shares
+        if hedge_trade != 0:
+            current_cash -= hedge_trade * price
+            hedge_shares = target_hedge
+
+        equity = price * (shares + hedge_shares) + current_cash + realized_pnl
         if position is not None:
             equity += (position['premium_collected'] - position['last_mid']) * shares
         daily_rows.append({'date': date, 'equity': round(equity, 2), 'price': price})
@@ -316,6 +363,12 @@ def run_real_cc_overlay(
         'capital': round(capital, 2),
         'num_contracts': num_contracts,
         'initial_stock_cost': round(shares * initial_price, 2),
+        # Initial leftover cash, NOT the working balance — compute_statistics
+        # rebuilds the buy-and-hold curve from shares × prices + cash, which
+        # only makes sense with the constant initial cash. Under delta_hedge
+        # the working cash drifts as hedge trades execute; that drift reaches
+        # final_equity via the daily equity series. (Same convention as
+        # run_cc_overlay's summary.)
         'cash': round(initial_cash, 2),
         'final_equity': round(final_equity, 2),
         'total_return_pct': round(total_return, 2),
