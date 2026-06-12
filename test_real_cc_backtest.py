@@ -843,6 +843,101 @@ class TestSpyRealWalkForwardRegression:
         assert sum(r['oos_return_pct'] > r['bh_return_pct'] for r in records) == 10
 
 
+# The 2026-06 grid-expansion experiment: every edge the 27-combo PARAM_GRID
+# was pinned against, widened one step — delta down to 0.10 and up to 0.30,
+# dte down to 14. The non-expansions are principled: close_at_pct=1.00 is
+# hold-to-expiry (nothing beyond it), dte=60 would put the 4y-train roll
+# count (~24) under the Pardo 30-trade floor, and delta 0.05 sits on
+# select_entry's band edge. Test-local on purpose: widening the production
+# PARAM_GRID would silently re-pin every walk-forward regression.
+EXPANDED_PARAM_GRID: dict[str, list[float]] = {
+    'call_delta': [0.10, 0.15, 0.20, 0.25, 0.30],
+    'dte': [14, 21, 30, 45],  # CALENDAR days, like PARAM_GRID
+    'close_at_pct': [0.50, 0.75, 1.00],
+}
+
+
+@pytest.mark.skipif(
+    not _HAVE_SPY_DAILIES,
+    reason='needs spy_option_dailies.csv or its committed .gz twin',
+)
+class TestSpyExpandedGridRegression:
+    """Pin the SPY walk-forward on the 60-combo expanded grid: nothing changes.
+
+    Doubling the search space (27 -> 60 combos, EXPANDED_PARAM_GRID above)
+    along every edge the baseline grid was pinned against moves the chained
+    OOS +143.01% -> +143.62% — same 10/23 windows over buy-and-hold's
+    +170.87%, same verdict. The optimizer sprints to the new edges (the new
+    dte=14 is instantly modal at 10/23; the new deltas 0.10/0.30 together
+    take 11/23) while the delta distribution flattens from the baseline's
+    bimodal edge-pinning to near-uniform — so the edge-pinning in the
+    27-grid pin was noise-chasing, not a truncated optimum. Selection, not
+    menu, is the binding constraint: in the experiment's per-combo
+    train/test matrix (measured 2026-06, NOT pinned — re-derive before
+    publishing) mean Spearman(IS Sharpe, OOS return) was +0.13, the IS
+    pick landed at the 59th OOS percentile of its 60-combo field, and the
+    hindsight oracle rose +220% -> +250% chained (20/23 over B&H) while
+    the realizable pick gained 0.6pp — grid expansion widens the ceiling,
+    not the floor you can stand on. close=1.00 stays dominant (18/23), the
+    one stable parameter across both grids. The lever this argues for is
+    Pardo's cut-parameters, not a wider menu.
+
+    Setup is otherwise identical to TestSpyRealWalkForwardRegression:
+    4y train, bid/ask fills, CHAIN_CLEAN_START['SPY'] era clip, 23
+    half-year test windows 2014-12 -> 2026-06. Every grid combo clears
+    the Pardo 30-trade floor in every window (leanest 32, unchanged from
+    the baseline grid).
+    """
+
+    @pytest.fixture(scope='class')
+    def records(self) -> list[dict[str, Any]]:
+        store = load_chain_store(_SPY_DAILIES, start=CHAIN_CLEAN_START['SPY'])
+        days = sorted(store)
+        dates, prices = load_unadjusted_prices('SPY', days[0], '2026-06-06')
+        pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
+        return walk_forward_real([d for d, _ in pairs], [p for _, p in pairs], store,
+                                 EXPANDED_PARAM_GRID,
+                                 fixed_params={**FIXED_PARAMS, 'fill': 'bid_ask'},
+                                 train_years=4)
+
+    def test_window_layout(self, records) -> None:
+        """Same 23 windows as the baseline pin — the grid doesn't move them."""
+        assert len(records) == 23
+        assert records[0]['train_start'] == '2010-12-01'
+        assert records[0]['test_start'] == '2014-12-01'
+        assert records[-1]['test_start'] == '2025-12-01'
+        assert records[-1]['test_end'] == '2026-06-01'
+
+    def test_optimizer_choices(self, records) -> None:
+        """New edges win immediately (dte=14 modal, 0.10/0.30 take 11/23) — for nothing."""
+        assert Counter(r['best_params']['call_delta'] for r in records) == \
+            {0.10: 5, 0.15: 4, 0.20: 3, 0.25: 5, 0.30: 6}
+        assert Counter(int(r['best_params']['dte']) for r in records) == \
+            {14: 10, 21: 3, 30: 6, 45: 4}
+        assert Counter(r['best_params']['close_at_pct'] for r in records) == \
+            {1.00: 18, 0.75: 5}
+        assert records[0]['best_params'] == {'call_delta': 0.20, 'dte': 14,
+                                             'close_at_pct': 0.75}
+        assert records[0]['train_sharpe'] == pytest.approx(1.056, abs=5e-4)
+        assert records[-1]['best_params'] == {'call_delta': 0.30, 'dte': 30,
+                                              'close_at_pct': 0.75}
+        assert records[-1]['train_sharpe'] == pytest.approx(0.757, abs=5e-4)
+
+    def test_pardo_floor(self, records) -> None:
+        """All 60 combos clear 30 IS trades in every window (leanest: 32)."""
+        assert all(r['n_below_30'] == 0 for r in records)
+        assert min(r['min_grid_trades'] for r in records) == 32
+        assert min(r['n_trades'] for r in records) == 37
+
+    def test_oos_scoreboard(self, records) -> None:
+        """WF +143.6% vs fixed +95.8% vs B&H +170.9% — 0.6pp for doubling the grid."""
+        assert _chain([r['oos_return_pct'] for r in records]) == pytest.approx(143.62, abs=0.01)
+        assert _chain([r['fixed_return_pct'] for r in records]) == pytest.approx(95.78, abs=0.01)
+        assert _chain([r['bh_return_pct'] for r in records]) == pytest.approx(170.87, abs=0.01)
+        assert sum(r['oos_return_pct'] > r['fixed_return_pct'] for r in records) == 18
+        assert sum(r['oos_return_pct'] > r['bh_return_pct'] for r in records) == 10
+
+
 @pytest.mark.skipif(
     not (_HAVE_DAILIES and _HAVE_QQQ_BACKFILL),
     reason='needs qqq_option_dailies.csv and qqq_option_dailies_2011_2016.csv '
