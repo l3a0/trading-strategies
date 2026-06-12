@@ -72,7 +72,7 @@ For an explanation of each output line — including what "assignment loss" mean
 
 ## Reality check: real option chains
 
-The engine above has never seen an option chain — it manufactures implied volatility from realized volatility. To measure what that assumption costs, the repo carries real daily chain slices (\~9.6M quotes via Alpha Vantage) — fifteen years for QQQ (2011–2026) and, for MSFT and SPY, sixteen years that the runs actually use (2010–2026, including the 2010–2013 sideways era) — per-roll entry snapshots for six underlyings, and an adapter ([real_cc_backtest.py](real_cc_backtest.py#L163)) that re-runs the identical strategy on traded quotes: sell at the bid, buy back at the ask, real deltas and expirations, unadjusted closes. The MSFT/SPY datasets reach back to 2008, but the 2008 → mid/late-2010 era carries vendor placeholder greeks (lattice-quantized IVs, deltas unrelated to moneyness) throughout the entry band — on MSFT, 2008–2009 offers \~2 trustworthy entry days a year — so every run excludes that era outright (per-ticker boundaries in `CHAIN_CLEAN_START`). The honest consequence: the GFC itself is untestable on these chains; no run claims it.
+The engine above has never seen an option chain — it manufactures implied volatility from realized volatility. To measure what that assumption costs, the repo carries real daily chain slices (\~9.6M quotes via Alpha Vantage) — fifteen years for QQQ (2011–2026) and, for MSFT and SPY, sixteen years that the runs actually use (2010–2026, including the 2010–2013 sideways era) — per-roll entry snapshots for six underlyings, and an adapter ([real_cc_backtest.py](real_cc_backtest.py#L167)) that re-runs the identical strategy on traded quotes: sell at the bid, buy back at the ask, real deltas and expirations, unadjusted closes. The MSFT/SPY datasets reach back to 2008, but the 2008 → mid/late-2010 era carries vendor placeholder greeks (lattice-quantized IVs, deltas unrelated to moneyness) throughout the entry band — on MSFT, 2008–2009 offers \~2 trustworthy entry days a year — so every run excludes that era outright (per-ticker boundaries in `CHAIN_CLEAN_START`). The honest consequence: the GFC itself is untestable on these chains; no run claims it.
 
 The proxy's results do not survive the trial:
 
@@ -85,12 +85,14 @@ The proxy's results do not survive the trial:
 
 The loss anatomy is the same on both underlyings: profit-target wins (MSFT: 122 closes, +$429K) overwhelmed by deep-ITM forced buybacks (54 closes, −$611K). The driver differs by instrument. On QQQ, mid-quote fills recover only \~$12K of the loss — the premium economics are simply absent. On MSFT, mid fills recover \~$108K (single-name spreads are expensive), but the overlay still loses $76K with the spread given away for free. Across all six underlyings sampled (QQQ, MSFT, SPY, IWM, GLD, TLT), the proxy inflates IV 1.27–1.56× and same-contract premiums 1.55–2.33×, worst where realized volatility is lowest.
 
+The delta-hedged rescue doesn't survive the trial either. On simulated chains, hedging the short call's delta (the Israelov–Nielsen risk-managed variant, `delta_hedge` in both engines) was the strongest signal the proxy ever produced: it lifted the MSFT overlay's Newey-West t-stat from 0.46 to 1.63. Re-measured on real quotes, that signal collapses to −0.23 at bid/ask fills and +0.73 at mid (the hedged proxy twin on the same unadjusted series sits at +1.76). The hedge still does its mechanical job — identical 183 calls sold, excess vol cut from 6.64% to 4.80%, \~$101K of the naive loss recovered (net −$82,372) — but the volatility premium it was built to isolate isn't there at real quote levels. The 1.63 was the proxy's inflated premiums talking. (One accounting note: hedge shares are marked on the unadjusted series, so their dividends — roughly $12K over the decade, about the size of the measured hedged excess — go uncredited. The proxy twin shares the omission, so the collapse comparison is apples-to-apples; the absolute hedged figures are modestly understated, and the bid/ask run's negative *sign* sits within that error band. Its t-stat does not: −0.23 vs +1.76 is a gap no dividend credit closes.)
+
 ```bash
 ./fetch_option_data.sh            # pull the chain datasets from the data release (checksum-verified)
 python real_cc_backtest.py MSFT   # REAL vs PROXY side by side (also: QQQ)
 ```
 
-Every number in this section is pinned by `TestMsftRealChainRegression` and `TestQqqRealChainRegression` in [test_real_cc_backtest.py](test_real_cc_backtest.py), which CI runs against the same checksum-verified datasets.
+Every number in this section is pinned by `TestMsftRealChainRegression`, `TestMsftRealRiskManagedRegression`, and `TestQqqRealChainRegression` in [test_real_cc_backtest.py](test_real_cc_backtest.py), which CI runs against the same checksum-verified datasets (the simulated-chain 0.46 and 1.63 trace to `TestMsftTenYearRegression` and `TestMsftRiskManagedRegression` in [test_cc_backtest.py](test_cc_backtest.py); the dividend estimate in the accounting note is deliberately unpinned).
 
 ## Tests
 
@@ -108,8 +110,8 @@ CI runs `ruff`, `pyright`, both test suites (fetching the checksum-verified chai
 | --- | --- |
 | [cc_backtest.py](cc_backtest.py#L201) | Backtest engine: Black-Scholes pricing, rolling vol, regime-based IV, day-by-day overlay state machine, Newey-West t-stat reporting on excess returns |
 | [test_cc_backtest.py](test_cc_backtest.py#L38) | Unit and scenario tests covering pricing, the overlay state machine, and the statistics helper |
-| [real_cc_backtest.py](real_cc_backtest.py#L163) | Real-chain adapter: the same overlay on traded option quotes (bid entries, ask buybacks, real deltas and expirations; the 2008→2010 placeholder-greeks era excluded via `CHAIN_CLEAN_START`), printed REAL vs PROXY |
-| [test_real_cc_backtest.py](test_real_cc_backtest.py) | Adapter unit tests (entry selection, era clip + mark clamp, fill models) plus the MSFT/SPY/QQQ real-chain regression and walk-forward pins (skip when the datasets are absent) |
+| [real_cc_backtest.py](real_cc_backtest.py#L167) | Real-chain adapter: the same overlay on traded option quotes (bid entries, ask buybacks, real deltas and expirations; the 2008→2010 placeholder-greeks era excluded via `CHAIN_CLEAN_START`), printed REAL vs PROXY |
+| [test_real_cc_backtest.py](test_real_cc_backtest.py) | Adapter unit tests (entry selection, era clip + mark clamp, fill models, delta-hedge mechanics) plus the MSFT/SPY/QQQ real-chain regression and walk-forward pins (skip when the datasets are absent) |
 | [walk_forward_real.py](walk_forward_real.py) | Walk-forward optimization driving the real-chain adapter (or, via `--prices proxy`, the proxy engine on the same series/windows/calendar-day grid): per-window Pardo trade stats, chained OOS vs fixed-defaults vs buy-and-hold on one convention |
 | [download_prices.py](download_prices.py#L11) | yfinance data downloader |
 | [download_option_chains.py](download_option_chains.py) | Alpha Vantage fetcher for per-roll entry snapshots (one target call per monthly roll, six tickers) |
