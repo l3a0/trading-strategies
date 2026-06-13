@@ -25,6 +25,13 @@ comes from the market instead of the Black-Scholes + estimate_iv proxy:
   proxy-twin comparison runs on the same series and shares the omission, so
   real-vs-proxy stays apples-to-apples; absolute hedged figures are
   conservatively understated by roughly that much.
+- Optional cap_delta param: the call-spread variant — alongside each short
+  sale, BUY a same-expiration further-OTM call at this target delta (e.g.
+  0.10) as a cap. The cap bounds the deep-ITM buyback loss (floored at
+  net_credit − strike_width at expiry) at the cost of its premium, paid every
+  cycle. select_cap_leg picks the leg; the close, settlement, and equity paths
+  key on the NET spread value. A structural overlay measured directly, not a
+  pre-registered experiment.
 
 Data: {ticker}_option_dailies.csv from download_option_dailies.py and an
 unadjusted close series (auto-downloaded to {ticker}_10yr_prices_unadjusted.csv).
@@ -169,6 +176,32 @@ def select_entry(
     return min(cohort, key=lambda c: abs(c[1] - target_delta))
 
 
+def select_cap_leg(
+    day: dict[str, Any], expiration: str, short_strike: float, cap_delta: float
+) -> tuple[float, float, float, float, float, str] | None:
+    """The long cap leg of a call spread: the same-expiration call nearest
+    `cap_delta`, struck above the short, with a buyable ask.
+
+    A vertical spread requires both legs on the SAME expiration (else it is a
+    diagonal and the payoff no longer caps cleanly), so the search is the
+    short pick's `expiration` cohort, not select_entry's nearest-DTE cohort.
+    It runs against the RAW candidate list, not select_entry's 0.05<delta<0.60
+    band: a deep cap legitimately sits below 0.05 delta, and excluding it
+    would force the cap closer in than asked. Requires ask>0 (we BUY this leg)
+    and strike strictly above the short. Returns
+    (delta, bid, ask, mid, strike, contractID) or None when no higher strike
+    in that expiration is quotable (the caller then degrades to a naked short
+    for that cycle).
+    """
+    caps = [c for c in day['candidates']
+            if c[5] == expiration and c[6] > short_strike and c[3] > 0]
+    if not caps:
+        return None
+    best = min(caps, key=lambda c: abs(c[1] - cap_delta))
+    # candidate tuple: (dte, delta, bid, ask, mid, expiration, strike, cid)
+    return (best[1], best[2], best[3], best[4], best[6], best[7])
+
+
 # ---- the overlay loop (run_cc_overlay semantics, real prices) ----
 
 def run_real_cc_overlay(
@@ -210,6 +243,16 @@ def run_real_cc_overlay(
     # vendor delta from the day's quote, carried forward on missing-quote
     # days exactly like the mark. False/absent = off (byte-identical baseline).
     delta_hedge = bool(params.get('delta_hedge', False))
+    # Call-spread variant: when set, BUY a same-expiration further-OTM call at
+    # this target delta (e.g. 0.10) as a cap alongside each short sale. The cap
+    # bounds the deep-ITM buyback loss — at expiration the spread's per-share
+    # P&L is floored at net_credit − (cap_strike − short_strike) (see
+    # select_cap_leg and the settlement branch). The cost is the cap's premium,
+    # paid every cycle. None/absent = off (byte-identical baseline — no cap leg,
+    # no position['cap_*'] fields, every spread path falls through to the naive
+    # short-only branch). An engineering variant measured directly, like
+    # delta_hedge and stop_loss_mult — not a pre-registered experiment.
+    cap_delta = params.get('cap_delta')
 
     initial_price = prices[0]
     contract_cost = initial_price * 100
@@ -228,7 +271,11 @@ def run_real_cc_overlay(
     position: dict[str, Any] | None = None
     realized_pnl = 0.0
     num_calls_sold = 0
-    total_premium_collected = 0.0
+    total_premium_collected = 0.0      # NET credit (short sale minus cap cost)
+    gross_premium_collected = 0.0      # short-leg sale only — the upside given
+                                       # up; equals total when no cap, so
+                                       # retention stays comparable to the
+                                       # naked baseline.
     wins = losses = 0
     trades: list[dict[str, Any]] = []
     daily_rows: list[dict[str, Any]] = []
@@ -246,7 +293,18 @@ def run_real_cc_overlay(
                 if pick is not None:
                     _dte, _delta, bid, _ask, mid, expiration, strike, cid = pick
                     sell_px = bid if fill == 'bid_ask' else mid
-                    net_premium = sell_px - COMMISSION_PER_SHARE  # real quote replaces slippage model
+                    gross_premium = sell_px - COMMISSION_PER_SHARE  # short sale, net of its commission
+                    # Cap leg: BUY a same-expiration further-OTM call. None when
+                    # off, or when no quotable higher strike exists that cycle
+                    # (degrade to a naked short — keeps the trade cadence equal
+                    # to the baseline rather than dropping the cycle).
+                    cap = (select_cap_leg(day, expiration, strike, cap_delta)
+                           if cap_delta is not None else None)
+                    net_premium = gross_premium
+                    if cap is not None:
+                        cap_delta_v, cap_bid, cap_ask, cap_mid, cap_strike, cap_cid = cap
+                        buy_px = cap_ask if fill == 'bid_ask' else cap_mid
+                        net_premium -= buy_px + COMMISSION_PER_SHARE  # pay the cap + its commission
                     if net_premium > 0:
                         position = {
                             'strike': strike,
@@ -257,12 +315,24 @@ def run_real_cc_overlay(
                             'last_mid': mid,
                             'real_delta': _delta,
                         }
-                        num_calls_sold += 1
-                        total_premium_collected += net_premium * shares
-                        trades.append({'date': date, 'price': price, 'action': 'sell',
+                        sell_record = {'date': date, 'price': price, 'action': 'sell',
                                        'premium': net_premium, 'strike': strike,
                                        'contract': cid, 'dte': _dte, 'delta': _delta,
-                                       'pnl': 0, 'realized_pnl': realized_pnl})
+                                       'pnl': 0, 'realized_pnl': realized_pnl}
+                        if cap is not None:
+                            # cap_quote = (bid, ask, mid, delta), refreshed when
+                            # the cap prints and carried forward otherwise — it
+                            # must be fillable on a close day even if the cap
+                            # itself went unquoted.
+                            position['cap_strike'] = cap_strike
+                            position['cap_contract'] = cap_cid
+                            position['cap_quote'] = (cap_bid, cap_ask, cap_mid, cap_delta_v)
+                            sell_record['cap_strike'] = cap_strike
+                            sell_record['cap_premium'] = buy_px + COMMISSION_PER_SHARE
+                        num_calls_sold += 1
+                        total_premium_collected += net_premium * shares
+                        gross_premium_collected += gross_premium * shares
+                        trades.append(sell_record)
         else:
             if date >= position['expiration']:
                 # Real expiration: settle against the unadjusted close of the
@@ -294,31 +364,60 @@ def run_real_cc_overlay(
                         f'expiration {position["expiration"]} — missing data?'
                     )
                     settle_price = prev_price
-                if settle_price >= position['strike']:
-                    pnl = (position['premium_collected']
-                           - (settle_price - position['strike'])) * shares
-                else:
-                    pnl = position['premium_collected'] * shares
+                # Spread payoff at expiry: short pays -max(0, S-Ks), the cap
+                # (same expiration by construction) receives +max(0, S-Kl).
+                # With no cap, long_intrinsic is 0 and this is the naked
+                # settlement exactly. Above the cap strike the S terms cancel,
+                # flooring the loss at premium - (Kl - Ks) per share.
+                short_intrinsic = max(0.0, settle_price - position['strike'])
+                long_intrinsic = (max(0.0, settle_price - position['cap_strike'])
+                                  if 'cap_strike' in position else 0.0)
+                pnl = (position['premium_collected']
+                       - short_intrinsic + long_intrinsic) * shares
                 realized_pnl += pnl
                 wins, losses = (wins + 1, losses) if pnl >= 0 else (wins, losses + 1)
                 position = None
                 trades.append({'date': date, 'price': settle_price, 'action': 'expiration',
                                'pnl': pnl, 'realized_pnl': realized_pnl})
             else:
+                # Refresh the cap leg's quote independently of the short — the
+                # two legs can print on different days, and a close may fire on
+                # a day the deep-OTM cap is unquoted (then its carried quote is
+                # the fill). No-op when there is no cap.
+                if 'cap_contract' in position and day:
+                    cap_q = day['marks'].get(position['cap_contract'])
+                    if cap_q is not None:
+                        position['cap_quote'] = cap_q
                 quote = day['marks'].get(position['contract']) if day else None
                 if quote is not None:
                     bid_q, ask_q, mid_q, delta_q = quote
                     position['last_mid'] = mid_q
                     position['real_delta'] = delta_q
-                    buy_px = ask_q if fill == 'bid_ask' else mid_q
-                    buyback_cost = buy_px + COMMISSION_PER_SHARE
-                    # Profit target: what the buyback actually costs vs premium kept.
-                    hit_target = buy_px <= position['premium_collected'] * (1 - close_at_pct)
+                    # close_ref is the net cost to close the spread excluding
+                    # commission (buy back the short, sell the cap) — the
+                    # trigger reference. With no cap it is just the short ask,
+                    # so the triggers and pnl are byte-identical to the naive
+                    # path. The cap is unwound by SELLING at its bid (bid_ask)
+                    # or mid, from the live or carried cap quote.
+                    short_buy = ask_q if fill == 'bid_ask' else mid_q
+                    if 'cap_contract' in position:
+                        c_bid, _c_ask, c_mid, _c_delta = position['cap_quote']
+                        cap_sell = c_bid if fill == 'bid_ask' else c_mid
+                        close_ref = short_buy - cap_sell
+                        close_commission = 2 * COMMISSION_PER_SHARE
+                    else:
+                        close_ref = short_buy
+                        close_commission = COMMISSION_PER_SHARE
+                    # Profit target / stop key on the NET spread value, so
+                    # close_at_pct retains 75% of the credit actually banked.
+                    # Deep-ITM keys on the SHORT delta only (the assignment leg).
+                    hit_target = close_ref <= position['premium_collected'] * (1 - close_at_pct)
                     deep_itm = delta_q > 0.70
                     hit_stop = (stop_loss_mult is not None
-                                and buy_px >= position['premium_collected'] * float(stop_loss_mult))
+                                and close_ref >= position['premium_collected'] * float(stop_loss_mult))
                     if hit_target or deep_itm or hit_stop:
-                        pnl = (position['premium_collected'] - buyback_cost) * shares
+                        pnl = (position['premium_collected']
+                               - (close_ref + close_commission)) * shares
                         realized_pnl += pnl
                         wins, losses = (wins + 1, losses) if pnl >= 0 else (wins, losses + 1)
                         action = ('close' if hit_target
@@ -352,7 +451,13 @@ def run_real_cc_overlay(
 
         equity = price * (shares + hedge_shares) + current_cash + realized_pnl
         if position is not None:
-            equity += (position['premium_collected'] - position['last_mid']) * shares
+            # Open-spread MTM: net credit minus the current net cost to close
+            # (short mark minus cap mark). With no cap, spread_mark is the
+            # short mark and this is the naive MTM exactly.
+            spread_mark = position['last_mid']
+            if 'cap_quote' in position:
+                spread_mark -= position['cap_quote'][2]  # cap mid
+            equity += (position['premium_collected'] - spread_mark) * shares
         daily_rows.append({'date': date, 'equity': round(equity, 2), 'price': price})
         prev_date, prev_price = date, price
 
@@ -387,6 +492,13 @@ def run_real_cc_overlay(
         'excess_return_pct': round(total_return - buy_hold_return, 2),
         'net_overlay_pnl': round(net_overlay_pnl, 2),
         'total_premium_collected': round(total_premium_collected, 2),
+        # gross == total and cap_cost == 0 with no cap leg, so these are
+        # additive (the off-path summary's other fields are byte-identical).
+        # For the spread, retention on gross stays comparable to the naked
+        # baseline (gross = the short-leg upside given up); total_premium is
+        # the smaller net credit actually banked.
+        'gross_premium_collected': round(gross_premium_collected, 2),
+        'cap_cost_paid': round(gross_premium_collected - total_premium_collected, 2),
         'overlay_costs': round(round(total_premium_collected, 2) - round(net_overlay_pnl, 2), 2),
         'premium_retention_pct': round(retention, 1),
         'num_calls_sold': num_calls_sold,
