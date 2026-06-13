@@ -78,9 +78,11 @@ jobs:
       # Unit tests with branch coverage: the engine suite against in-memory
       # price fixtures plus the real-chain regression pins against the
       # release-asset dataset fetched above (no other network access; the
-      # unadjusted price CSV is committed).
+      # unadjusted price CSV is committed). test_trend_gate.py covers the
+      # registered experiment's analysis machinery (docs/prereg_trend_gate.md)
+      # — its dataset-gated layer pins treatment-side quantities only.
       - name: Run tests
-        run: pytest test_cc_backtest.py test_real_cc_backtest.py --cov=. --cov-branch -v
+        run: pytest test_cc_backtest.py test_real_cc_backtest.py test_trend_gate.py --cov=. --cov-branch -v
 
       # Smoke test: run the actual backtest against the committed MSFT CSV
       # to catch any breakage in the main entry point that the unit tests
