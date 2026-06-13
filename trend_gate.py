@@ -764,16 +764,17 @@ def cmd_characterize(markets: dict[str, dict[str, Any]]) -> None:
           f"{rep['pooled_fraction']:.6f}")
 
 
-def cmd_stage1(markets: dict[str, dict[str, Any]]) -> None:
-    """§5: Tests A and B against the first 10,000 accepted sequences, the
-    §5.4 gate rule, and the §9(a) MDE table from the baseline records."""
-    calendar = master_calendar(markets)
+def stage1_baseline(markets: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """The cheap half of Stage 1 (§5.2/§5.3 real statistics + §9(a) MDE):
+    three signal-unconditioned baseline engine runs, the pooled cycle/
+    exceedance series tagged by each ticker's OWN §2.1 state, and the
+    derived D_A/D_B/σ/MDE. No placebo pool — split out so the deterministic
+    core is pinnable without paying for the 10,000-sequence re-tagging.
 
-    # Baseline arms (signal-unconditioned engine runs; outcome data — only
-    # runnable now that the registration and this code are committed). Each
-    # cycle and exceedance observation is tagged with its OWN ticker's §2.1
-    # state at pooling time: the per-ticker signals agree only 0.68-0.81 of
-    # days (§3.3), so any shared date→state map would cross-tag.
+    Each cycle and exceedance observation is tagged with its own ticker's
+    state at pooling time: the per-ticker signals agree only 0.68-0.81 of
+    days (§3.3), so any shared date→state map would cross-tag.
+    """
     cycles: list[dict[str, Any]] = []
     obs: list[tuple[str, int, bool]] = []
     n_expected_record = 0.0
@@ -793,15 +794,6 @@ def cmd_stage1(markets: dict[str, dict[str, Any]]) -> None:
     real_b = d_b(obs)
     assert real_a is not None and real_b is not None
 
-    pool = SequencePool(markets, STAGE1_SEQUENCES)
-    pa_stats, rep_a = placebo_statistics(
-        lambda susp: d_a(cycles, suspended=susp), pool, calendar)
-    pb_stats, rep_b = placebo_statistics(
-        lambda susp: d_b(obs, suspended=susp), pool, calendar)
-    p_a = add_one_p(real_a, pa_stats, 'le')
-    p_b = add_one_p(real_b, pb_stats, 'ge')
-    passes = real_a < 0 and real_b > 0 and min(p_a, p_b) <= 0.10
-
     # §9(a): σ from the (signal-unconditioned) baseline cycles, but SE and
     # the t=2 mean at the EXPECTED RECORD-ARM n (~325 in the registration's
     # arithmetic) — the sample the verdict will actually have, not the
@@ -810,20 +802,87 @@ def cmd_stage1(markets: dict[str, dict[str, Any]]) -> None:
     sd = float(np.std(sigma_cycles, ddof=1))
     n_baseline = len(sigma_cycles)
     n_exp = max(int(round(n_expected_record)), 1)
-    report = {
-        'D_A': real_a, 'p_A': p_a, 'replacements_A': rep_a,
-        'D_B': real_b, 'p_B': p_b, 'replacements_B': rep_b,
+    return {
+        'cycles': cycles, 'obs': obs,
+        'D_A': real_a, 'D_B': real_b,
         'n_cycles_baseline': n_baseline, 'n_exceedance_days': len(obs),
-        'stage1_passes': passes,
         'mde_9a': {'per_cycle_sigma': sd,
                    'n_baseline': n_baseline,
                    'n_expected_record': n_exp,
                    'se_of_mean': sd / math.sqrt(n_exp),
                    'mean_at_t2': 2 * sd / math.sqrt(n_exp)},
+    }
+
+
+def stage1_pvalues(markets: dict[str, dict[str, Any]],
+                   baseline: dict[str, Any]) -> dict[str, Any]:
+    """The expensive half of Stage 1: re-tag the fixed baseline cycles/obs
+    under the first 10,000 accepted placebo sequences (§5.1 shared pool),
+    the add-one p-values (§5.2/§5.3), and the §5.4 gate rule."""
+    calendar = master_calendar(markets)
+    cycles, obs = baseline['cycles'], baseline['obs']
+    pool = SequencePool(markets, STAGE1_SEQUENCES)
+    pa_stats, rep_a = placebo_statistics(
+        lambda susp: d_a(cycles, suspended=susp), pool, calendar)
+    pb_stats, rep_b = placebo_statistics(
+        lambda susp: d_b(obs, suspended=susp), pool, calendar)
+    p_a = add_one_p(baseline['D_A'], pa_stats, 'le')
+    p_b = add_one_p(baseline['D_B'], pb_stats, 'ge')
+    passes = baseline['D_A'] < 0 and baseline['D_B'] > 0 and min(p_a, p_b) <= 0.10
+    return {
+        'p_A': p_a, 'replacements_A': rep_a,
+        'p_B': p_b, 'replacements_B': rep_b,
+        'stage1_passes': passes,
         'replacement_amendment_triggered':
             max(rep_a, rep_b) > REPLACEMENT_AMENDMENT_FRACTION * STAGE1_SEQUENCES,
     }
-    print(json.dumps(report, indent=2))
+
+
+def stage1_report(markets: dict[str, dict[str, Any]],
+                  baseline: dict[str, Any] | None = None,
+                  pvals: dict[str, Any] | None = None) -> dict[str, Any]:
+    """§5: the full Stage 1 record — Tests A and B against the first 10,000
+    accepted sequences, the §5.4 gate rule, and the §9(a) MDE table. A pure
+    merge of the two halves; pass precomputed `baseline`/`pvals` to reuse
+    work (the regression test does, to avoid a second 10,000-sequence pool)."""
+    if baseline is None:
+        baseline = stage1_baseline(markets)
+    if pvals is None:
+        pvals = stage1_pvalues(markets, baseline)
+    return {
+        'D_A': baseline['D_A'], 'p_A': pvals['p_A'],
+        'replacements_A': pvals['replacements_A'],
+        'D_B': baseline['D_B'], 'p_B': pvals['p_B'],
+        'replacements_B': pvals['replacements_B'],
+        'n_cycles_baseline': baseline['n_cycles_baseline'],
+        'n_exceedance_days': baseline['n_exceedance_days'],
+        'stage1_passes': pvals['stage1_passes'],
+        'mde_9a': baseline['mde_9a'],
+        'replacement_amendment_triggered': pvals['replacement_amendment_triggered'],
+    }
+
+
+def cmd_stage1(markets: dict[str, dict[str, Any]]) -> None:
+    print(json.dumps(stage1_report(markets), indent=2))
+
+
+def first_family_r_record(markets: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """§9(b)/§6.2 drift pin: the first accepted sequence's T and T_c via six
+    engine re-runs (record + complement gates), with NO checkpoint side
+    effects. Pinning this one record locks the whole Family R pipeline
+    cheaply; the published 100-sequence summary (mean/sd/percentiles) is
+    reproducible via `placebo-mde`, which checkpoints the same first record."""
+    calendar = master_calendar(markets)
+    seq = next(accepted_sequences(markets))
+    rec_per = sequence_record(markets, calendar, seq, complement=False)
+    comp_per = sequence_record(markets, calendar, seq, complement=True)
+    assert rec_per is not None and comp_per is not None
+    return {
+        'T': statistic_t(rec_per), 'T_c': statistic_t(comp_per),
+        'premium_ratio': float(np.mean(
+            [v['net_overlay_pnl'] / v['total_premium_collected']
+             for v in rec_per.values()])),
+    }
 
 
 def _stream_fingerprint(markets: dict[str, dict[str, Any]]) -> str:

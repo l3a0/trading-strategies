@@ -45,6 +45,7 @@ from trend_gate import (
     d_b,
     draw_raw_sequence,
     family_s_offsets,
+    first_family_r_record,
     load_market,
     loyo_t,
     master_calendar,
@@ -56,12 +57,24 @@ from trend_gate import (
     shifted_signal_suspension,
     shifted_states,
     short_call_days,
+    stage1_baseline,
+    stage1_report,
     statistic_t,
     vol_ablation_suspension,
 )
 
 _HAVE_ALL_DATA = (_HAVE_DAILIES and _HAVE_MSFT_DAILIES and _HAVE_SPY_DAILIES
                   and _HAVE_MSFT_BACKFILL and _HAVE_QQQ_BACKFILL)
+
+
+@pytest.fixture(scope='module')
+def markets() -> dict[str, dict[str, Any]]:
+    """Load all three markets once for the whole module — the chain stores
+    are large and cold-load slowly, and both dataset-gated classes share
+    them (the signal-side pins and the Stage 1 regression pins)."""
+    if not _HAVE_ALL_DATA:
+        pytest.skip('needs all three tickers\' option dailies + backfills')
+    return {t: load_market(t) for t in TICKERS}
 
 
 # ---- pure logic: §2.1 signal ----
@@ -351,12 +364,9 @@ class TestSuspensionSeam:
 class TestRegisteredSignalSide:
     """Pins the treatment-assignment quantities the registration states
     (§3.1, §3.3). No engine run, no cycle P&L, no exceedance series — these
-    tests produce no Stage 1 number (§10 ordering).
+    tests produce no Stage 1 number (§10 ordering). Uses the module-scoped
+    `markets` fixture.
     """
-
-    @pytest.fixture(scope='class')
-    def markets(self) -> dict[str, dict[str, Any]]:
-        return {t: load_market(t) for t in TICKERS}
 
     def test_analysis_spans(self, markets) -> None:
         """§3.1 table: span starts, ends, and trading-day counts."""
@@ -438,3 +448,102 @@ class TestRegisteredSignalSide:
             level = sum(flags) / len(flags)
             frac = len(susp) / len(m['span_dates'])
             assert frac == pytest.approx(level, abs=0.01), t
+
+
+# ---- dataset-gated: the published Stage 1 outcome numbers ----
+
+@pytest.mark.skipif(
+    not _HAVE_ALL_DATA,
+    reason='needs all three tickers\' option dailies (and the MSFT/QQQ '
+           'backfills) or their committed .gz twins',
+)
+class TestTrendGateStage1Regression:
+    """Pin the published Stage 1 results (docs/trend_gate_results.md).
+
+    These are the experiment's *outcome* numbers — legitimately computable
+    only now that the registration (4d2239b) and the analysis code are
+    committed (§10 ordering). They are deterministic: seeded placebo stream,
+    committed data, committed engine. The signal-side pins in
+    TestRegisteredSignalSide guard the *inputs*; these guard the *result*, so
+    a future engine or generator change that silently shifted the verdict
+    fails CI instead of quietly invalidating the published report.
+
+    Three cost tiers behind one shared module fixture:
+      - the deterministic core (D_A/D_B/counts/σ/MDE): three baseline engine
+        runs, sub-minute;
+      - the gate verdict (p_A/p_B/passes): adds the 10,000-sequence re-tag,
+        a couple of minutes of pure-numpy tagging;
+      - the Family R drift pin: the first accepted sequence's T via six
+        engine re-runs — a cheap proxy for the 600-run placebo-MDE summary,
+        which stays reproducible via `python trend_gate.py placebo-mde`.
+    """
+
+    @pytest.fixture(scope='class')
+    def baseline(self, markets) -> dict[str, Any]:
+        """The cheap tier: three baseline engine runs, shared by every pin
+        below (the gate-verdict fixture re-tags these same cycles)."""
+        return stage1_baseline(markets)
+
+    @pytest.fixture(scope='class')
+    def pvalues(self, markets, baseline) -> dict[str, Any]:
+        """The expensive tier, computed once: the 10,000-sequence re-tag.
+        Depends on `baseline`, so the three engine runs are not repeated;
+        selecting only `test_deterministic_core` never instantiates this."""
+        from trend_gate import stage1_pvalues
+        return stage1_pvalues(markets, baseline)
+
+    def test_deterministic_core(self, baseline) -> None:
+        """§5.2/§5.3 real statistics + §9(a) MDE — both wrong-signed.
+
+        D_A = +$439/cycle against a `D_A < 0` prediction; D_B = −3.07 pp
+        against `D_B > 0`. 884 baseline cycles, 11,452 exceedance days."""
+        assert baseline['D_A'] == pytest.approx(439.44, abs=0.5)
+        assert baseline['D_B'] == pytest.approx(-0.03069, abs=0.0005)
+        assert baseline['n_cycles_baseline'] == 884
+        assert baseline['n_exceedance_days'] == 11_452
+        mde = baseline['mde_9a']
+        assert mde['per_cycle_sigma'] == pytest.approx(9_073.1, abs=1.0)
+        assert mde['n_expected_record'] == 331  # registration forecast ~325
+        assert mde['mean_at_t2'] == pytest.approx(997.4, abs=1.0)
+
+    def test_gate_verdict(self, pvalues) -> None:
+        """§5.4 kill-gate: both p-values mid-placebo, no replacements, FAIL.
+
+        p_A ≈ 0.736 (~74th placebo percentile), p_B ≈ 0.763 (~24th). The
+        gate needs strict D_A<0 AND strict D_B>0 AND min(p)≤0.10; it fails
+        all three. Deterministic given the seed-20260611 stream, so the
+        p-values are pinned tightly."""
+        assert pvalues['p_A'] == pytest.approx(0.7356, abs=0.003)
+        assert pvalues['p_B'] == pytest.approx(0.7633, abs=0.003)
+        assert pvalues['replacements_A'] == 0
+        assert pvalues['replacements_B'] == 0
+        assert pvalues['stage1_passes'] is False
+        assert pvalues['replacement_amendment_triggered'] is False
+
+    def test_report_wires_core_and_pvalues(self, markets, baseline,
+                                           pvalues) -> None:
+        """`stage1_report` (what `cmd_stage1` prints) is a pure merge of the
+        two halves — confirm every published field maps to the right source,
+        catching a refactor field-swap. Passes the cached fixtures in, so it
+        recomputes nothing (no second 10k pool)."""
+        rep = stage1_report(markets, baseline, pvalues)
+        assert rep['D_A'] == baseline['D_A']
+        assert rep['D_B'] == baseline['D_B']
+        assert rep['n_cycles_baseline'] == baseline['n_cycles_baseline']
+        assert rep['mde_9a'] == baseline['mde_9a']
+        assert rep['p_A'] == pvalues['p_A']
+        assert rep['p_B'] == pvalues['p_B']
+        assert rep['stage1_passes'] == pvalues['stage1_passes']
+
+    def test_family_r_first_record(self, markets) -> None:
+        """§9(b)/§6.2 drift pin: the first accepted placebo sequence's T and
+        complement T_c (six engine re-runs, no checkpoint side effects).
+
+        Locks the Family R pipeline cheaply. The published §3.2 placebo-MDE
+        summary — mean −$71.45/short-call day, sd $29.30 — is the spread over
+        the first 100 such records; this pins record #0 of that 100, so a
+        pipeline change that would move the summary moves this first."""
+        rec = first_family_r_record(markets)
+        assert rec['T'] == pytest.approx(-27.9387, abs=0.01)
+        assert rec['T_c'] == pytest.approx(-97.2961, abs=0.01)
+        assert rec['premium_ratio'] == pytest.approx(-0.13204, abs=0.0005)
