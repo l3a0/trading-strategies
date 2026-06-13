@@ -4,15 +4,20 @@ Two layers, like the other real-chain suites:
 
 - Pure-logic unit tests (always run): cycle reconstruction + rip flagging,
   the PER-TICKER post-rip shadow (a rip on one name must not cool down
-  another), and the D_A statistic — all on hand-computable fixtures.
-- TestCooldownScout (dataset-gated): pins the killed post-rip-cooldown
-  scout. These are EXPLORATORY numbers, not a registered verdict — pinned
-  so the dead end is not re-explored. The verdict is double: the per-cycle
-  effect is wrong-signed (post-rip cycles lose LESS — D_A > 0 at every
-  horizon, real arrangement in the HIGH tail of the trigger-placement null),
-  and there is no return memory to set the cooldown length to (forward
-  returns after a rip sit below baseline; daily-return lag-1 acf is
-  negative). See docs/explorations.md.
+  another), the D_A statistic, the annualized-vol helper, and the vendor-IV
+  reader — all on hand-computable fixtures.
+- TestCooldownScout (dataset-gated): pins the killed post-rip-cooldown scout.
+  The verdict is double — the per-cycle effect is wrong-signed (post-rip
+  cycles lose LESS — D_A > 0 at every horizon, real arrangement in the HIGH
+  tail of the trigger-placement null), and there is no return memory to set
+  the cooldown length to.
+- TestIvRichnessScout (dataset-gated): pins the killed IV-richness
+  (volatility-risk-premium) gate. The ex-post VRP at the sold contract is ~0,
+  entry richness doesn't predict cycle P&L (Spearman ~0), and the one
+  positive-looking number (a binary IV>RV split) is the low-vol confound.
+
+All pins are EXPLORATORY numbers, not registered verdicts — pinned so the
+dead ends are not re-explored. See docs/explorations.md.
 """
 
 from __future__ import annotations
@@ -22,9 +27,12 @@ import pytest
 
 from explorations import (
     SCOUT_TICKERS,
+    _ann_vol,
     _d_a,
     _ord,
     cooldown_scout,
+    iv_richness_scout,
+    load_entry_ivs,
     load_naked_run,
     post_rip_mask,
     reconstruct_cycles,
@@ -79,14 +87,46 @@ class TestCooldownScoutMechanics:
         assert _d_a(pnls, np.array([True, False, False])) == pytest.approx(225.0)
         assert _d_a(pnls, np.array([False, False, False])) is None  # empty cell
 
+    def test_ann_vol(self) -> None:
+        # annualized realized vol = sample std (ddof=1) of log returns × √252
+        r = np.array([0.01, -0.01, 0.02, -0.02])
+        assert _ann_vol(r) == pytest.approx(float(np.std(r, ddof=1)) * np.sqrt(252))
 
-# ---- dataset-gated: the pinned cooldown scout ----
+    def test_load_entry_ivs(self, tmp_path) -> None:
+        """The IV reader picks the vendor implied_volatility for exactly the
+        wanted (date, contractID) rows, skips others, and tolerates blanks."""
+        header = ('date,expiration,dte,strike,bid,ask,mark,last,volume,'
+                  'open_interest,implied_volatility,delta,contractID')
+        p = tmp_path / 'xyz_option_dailies.csv'
+        p.write_text('\n'.join([
+            header,
+            '2024-01-02,2024-02-02,31,110,2.0,2.2,2.1,0,0,0,0.2150,0.25,WANT',
+            '2024-01-02,2024-02-02,31,120,0.4,0.6,0.5,0,0,0,0.1800,0.10,SKIP',
+            '2024-01-03,2024-02-02,30,110,1.0,1.2,1.1,0,0,0,,0.25,BLANK',
+        ]) + '\n')
+        out = load_entry_ivs('XYZ', {('2024-01-02', 'WANT'),
+                                     ('2024-01-03', 'BLANK')}, path=str(p))
+        assert out == {('2024-01-02', 'WANT'): pytest.approx(0.2150)}
+
+
+# ---- dataset-gated: the pinned scouts ----
 
 @pytest.fixture(scope='module')
-def scout():
+def naked_runs():
+    """The three naked baseline runs, loaded once and shared by both scouts."""
     if not _HAVE_ALL:
         pytest.skip('needs MSFT + QQQ + SPY option dailies (or .gz twins)')
-    return cooldown_scout([load_naked_run(t) for t in SCOUT_TICKERS])
+    return [load_naked_run(t) for t in SCOUT_TICKERS]
+
+
+@pytest.fixture(scope='module')
+def scout(naked_runs):
+    return cooldown_scout(naked_runs)
+
+
+@pytest.fixture(scope='module')
+def iv(naked_runs):
+    return iv_richness_scout(naked_runs)
 
 
 @pytest.mark.skipif(
@@ -149,3 +189,52 @@ class TestCooldownScout:
         deltas = [row['net_pnl_delta_if_skipped'] for row in scout['grid']]
         assert all(d > 0 for d in deltas)
         assert deltas == sorted(deltas)  # monotonically rising with N
+
+
+@pytest.mark.skipif(
+    not _HAVE_ALL,
+    reason='needs MSFT + QQQ + SPY option dailies (or their committed .gz twins)',
+)
+class TestIvRichnessScout:
+    """Pin the killed IV-richness (volatility-risk-premium) gate
+    (docs/explorations.md).
+
+    EXPLORATORY, not a registered verdict. The idea: sell only when implied
+    vol is rich vs realized, to harvest the volatility premium. KILLED: there
+    is no premium to gate on. Reads the vendor implied_volatility at entry
+    (the engine's loader discards it), fail-closed below IV_FLOOR.
+    """
+
+    def test_assessed(self, iv) -> None:
+        """685 cycles carry a usable entry IV; 9 dropped by the IV<0.05 guard."""
+        assert iv['tickers'] == list(SCOUT_TICKERS)
+        assert iv['n_assessed'] == 685
+        assert iv['n_dropped_iv_guard'] == 9
+
+    def test_no_premium_to_gate_on(self, iv) -> None:
+        """The ex-post VRP at the sold ~25-delta/30-day contract (entry IV
+        minus the realized vol over the option's life) is ~0 / negative — the
+        options were NOT systematically overpriced vs what actually realized,
+        so there is no premium to harvest."""
+        assert iv['vrp_median_pct'] == pytest.approx(-0.362, abs=0.05)
+        assert iv['vrp_mean_pct'] == pytest.approx(-2.374, abs=0.1)
+        assert iv['vrp_median_pct'] < 0.5  # not richly positive
+
+    def test_richness_does_not_predict_pnl(self, iv) -> None:
+        """The entry-richness signal (the thing you could gate on) has ~zero
+        rank-correlation with cycle P&L."""
+        assert iv['spearman_richness_pnl'] == pytest.approx(0.036, abs=0.02)
+        assert abs(iv['spearman_richness_pnl']) < 0.1
+
+    def test_binary_split_is_the_low_vol_confound(self, iv) -> None:
+        """The one positive-looking number — a binary IV>RV split separates
+        P&L by +$656/cycle at the 93rd permutation percentile — is NOT a
+        premium. "Rich" entries cluster where trailing vol is low (0.15 vs
+        0.23), i.e. calm markets, where covered calls do better regardless.
+        With the ex-post VRP ~0 and the rank-correlation ~0, this split is the
+        vol-level confound, not a tradable edge."""
+        assert iv['D_A_rich_vs_not'] == pytest.approx(655.69, abs=2.0)
+        assert iv['perm_percentile'] == pytest.approx(0.926, abs=0.02)
+        assert iv['mean_trailing_rv_rich'] == pytest.approx(0.1457, abs=0.002)
+        assert iv['mean_trailing_rv_not'] == pytest.approx(0.2337, abs=0.002)
+        assert iv['mean_trailing_rv_rich'] < iv['mean_trailing_rv_not']

@@ -23,23 +23,35 @@ Entries:
   confirmation that conditioning call-selling entry on recent upward price
   action has the sign backwards on these names (cf. the trend gate,
   docs/trend_gate_results.md).
+- iv_richness_scout — "sell only when implied vol is rich vs realized" (the
+  volatility-risk-premium gate). KILLED: at the sold ~25-delta/30-day
+  contract the ex-post VRP (entry IV minus the realized vol over the option's
+  life) is ~0, and the entry-richness signal does not predict cycle P&L
+  (Spearman ~0; the rich-vs-not split is mid-pack against its permutation
+  null) — so there is no premium to gate on. Reads the vendor
+  implied_volatility column directly (the engine's loader discards it as
+  unreliable), with a fail-closed IV < 0.05 floor for the lattice/placeholder
+  rows.
 
 Usage:
-    python explorations.py            # run + print the cooldown scout
+    python explorations.py            # run + print both scouts
 """
 
 from __future__ import annotations
 
+import csv
 import json
 from datetime import datetime
 from typing import Any, Sequence
 
 import numpy as np
+import pandas as pd
 
 from real_cc_backtest import (
     CHAIN_CLEAN_START,
     load_chain_store,
     load_unadjusted_prices,
+    open_dailies,
     run_real_cc_overlay,
 )
 
@@ -60,6 +72,13 @@ FORWARD_HORIZONS = (21, 30, 45, 60, 90, 120)               # trading days
 PERMUTATION_SEED = 20260613
 PERMUTATION_DRAWS = 1000
 TERMINAL_ACTIONS = ('close', 'close_itm', 'expiration')
+
+# IV-richness scout knobs.
+IV_FLOOR = 0.05      # vendor IVs below this are lattice/placeholder garbage;
+                     # fail-closed — a cycle whose entry IV is missing or
+                     # < floor can't be assessed for richness and is dropped.
+RV_WINDOW = 30       # trailing realized-vol window (trading days)
+VRP_FORWARD = 21     # ~30 calendar days = the sold option's life (trading days)
 
 
 def _ord(date: str) -> int:
@@ -103,6 +122,7 @@ def reconstruct_cycles(trades: list[dict[str, Any]]) -> list[dict[str, Any]]:
             assert entry is not None, 'terminal record without a sell'
             cycles.append({
                 'entry_date': entry['date'],
+                'entry_contract': entry.get('contract'),
                 'terminal_date': t['date'],
                 'action': t['action'],
                 'pnl': t['pnl'],
@@ -235,10 +255,108 @@ def _forward_return_memory(runs: Sequence[dict[str, Any]]) -> dict[str, Any]:
     return {'forward': forward, 'daily_return_acf_lag1': round(acf1, 3)}
 
 
+def load_entry_ivs(ticker: str, wanted: set[tuple[str, str]],
+                   path: str | None = None) -> dict[tuple[str, str], float]:
+    """One streaming pass over the dailies → vendor implied_volatility for the
+    requested (date, contractID) entry rows. The engine's load_chain_store
+    drops the IV column (it is unreliable in places), so the IV-richness scout
+    reads it here instead of through the store. `path` overrides the
+    ticker-derived filename (for tests)."""
+    out: dict[tuple[str, str], float] = {}
+    with open_dailies(path or f'{ticker.lower()}_option_dailies.csv') as f:
+        for r in csv.DictReader(f):
+            key = (r['date'], r['contractID'])
+            if key in wanted:
+                try:
+                    out[key] = float(r['implied_volatility'])
+                except (TypeError, ValueError):
+                    pass
+    return out
+
+
+def _ann_vol(log_returns: np.ndarray) -> float:
+    return float(np.std(log_returns, ddof=1)) * float(np.sqrt(252))
+
+
+def iv_richness_scout(runs: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """The volatility-risk-premium gate kill-gate. For each naked cycle, read
+    the entry contract's vendor IV and ask two things: (1) is the option
+    actually rich — what is the ex-post VRP (entry IV minus the realized vol
+    over the option's life)? and (2) does the entry-richness signal (entry IV
+    minus trailing realized vol, the thing you could gate on) predict cycle
+    P&L? Cycles whose entry IV is missing or below IV_FLOOR are dropped
+    (fail-closed). EXPLORATORY — kills or justifies only."""
+    rows: list[dict[str, Any]] = []
+    dropped = 0
+    for r in runs:
+        prices = np.array(r['prices'], dtype=float)
+        logret = np.diff(np.log(prices))
+        idx = {d: i for i, d in enumerate(r['dates'])}
+        wanted = {(c['entry_date'], c['entry_contract']) for c in r['cycles']
+                  if c.get('entry_contract')}
+        ivs = load_entry_ivs(r['ticker'], wanted)
+        for c in r['cycles']:
+            i = idx.get(c['entry_date'])
+            iv = ivs.get((c['entry_date'], c.get('entry_contract')))
+            if i is None or i < RV_WINDOW or iv is None or iv < IV_FLOOR:
+                dropped += 1
+                continue
+            trailing = _ann_vol(logret[i - RV_WINDOW:i])   # known at entry
+            fwd = (_ann_vol(logret[i:i + VRP_FORWARD])
+                   if i + VRP_FORWARD <= len(logret) else None)
+            rows.append({
+                'ticker': r['ticker'],
+                'pnl': float(c['pnl']),
+                'entry_iv': iv,
+                'trailing_rv': trailing,
+                'richness': iv - trailing,           # gating signal (trailing)
+                'vrp': (iv - fwd) if fwd is not None else None,  # ex-post
+            })
+
+    pnls = np.array([x['pnl'] for x in rows], dtype=float)
+    rich = np.array([x['richness'] > 0 for x in rows], dtype=bool)
+    d_a = _d_a(pnls, rich)
+    # permutation null: random same-size "rich" split (does the IV-defined
+    # split beat a random split of the same size?)
+    rng = np.random.default_rng(PERMUTATION_SEED)
+    n_rich = int(rich.sum())
+    perm_le = 0
+    for _ in range(PERMUTATION_DRAWS):
+        fake = np.zeros(len(rows), dtype=bool)
+        fake[rng.choice(len(rows), size=n_rich, replace=False)] = True
+        pd_ = _d_a(pnls, fake)
+        if pd_ is not None and d_a is not None and pd_ <= d_a:
+            perm_le += 1
+    # Spearman = Pearson on ranks (avg-rank ties), computed without scipy.
+    rich_rank = pd.Series([x['richness'] for x in rows]).rank().to_numpy()
+    pnl_rank = pd.Series(pnls).rank().to_numpy()
+    spearman = float(np.corrcoef(rich_rank, pnl_rank)[0, 1])
+    vrps = np.array([x['vrp'] for x in rows if x['vrp'] is not None], dtype=float)
+    trail = np.array([x['trailing_rv'] for x in rows], dtype=float)
+    return {
+        'tickers': [r['ticker'] for r in runs],
+        'n_assessed': len(rows),
+        'n_dropped_iv_guard': dropped,
+        'vrp_median_pct': round(float(np.median(vrps)) * 100, 3),
+        'vrp_mean_pct': round(float(np.mean(vrps)) * 100, 3),
+        'frac_rich_entries': round(float(rich.mean()), 3),
+        'spearman_richness_pnl': round(spearman, 3),
+        'D_A_rich_vs_not': round(d_a, 2) if d_a is not None else None,
+        'perm_percentile': round(perm_le / PERMUTATION_DRAWS, 3),
+        # The vol-level confound behind the binary split: "rich" (IV >
+        # trailing RV) entries cluster where trailing vol is LOW — calm
+        # markets, where covered calls do better regardless of any premium.
+        'mean_trailing_rv_rich': round(float(trail[rich].mean()), 4),
+        'mean_trailing_rv_not': round(float(trail[~rich].mean()), 4),
+    }
+
+
 def main() -> None:
     print('Loading naked runs (3 chain stores; a few minutes cold) ...', flush=True)
     runs = [load_naked_run(t) for t in SCOUT_TICKERS]
-    print(json.dumps(cooldown_scout(runs), indent=2, default=str))
+    print(json.dumps({'cooldown_scout': cooldown_scout(runs),
+                      'iv_richness_scout': iv_richness_scout(runs)},
+                     indent=2, default=str))
 
 
 if __name__ == '__main__':

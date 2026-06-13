@@ -82,12 +82,48 @@ exists. Here it told you none exists.
 
 ---
 
+## IV-richness gate — KILLED (2026-06-11, pinned 2026-06-13)
+
+**The idea.** Sell a call only when its implied volatility is *rich* relative
+to recent realized volatility — the classic volatility-risk-premium play. If
+options are systematically overpriced, gate entry to the rich days and harvest
+the premium.
+
+**How it was tested.** For each naked cycle, read the entry contract's vendor
+implied volatility (the engine's loader discards the IV column as unreliable,
+so the scout reads it directly, with a fail-closed IV < 0.05 floor for the
+lattice/placeholder rows). Pooled across MSFT / QQQ / SPY — 685 cycles carry a
+usable entry IV. Three measurements, all pinned in `TestIvRichnessScout`:
+
+1. **Is there premium to harvest?** The ex-post VRP at the sold ~25-delta /
+   30-day contract = entry IV minus the realized vol over the option's life.
+2. **Does the signal predict P&L?** The rank-correlation (Spearman) of entry
+   richness — entry IV minus trailing realized vol, the thing you'd gate on —
+   against cycle P&L.
+3. **Does a rich/not split separate outcomes?** A binary `D_A` on
+   IV > trailing-RV, with a permutation null.
+
+**The verdict — no premium to gate on.** The three measurements:
+
+| Measurement | Value | Reading |
+| --- | --- | --- |
+| Ex-post VRP at the sold contract (median / mean) | −0.36% / −2.37% | ~0 — options not systematically overpriced |
+| Spearman(entry richness, cycle P&L) | +0.04 | richness doesn't predict P&L |
+| Binary IV>RV split, `D_A` | +$656/cycle (93rd pct) | looks like signal — but see below |
+
+The one positive-looking number is a **confound, not a premium.** "Rich"
+entries (IV above trailing realized vol) cluster where trailing vol is *low* —
+mean trailing RV 0.15 for rich entries vs 0.23 for the rest — i.e. in calm
+markets, where covered calls do better regardless of any volatility premium.
+With the ex-post VRP at \~0 and the rank-correlation at \~0, the binary split
+is gating on the *vol level*, not harvesting a premium. There is no
+volatility-risk-premium edge to condition on at these strikes on these names.
+
+---
+
 ## Related, recorded elsewhere
 
 - **Trend gate** (suspend selling during a 200-day uptrend) — a *registered*
   experiment, killed at Stage 1 with the same wrong sign (`D_A = +$439`). Full
   results in [trend_gate_results.md](trend_gate_results.md); it is not a scout,
   so it lives there with its own pins, not here.
-- **IV-richness gate** (sell only when implied vol is rich vs realized) — an
-  earlier exploratory scout that found the volatility channel essentially
-  empty on these chains. Not yet pinned here; a candidate to backfill.
