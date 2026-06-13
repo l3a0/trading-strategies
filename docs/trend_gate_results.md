@@ -245,6 +245,15 @@ the same provenance this report does. Family R checkpoints land in
 `trend_gate_runs/` (gitignored; safe to delete — re-running recomputes
 byte-identical records).
 
+The published figures are pinned in CI by `TestTrendGateStage1Regression`
+(`test_trend_gate.py`), so an engine or generator change that silently
+shifted the verdict fails the build rather than quietly invalidating this
+report. The class pins the deterministic core (D_A, D_B, the counts, the
+§9(a) MDE) from three baseline runs, the gate verdict (p_A, p_B, the FAIL)
+from the 10,000-sequence re-tag, and one Family R record (the first
+accepted sequence's `T`) as a cheap drift-check on the placebo-MDE pipeline
+— the full 100-record summary in §3.2 stays reproducible via `placebo-mde`.
+
 ---
 
 ## 6. Lineage
