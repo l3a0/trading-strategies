@@ -254,7 +254,7 @@ Before reporting a code change done, run:
 rg '\.py#L\d+' README.md tutorial_covered_call_backtest.md blog/*.md
 
 # Every symbol name cited in prose — confirm names still exist in code
-rg -n '(run_cc_overlay|compute_statistics|calc_rolling_volatility|estimate_iv|detect_regime|find_strike_for_delta|classify_regime|regime_analysis|walk_forward_optimization|walk_forward_real|_param_combinations|degrees_of_freedom|monte_carlo_shuffle|sensitivity_analysis|risk_free_rate|delta_hedge|TestScenario\w*|TestDegreesOfFreedom|TestMsftTenYearRegression|TestRiskManagedCoveredCall|TestMsftRiskManagedRegression|TestQqqTenYearRegression|TestQqqRiskManagedRegression|TestQqqRealChainRegression|TestMsftRealChainRegression|TestMsftRealRiskManagedRegression|TestMsftRealWalkForwardRegression|TestMsftExtendedSpanRegression|TestMsftStopLossRegression|TestSpyRealWalkForwardRegression|TestSpyExpandedGridRegression|TestQqqExtendedWalkForwardRegression|TestChainStoreEraClip|TestTrendGateStage1Regression|TestRegisteredSignalSide|TestMsftRealCallSpreadRegression|TestCallSpreadMechanics|run_real_cc_overlay|load_chain_store|select_entry|select_cap_leg|cap_delta|CHAIN_CLEAN_START)' README.md tutorial_covered_call_backtest.md blog/*.md docs/*.md
+rg -n '(run_cc_overlay|compute_statistics|calc_rolling_volatility|estimate_iv|detect_regime|find_strike_for_delta|classify_regime|regime_analysis|walk_forward_optimization|walk_forward_real|_param_combinations|degrees_of_freedom|monte_carlo_shuffle|sensitivity_analysis|risk_free_rate|delta_hedge|TestScenario\w*|TestDegreesOfFreedom|TestMsftTenYearRegression|TestRiskManagedCoveredCall|TestMsftRiskManagedRegression|TestQqqTenYearRegression|TestQqqRiskManagedRegression|TestQqqRealChainRegression|TestMsftRealChainRegression|TestMsftRealRiskManagedRegression|TestMsftRealWalkForwardRegression|TestMsftExtendedSpanRegression|TestMsftStopLossRegression|TestSpyRealWalkForwardRegression|TestSpyExpandedGridRegression|TestQqqExtendedWalkForwardRegression|TestChainStoreEraClip|TestTrendGateStage1Regression|TestRegisteredSignalSide|TestMsftRealCallSpreadRegression|TestCallSpreadMechanics|TestCooldownScout|TestCooldownScoutMechanics|TestIvRichnessScout|run_real_cc_overlay|load_chain_store|select_entry|select_cap_leg|cap_delta|cooldown_scout|iv_richness_scout|CHAIN_CLEAN_START)' README.md tutorial_covered_call_backtest.md blog/*.md docs/*.md
 
 # Every figure embed (blog ../docs/… and tutorial docs/…) resolves to a real PNG
 for f in blog/*.md tutorial_covered_call_backtest.md; do
@@ -296,6 +296,22 @@ The real-chain datasets are the one asset in this repo that costs money to repla
 - **Validation battery** before shipping any dataset: coverage vs. the trading calendar (expect zero missing days), Saturday-expiry counts by era, mark-outside-quote counts by year, zero-bid rates, and per-day entry-band availability (`bid > 0`, `0.05 < delta < 0.60`) — the last counted both raw and on defect-free rows only (mark inside [bid, ask]); a large gap between the two counts is the placeholder-greeks signature and marks a span for `CHAIN_CLEAN_START` exclusion.
 - **Publishing:** `gzip -k -9` the CSV → append its sha256 to `data_checksums.sha256` → `gh release upload data-2026-06 <file>.gz` → add the filename to the CI cache `path` list in `ci.yml` and confirm the fetch glob `*_option_dailies*.csv.gz` (ci.yml + fetch_option_data.sh) matches the new name — backfill names like `msft_option_dailies_2008_2016.csv.gz` do NOT match the narrower `*_option_dailies.csv.gz`, which broke CI once (PR #5) — → round-trip verify by downloading **with the same glob CI uses** (an exact-name download can mask a glob miss) and running `shasum -a 256 -c` → copy the `.gz` + checksums file to the personal cold-storage folder (location lives in private memory, deliberately not in this file — CLAUDE.md is carried by the public mirror).
 - **Recovery story** (why the ceremony): release assets are the primary Alpha-Vantage-independent home; cold storage survives account-level mishaps; checksums protect *integrity*, not *existence*. The real-chain tests skip rather than fail when datasets are absent, so a fresh clone still runs the engine suite without any of this.
+
+---
+
+## Pinning null results and explorations
+
+**When an exploratory scout kills a strategy idea, pin it in the repo — don't leave it ephemeral.** Cheap kill-gate scouts (the post-rip cooldown, the trend gate's Stage-1-style checks, the IV-richness gate) otherwise get re-derived from scratch every session; pinning settles a dead end once. The owner's standing instruction (2026-06-13): "pin null results and explorations to avoid redoing them again."
+
+The three surfaces, mirroring the variant-pin pattern:
+
+- **`explorations.py`** — the deterministic scout code. It reuses the **pinned naked runs** (so its inputs are already-pinned regression runs) and **fixed RNG seeds**, and it applies the same data-hygiene rules the rest of the repo does (`CHAIN_CLEAN_START` era clip; per-ticker tagging — a rip/signal on one name must not condition another). Fix those shortcuts *before* pinning — the quick scout that produced the idea often skips them.
+- **`test_explorations.py`** — a dataset-gated regression class (`skipif` on the datasets, module-scoped fixture loading the naked runs once) pinning the scout's **decisive outputs**: the wrong-signed statistic, its permutation percentile, the no-mechanism/no-memory measurement. Plus an always-run synthetic layer for the cycle/tagging logic.
+- **`docs/explorations.md`** — the human-readable negative-results log entry.
+
+**Keep the epistemic label loud on every surface.** These are **exploratory** (sample-spent, kill-or-justify), **not registered verdicts**. Pinning the number prevents re-work; it does *not* promote the scout to a confirmatory finding — that line is exactly what `docs/prereg_trend_gate.md` protects. A scout that *passes* earns a registration, not a headline. (Registered experiments like the trend gate live in their own `docs/<name>_results.md` with their own pins, **not** in the exploration log.)
+
+This is a new public-surface set, so it's covered by the cross-surface rules above: the symbol-sweep regex carries `cooldown_scout` / `TestCooldownScout*`, `ci.yml`'s pytest line runs `test_explorations.py`, and the README file table lists the three files.
 
 ---
 
