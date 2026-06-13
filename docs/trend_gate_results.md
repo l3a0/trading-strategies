@@ -16,28 +16,86 @@ days better than structure-matched random gates?
 
 ---
 
-## 0. Reader's guide — how to read a null
+## 0. Reader's guide — the experiment in plain words
 
 This report doubles as a teaching example, like the registration it answers.
-The operative content is §1–§3; the surrounding sentences explain what each
-number is allowed to mean.
+The operative content — exact numbers, exact rules — is §1–§3; this section
+tells the same story in plain language first, then explains how to read a
+null.
 
-**Why the experiment ended at Stage 1.** The registration's Stage 1 (§5) is a
-kill-gate: two cheap mechanism checks on records that already existed, able
-only to stop the experiment. Passing would have proven nothing — the same
-mined sample generated the hypothesis — but failing ends it, because a gate
-whose mechanism is absent in-sample has no claim to a confirmatory test.
-Both checks failed, each with the wrong sign. Stage 2 (the 1,000
-placebo-gate engine re-runs) never ran, no record-arm backtest was ever
-computed, and the §2.3 no-promotion rule forbids retreating to a friendlier
-signal definition or attribution convention.
+**The idea being tested.** Selling covered calls on these stocks loses money
+one way above all others: the stock takes off, and the call you sold has to
+be bought back at a painful price. The fix under test sounded obvious —
+don't sell calls while the stock is trending up. Sell only when it looks
+flat or falling, and just hold the shares the rest of the time.
 
-**Why the verdict sentence below was written before the result existed.** After
-results exist, every author reads a p of 0.07 as "nearly significant."
-The registration pre-committed one sentence per outcome (§7) while the
-outcome was unknown; the row that fired is quoted verbatim in §1. That is
-the entire point of the exercise: the conclusion was constrained before the
-evidence could argue.
+**The sealed envelope.** Before any outcome data was touched, every rule was
+written down and merged: the exact definition of "trending up," the data,
+the statistics, the pass thresholds — and the verbatim sentence to publish
+for each possible result (§7). Once results exist, every author reads a
+near-miss as a hit (in the standard scoring, a p-value of 0.07 sits just shy
+of the usual 0.05 bar and becomes "nearly significant"), and every
+bookkeeping choice bends toward the desired answer. Writing the rules first
+removes the option. The sentence in §1 was chosen while the outcome was
+unknown; this report just opens the envelope.
+
+**The cheap first checkpoint.** Stage 1 is a kill-gate: two quick checks on
+trading records that already existed, able only to stop the experiment.
+Passing would have proven nothing — the hypothesis came from staring at
+these very records, so the same records cannot also confirm it — but failing
+ends it, because an idea whose mechanism is absent in-sample has no claim to
+an expensive confirmatory test. The two questions: did call trades *started*
+on uptrend days actually lose more than the rest? On uptrend days, did the
+stock go on to end up above the would-be strike more often? If either answer
+is no, stop.
+
+**The answer came back backwards.** Trades started during uptrends made
+about $439 *more* per trade, not less. After uptrend days the stock went on
+to clear the strike slightly *less* often, not more. Measured against
+10,000 fake skip-schedules — random gates with the same rhythm of streaks
+but no knowledge of the market — the real signal sat mid-pack. It picked
+days to skip no better than a coin with the same calendar habits. So the
+experiment stopped itself: Stage 2 (the full thousand-fake-gate comparison)
+never ran, the real trend gate was never run through the simulator at all,
+and the no-promotion rule (§2.3) forbids retreating to a friendlier signal
+definition or bookkeeping convention.
+
+**Why the hunch felt right anyway: two bookkeepings, opposite verdicts.** The
+chart that inspired the hypothesis (the tutorial's figure 10) files each
+dollar under the day it *arrived*, and on that view uptrend days look nearly
+worthless for the call-selling side. But a gate acts on exactly one day, the
+day you are about to sell, and the trade then lives for weeks. The "uptrend"
+label is a rear-view mirror: the close sitting 5% above its own 200-day
+average, refreshed a day late. It summarizes most of the past year; the
+trade's fate hangs on the next 30 days.
+
+The two filings disagree most at turning points. In the spring of 2020 the
+label read "downtrend" for months while the market ripped upward; the
+registration names that exact window as the known failure mode (§6.4),
+because a gate keyed to this label keeps selling calls straight into the
+recovery. By the time a long climb finally certifies the label as "bull,"
+the explosive move is already behind it, and what follows is more often the
+grind that an out-of-the-money call survives.
+
+The registration even names how the two filings split a single disaster
+(§2.3): a call sold under a "downtrend" label that gets run over as the
+climb flips the label books its loss to a *bull* day under arrival-day
+filing — the day that made the decision gets the alibi, and the day that
+inherited the trade gets the blame. File each trade under the day it was
+*decided*, the only day a gate can act, and the chart's picture inverts.
+That is why the decision-day convention was pinned before any outcome was
+viewed, and §2 below reports what it found.
+
+**Why "better than before" was never the bar.** One registered
+side-measurement ran regardless of the verdict: the first 100 fake
+skip-schedules were pushed through the full simulator, to put a dollar
+figure on a trap the registration had flagged (§1.3). Those skill-free
+gates, each skipping just as many days as the real one would, still lose
+about $71 for every day spent with a call sold against the shares (§3.2).
+Trading less cannot, by itself, rescue a strategy that loses on the days it
+does trade — any abstinence "improves" it, the way skipping some lottery
+tickets does. The gate had to make call-selling actually *profitable*, and
+the mechanism tests say it would not have come close.
 
 ---
 
@@ -80,12 +138,15 @@ Two readings of the reversal, and why neither is a finding:
 - **Cycles entered during uptrends made more money, not less.** This is the
   opposite of the figure-10 intuition that generated the hypothesis — and
   the registration anticipated the gap: figure 10 attributes P&L to the
-  regime on each day's *close date*, while the registered test attributes
-  each cycle to its *entry-date* state (§2.3, fixed before any outcome was
-  viewed). Same engine, same decade, two attribution conventions, opposite
-  signs. That contrast is the report's main teaching exhibit: an attribution
-  convention can manufacture a signal, which is exactly why the convention
-  had to be pinned in advance.
+  regime on each trade's *close date*, while the registered test
+  attributes each cycle to its *entry-date* state (§2.3, fixed before any
+  outcome was viewed). The two views also differ in data — figure 10 is the
+  proxy engine's single-ticker MSFT run; this test pools real-chain cycles
+  across three tickers — but the convention is the difference the
+  registration anticipated and pinned in advance (§2.3), and §0 walks
+  through it slowly. The contrast is the report's main teaching exhibit: an
+  attribution convention can manufacture a signal, which is exactly why the
+  convention had to be pinned before any outcome was viewed.
 - **A momentum-assisted-selling hypothesis is not licensed by this.** At the
   74th placebo percentile the positive `D_A` is unremarkable among random
   arrangements, the registered complement-arm test that could have spoken to
@@ -190,7 +251,7 @@ byte-identical records).
 
 - Registration: [docs/prereg_trend_gate.md](prereg_trend_gate.md), effective
   at merge commit `4d2239b`. Operative sections cited above: §1.3, §1.4,
-  §2.1, §2.3, §5, §6.1–§6.3, §7, §8, §9, §10, §11.
+  §2.1, §2.3, §5, §6.1–§6.4, §7, §8, §9, §10, §11.
 - Analysis code: `trend_gate.py` and `test_trend_gate.py` at `d9ddb43`,
   committed before any Stage 1 number existed (§10 ordering; the git
   history is the proof).
