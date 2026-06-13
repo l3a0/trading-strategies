@@ -39,6 +39,17 @@ Two layers:
   the short call at a multiple of the premium collected) — the stop makes
   the loss WORSE at every level and monotonically worse as it tightens
   (whipsaw on a trending stock), on both the 10- and 16-year spans.
+- TestMsftRealCallSpreadRegression: pins the cap_delta variant (buy a
+  same-expiration further-OTM call as a cap). The cap floors the loss at
+  net−width AT EXPIRATION; early deep-ITM unwinds can slip past that floor
+  by the two-leg spread cost, but the worst realized cycle still shrinks
+  −$69K → −$26K as it tightens. Its premium drag means only the tightest
+  0.15 cap nets better than the naked −$184K, and the vol compression pushes
+  the harm t-stat past −2. The third confirmation that removing the tail
+  removes the income. No proxy-twin (the cap is a real-chain construct).
+  TestCallSpreadMechanics covers the payoff bands, the exact expiry floor,
+  an early-close breach of it, the cap-quote carry-forward, and the
+  byte-identical off-path on synthetic chains in the always-run layer.
 - TestSpyRealWalkForwardRegression: pins the SPY walk-forward on real
   chains (2010-12 -> 2026-06, 23 windows, 4-year train): tuned overlay
   +143% chained OOS vs +171% buy-and-hold, beating it in 10/23 windows.
@@ -65,6 +76,7 @@ from real_cc_backtest import (
     load_chain_store,
     load_unadjusted_prices,
     run_real_cc_overlay,
+    select_cap_leg,
     select_entry,
 )
 from walk_forward_real import FIXED_PARAMS, PARAM_GRID, _chain, walk_forward_real
@@ -319,6 +331,140 @@ class TestDeltaHedgeMechanics:
         for k in ('num_calls_sold', 'wins', 'losses', 'win_rate',
                   'total_premium_collected', 'buy_hold_final', 'cash'):
             assert plain[0][k] == hedged[0][k]
+
+
+class TestCallSpreadMechanics:
+    """cap_delta on a hand-computable synthetic market — the spread payoff in
+    all three price bands, the loss floor, the cap-quote carry-forward, and
+    the byte-identical off-path.
+
+    Short leg: strike 110, bid 2.00 / ask 2.20, delta 0.25. Cap leg: strike
+    115, bid 0.40 / ask 0.60, delta 0.10, SAME expiration. Under bid/ask the
+    net credit = short bid − cap ask − 2 commissions = 2.00 − 0.60 − 0.013 =
+    1.387/share; the loss floor is (net − width) = 1.387 − 5 = −3.613/share
+    (×100 shares = −$361.30).
+    """
+
+    COMMISSION = 0.0065
+    NET = 2.00 - 0.60 - 2 * 0.0065  # 1.387
+
+    @staticmethod
+    def _store() -> dict[str, dict[str, Any]]:
+        short = _cand(30, 0.25, 2.00, 2.20, 2.10, '2024-02-02', 110.0, 'S')
+        cap = _cand(30, 0.10, 0.40, 0.60, 0.50, '2024-02-02', 115.0, 'K')
+        return {'2024-01-02': {'candidates': [short, cap],
+                               'marks': {'S': (2.00, 2.20, 2.10, 0.25),
+                                         'K': (0.40, 0.60, 0.50, 0.10)}}}
+
+    def _settle(self, s: float):
+        return run_real_cc_overlay(
+            ['2024-01-02', '2024-02-02'], [100.0, s], self._store(),
+            {**_PARAMS, 'capital': 10_000, 'cap_delta': 0.10})
+
+    def test_select_cap_leg(self) -> None:
+        """Same expiration, strike above the short, nearest the target delta."""
+        day = self._store()['2024-01-02']
+        cap = select_cap_leg(day, '2024-02-02', 110.0, 0.10)
+        assert cap is not None
+        delta, bid, ask, mid, strike, cid = cap
+        assert (strike, cid) == (115.0, 'K')
+        # no higher strike available -> None (degrade to naked)
+        assert select_cap_leg(day, '2024-02-02', 115.0, 0.10) is None
+
+    def test_entry_net_credit(self) -> None:
+        """Sell record logs the NET credit and the cap strike."""
+        _, trades, _ = self._settle(105.0)
+        sell = next(t for t in trades if t['action'] == 'sell')
+        assert sell['premium'] == pytest.approx(self.NET, abs=1e-9)
+        assert sell['cap_strike'] == 115.0
+
+    def test_band1_below_short_keeps_full_credit(self) -> None:
+        """S ≤ Ks: both expire worthless, keep the net credit."""
+        _, trades, _ = self._settle(105.0)
+        exp = next(t for t in trades if t['action'] == 'expiration')
+        assert exp['pnl'] == pytest.approx(self.NET * 100, abs=1e-6)
+
+    def test_band2_between_strikes_is_uncapped(self) -> None:
+        """Ks < S ≤ Kl: short assigned, cap dead — same exposure as naked."""
+        _, trades, _ = self._settle(113.0)
+        exp = next(t for t in trades if t['action'] == 'expiration')
+        assert exp['pnl'] == pytest.approx((self.NET - 3.0) * 100, abs=1e-6)
+
+    def test_band3_above_cap_is_floored(self) -> None:
+        """S > Kl: the S terms cancel — loss is constant at net − width,
+        no matter how far the stock rips."""
+        floor = (self.NET - (115.0 - 110.0)) * 100  # -361.30
+        e130 = next(t for t in self._settle(130.0)[1] if t['action'] == 'expiration')
+        e500 = next(t for t in self._settle(500.0)[1] if t['action'] == 'expiration')
+        assert e130['pnl'] == pytest.approx(floor, abs=1e-6)
+        assert e500['pnl'] == pytest.approx(floor, abs=1e-6)
+        assert e130['pnl'] == pytest.approx(e500['pnl'], abs=1e-9)
+
+    def test_cap_quote_carries_forward_on_close(self) -> None:
+        """A profit-target close uses the cap's live quote when present and its
+        carried quote when the cap went unquoted that day — the two fills give
+        different, hand-computable closes."""
+        dates, prices = ['2024-01-02', '2024-01-03'], [100.0, 100.0]
+        live = self._store()
+        live['2024-01-03'] = {'candidates': [],
+                              'marks': {'S': (0.05, 0.15, 0.10, 0.05),
+                                        'K': (0.02, 0.08, 0.05, 0.02)}}
+        _, lt, _ = run_real_cc_overlay(dates, prices, live,
+                                       {**_PARAMS, 'capital': 10_000, 'cap_delta': 0.10})
+        close = next(t for t in lt if t['action'] == 'close')
+        # net close = short ask 0.15 − cap bid 0.02 + 2 comm; pnl=(NET-that)*100
+        assert close['pnl'] == pytest.approx(
+            (self.NET - (0.15 - 0.02 + 2 * self.COMMISSION)) * 100, abs=1e-6)
+
+        carried = self._store()  # short collapses but the cap is NOT quoted day 2
+        carried['2024-01-03'] = {'candidates': [], 'marks': {'S': (0.05, 0.15, 0.10, 0.05)}}
+        _, ct, _ = run_real_cc_overlay(dates, prices, carried,
+                                       {**_PARAMS, 'capital': 10_000, 'cap_delta': 0.10})
+        close_c = next(t for t in ct if t['action'] == 'close')
+        # cap unwound at its CARRIED bid 0.40 (entry day's quote)
+        assert close_c['pnl'] == pytest.approx(
+            (self.NET - (0.15 - 0.40 + 2 * self.COMMISSION)) * 100, abs=1e-6)
+
+    def test_early_close_past_cap_can_slip_past_expiry_floor(self) -> None:
+        """The net − width floor holds only AT EXPIRATION. An early deep-ITM
+        unwind crosses BOTH legs' bid/ask spreads, so its realized loss slips
+        past the floor by the spread cost. Day 2: stock at 130 (both legs
+        ITM), short delta 0.95 → deep-ITM close. Short bid 19.9/ask 20.1,
+        cap bid 14.9/ask 15.1 (each 0.2 over/under intrinsic)."""
+        store = {
+            '2024-01-02': {'candidates': [
+                _cand(30, 0.25, 2.00, 2.20, 2.10, '2024-02-02', 110.0, 'S'),
+                _cand(30, 0.10, 0.40, 0.60, 0.50, '2024-02-02', 115.0, 'K')],
+                'marks': {'S': (2.00, 2.20, 2.10, 0.25), 'K': (0.40, 0.60, 0.50, 0.10)}},
+            '2024-01-03': {'candidates': [],
+                'marks': {'S': (19.9, 20.1, 20.0, 0.95),   # deep ITM -> close_itm
+                          'K': (14.9, 15.1, 15.0, 0.80)}},
+        }
+        _, trades, _ = run_real_cc_overlay(
+            ['2024-01-02', '2024-01-03'], [100.0, 130.0], store,
+            {**_PARAMS, 'capital': 10_000, 'cap_delta': 0.10})
+        close = next(t for t in trades if t['action'] == 'close_itm')
+        # net close = short ask 20.1 − cap bid 14.9 + 2 commissions
+        expected = (self.NET - (20.1 - 14.9 + 2 * self.COMMISSION)) * 100
+        assert close['pnl'] == pytest.approx(expected, abs=1e-6)
+        # strictly BELOW the expiry floor — the early unwind slipped past it
+        # by exactly the two-leg spread cost (0.1 + 0.1 + 0.013 per share).
+        expiry_floor = (self.NET - (115.0 - 110.0)) * 100
+        assert close['pnl'] < expiry_floor
+        assert (expiry_floor - close['pnl']) == pytest.approx(
+            (0.1 + 0.1 + 2 * self.COMMISSION) * 100, abs=1e-6)
+
+    def test_off_path_byte_identical(self) -> None:
+        """No cap_delta → no cap leg even though a cap candidate exists: the
+        naked short-only path, with additive gross/cap_cost summary fields."""
+        naked = run_real_cc_overlay(
+            ['2024-01-02', '2024-02-02'], [100.0, 105.0], self._store(),
+            {**_PARAMS, 'capital': 10_000})
+        sell = next(t for t in naked[1] if t['action'] == 'sell')
+        assert 'cap_strike' not in sell
+        assert sell['premium'] == pytest.approx(2.00 - self.COMMISSION, abs=1e-9)
+        assert naked[0]['cap_cost_paid'] == 0.0
+        assert naked[0]['gross_premium_collected'] == naked[0]['total_premium_collected']
 
 
 @pytest.mark.skipif(
@@ -976,6 +1122,130 @@ class TestMsftStopLossRegression:
         assert Counter(r['best_params']['call_delta'] for r in records) == {0.15: 11}
         assert Counter(r['best_params']['close_at_pct'] for r in records) == {1.00: 11}
         assert sum(r['oos_return_pct'] > r['bh_return_pct'] for r in records) == 3
+
+
+@pytest.mark.skipif(
+    not _HAVE_MSFT_DAILIES,
+    reason='needs msft_option_dailies.csv or its committed .gz twin',
+)
+class TestMsftRealCallSpreadRegression:
+    """Pin the call-spread variant (cap_delta): cap the deep-ITM tail by
+    buying a same-expiration further-OTM call alongside each short sale.
+
+    The cap floors the loss at net_credit − strike_width AT EXPIRATION; an
+    early deep-ITM unwind crosses both legs' bid/ask spreads and can slip
+    past that floor by the spread cost (~97% of cycles close early, so the
+    tail is bounded empirically here, not by an algebraic proof —
+    TestCallSpreadMechanics pins both the exact expiry floor and an early-
+    close breach). On this sample the worst single realized cycle still
+    shrinks from the naked −$69,323 to −$42,959 / −$29,261 / −$26,237 as the
+    cap tightens (0.05 → 0.10 → 0.15 delta), and the deep-ITM buyback bucket
+    halves (−$611K → −$513K → −$421K → −$314K). But the cap's premium, paid every
+    cycle, is the price: it costs $134K / $261K / $395K of the gross over the
+    decade, the profit-target wins shrink in step, and the net result does NOT
+    beat the naked −$183,552 at 0.05 or 0.10 (−$198K, −$192K) — only the
+    tightest 0.15 cap nets better (−$166K), and even that bleeds 59% of gross.
+    Max drawdown barely moves (the steady cap-cost bleed is its own slow
+    drawdown), and as the cap compresses excess vol the harm t-stat crosses
+    −2 (0.10/0.15 'pass' the bar on the WRONG side). The call spread is the
+    third independent confirmation that on real chains every way of removing
+    the costly-ITM tail also removes the income that paid for it (cf.
+    delta-hedge net −$82K / t −0.23, and the stop-loss family). No proxy-twin:
+    the cap is a real-chain construct — the Black-Scholes proxy engine has no
+    second quoted leg to price.
+
+    Same dataset/skip mechanics as TestMsftRealChainRegression (canonical
+    2016-04 → 2026-04 span).
+    """
+
+    @pytest.fixture(scope='class')
+    def market(self) -> tuple[list[str], list[float], dict[str, dict[str, Any]]]:
+        store = load_chain_store(_MSFT_DAILIES)
+        days = sorted(store)
+        dates, prices = load_unadjusted_prices('MSFT', days[0], '2026-06-06')
+        pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
+        return [d for d, _ in pairs], [p for _, p in pairs], store
+
+    @staticmethod
+    def _run(market, cap_delta: float):
+        dates, prices, store = market
+        s, trades, eq = run_real_cc_overlay(
+            dates, prices, store, {**_PARAMS, 'cap_delta': cap_delta})
+        st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
+        itm = sum(t['pnl'] for t in trades if t['action'] == 'close_itm')
+        worst = min(t['pnl'] for t in trades
+                    if t['action'] in ('close', 'close_itm', 'expiration'))
+        return s, st, itm, worst
+
+    def test_cap_delta_05(self, market) -> None:
+        """Cheapest/widest cap: net −$198K (worse than naked), tail bounded."""
+        s, st, itm, worst = self._run(market, 0.05)
+        assert s['num_contracts'] == 18
+        assert s['net_overlay_pnl'] == pytest.approx(-198_104.45, abs=1.0)
+        assert s['gross_premium_collected'] == pytest.approx(688_797.90, abs=1.0)
+        assert s['cap_cost_paid'] == pytest.approx(133_694.10, abs=1.0)
+        assert s['num_calls_sold'] == 173
+        assert s['win_rate'] == pytest.approx(68.0, abs=0.1)
+        assert s['max_drawdown_pct'] == pytest.approx(45.76, abs=0.05)
+        assert itm == pytest.approx(-513_007.20, abs=5.0)
+        assert worst == pytest.approx(-42_958.80, abs=5.0)
+        assert st['t_stat_newey_west'] == pytest.approx(-1.61, abs=0.02)
+        assert st['passes_t_2'] is False
+
+    def test_cap_delta_10(self, market) -> None:
+        """Mid cap: net −$192K, deep-ITM bucket −$421K; harm now |t|>2."""
+        s, st, itm, worst = self._run(market, 0.10)
+        assert s['net_overlay_pnl'] == pytest.approx(-192_434.44, abs=1.0)
+        assert s['gross_premium_collected'] == pytest.approx(685_400.40, abs=1.0)
+        assert s['cap_cost_paid'] == pytest.approx(261_381.60, abs=1.0)
+        assert s['num_calls_sold'] == 168
+        assert s['win_rate'] == pytest.approx(64.1, abs=0.1)
+        assert s['max_drawdown_pct'] == pytest.approx(44.30, abs=0.05)
+        assert itm == pytest.approx(-420_998.40, abs=5.0)
+        assert worst == pytest.approx(-29_260.80, abs=5.0)
+        assert st['t_stat_newey_west'] == pytest.approx(-2.09, abs=0.02)
+        assert st['passes_t_2'] is True  # significant — on the harmful side
+
+    def test_cap_delta_15(self, market) -> None:
+        """Tightest cap: the only one that nets better than naked (−$166K),
+        but bleeds 59% of gross and is significantly negative."""
+        s, st, itm, worst = self._run(market, 0.15)
+        assert s['net_overlay_pnl'] == pytest.approx(-165_702.63, abs=1.0)
+        assert s['gross_premium_collected'] == pytest.approx(674_640.90, abs=1.0)
+        assert s['cap_cost_paid'] == pytest.approx(394_811.10, abs=1.0)
+        assert s['num_calls_sold'] == 163
+        assert s['win_rate'] == pytest.approx(64.8, abs=0.1)
+        assert s['max_drawdown_pct'] == pytest.approx(41.78, abs=0.05)
+        assert itm == pytest.approx(-314_175.60, abs=5.0)
+        assert worst == pytest.approx(-26_236.80, abs=5.0)
+        assert st['t_stat_newey_west'] == pytest.approx(-2.17, abs=0.02)
+        assert st['passes_t_2'] is True
+
+    def test_caps_the_tail_monotonically(self, market) -> None:
+        """The cross-cutting invariant: every cap delta keeps the worst
+        realized cycle strictly inside the naked −$69,323 (empirically on this
+        sample — not an algebraic floor; see the class docstring), and a
+        tighter cap (higher delta) both shrinks the deep-ITM bucket and lifts
+        the worst realized cycle. The premium drag means only the tightest
+        0.15 cap nets better than the naked −$183,552."""
+        naked_s, naked_t, _ = run_real_cc_overlay(market[0], market[1], market[2], _PARAMS)
+        naked_worst = min(t['pnl'] for t in naked_t
+                          if t['action'] in ('close', 'close_itm', 'expiration'))
+        assert naked_worst == pytest.approx(-69_323.40, abs=5.0)
+        assert naked_s['net_overlay_pnl'] == pytest.approx(-183_552.34, abs=1.0)
+        rows = [self._run(market, cd) for cd in (0.05, 0.10, 0.15)]
+        nets = [s['net_overlay_pnl'] for s, _, _, _ in rows]
+        worsts = [w for _, _, _, w in rows]
+        itms = [itm for _, _, itm, _ in rows]
+        # every cap keeps the worst realized cycle strictly inside naked
+        assert all(w > naked_worst for w in worsts)
+        # tighter cap -> less negative worst cycle and smaller deep-ITM bucket
+        assert worsts[0] < worsts[1] < worsts[2]
+        assert itms[0] < itms[1] < itms[2]
+        # net result: 0.05 and 0.10 are WORSE than naked, only 0.15 nets better
+        assert nets[0] < naked_s['net_overlay_pnl']
+        assert nets[1] < naked_s['net_overlay_pnl']
+        assert nets[2] > naked_s['net_overlay_pnl']
 
 
 @pytest.mark.skipif(
