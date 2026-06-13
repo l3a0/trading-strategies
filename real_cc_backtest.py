@@ -42,7 +42,7 @@ import io
 import os
 import sys
 from datetime import datetime
-from typing import Any, Sequence, TextIO
+from typing import Any, Container, Sequence, TextIO
 
 import pandas as pd
 
@@ -176,7 +176,16 @@ def run_real_cc_overlay(
     prices: list[float],
     store: dict[str, dict[str, Any]],
     params: dict[str, float],
+    suspended_dates: Container[str] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], pd.DataFrame]:
+    # suspended_dates is the trend-gate experiment's entry seam
+    # (docs/prereg_trend_gate.md §10): dates in the set may not OPEN a new
+    # position. A suspended day behaves exactly like an existing no-entry day
+    # (no chain row / empty band / non-positive premium): no trade record,
+    # shares held uncovered, the daily equity row still appended, entry
+    # re-attempted the next tradeable day. It never touches an open position
+    # (the gate is entry-only per §2.3). Default None = off — the pinned
+    # regressions all run this byte-identical path.
     call_delta = params.get('call_delta', 0.25)
     close_at_pct = params.get('close_at_pct', 0.75)
     dte = int(params.get('dte', 21))
@@ -230,8 +239,9 @@ def run_real_cc_overlay(
         day = store.get(date)
 
         if position is None:
-            # Consider entry — needs a chain for today.
-            if day is not None:
+            # Consider entry — needs a chain for today and a non-suspended date.
+            if day is not None and (suspended_dates is None
+                                    or date not in suspended_dates):
                 pick = select_entry(day, dte, call_delta)
                 if pick is not None:
                     _dte, _delta, bid, _ask, mid, expiration, strike, cid = pick

@@ -28,3 +28,7 @@ htmlcov/
 # backfill datasets (release assets, e.g. msft_option_dailies_2008_2016.csv[.gz])
 *_option_dailies_*.csv
 *_option_dailies_*.csv.gz
+
+# Trend-gate experiment checkpoints (result-bearing JSONL; resumable engine
+# runs — ignored so resumes don't trip trend_gate.py's clean-tree guard)
+trend_gate_runs/

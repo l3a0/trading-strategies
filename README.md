@@ -102,7 +102,7 @@ pytest test_real_cc_backtest.py     # the real-chain adapter (pins skip without 
 pytest --cov=. --cov-branch         # everything, with coverage
 ```
 
-CI runs `ruff`, `pyright`, both test suites (fetching the checksum-verified chain datasets so the real-chain pins run, not skip), a backtest smoke test, a figure-regeneration check, and a notebook drift check on every PR — see [.github/workflows/ci.yml](.github/workflows/ci.yml).
+CI runs `ruff`, `pyright`, all three test suites (fetching the checksum-verified chain datasets so the real-chain pins run, not skip), a backtest smoke test, a figure-regeneration check, and a notebook drift check on every PR — see [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
 ## Project layout
 
@@ -113,6 +113,9 @@ CI runs `ruff`, `pyright`, both test suites (fetching the checksum-verified chai
 | [real_cc_backtest.py](real_cc_backtest.py#L167) | Real-chain adapter: the same overlay on traded option quotes (bid entries, ask buybacks, real deltas and expirations; the 2008→2010 placeholder-greeks era excluded via `CHAIN_CLEAN_START`), printed REAL vs PROXY |
 | [test_real_cc_backtest.py](test_real_cc_backtest.py) | Adapter unit tests (entry selection, era clip + mark clamp, fill models, delta-hedge mechanics) plus the MSFT/SPY/QQQ real-chain regression and walk-forward pins (skip when the datasets are absent) |
 | [walk_forward_real.py](walk_forward_real.py) | Walk-forward optimization driving the real-chain adapter (or, via `--prices proxy`, the proxy engine on the same series/windows/calendar-day grid): per-window Pardo trade stats, chained OOS vs fixed-defaults vs buy-and-hold on one convention |
+| [docs/prereg_trend_gate.md](docs/prereg_trend_gate.md) | Pre-registration of the trend-gated covered-call experiment (registered at its merge commit): signal, spans, placebo design, two-stage pass rules, pre-committed outcome language |
+| [trend_gate.py](trend_gate.py) | Analysis machinery for the registered experiment — signal/spans, the seeded placebo-sequence generator, Stage 1 kill-gate tests, Stage 2 placebo families and verdict (checkpointed, resumable) |
+| [test_trend_gate.py](test_trend_gate.py) | Pure-logic tests of that machinery plus dataset-gated pins of the registration's signal-side tables (treatment-side only — no outcome data before the registered ordering allows it) |
 | [download_prices.py](download_prices.py#L11) | yfinance data downloader |
 | [download_option_chains.py](download_option_chains.py) | Alpha Vantage fetcher for per-roll entry snapshots (one target call per monthly roll, six tickers) |
 | [download_option_dailies.py](download_option_dailies.py) | Alpha Vantage fetcher for daily chain slices — the datasets `real_cc_backtest.py` consumes |
