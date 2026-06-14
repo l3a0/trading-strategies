@@ -4,19 +4,22 @@ This is the repo's record of **dead ends**: cheap kill-gate scouts on strategy
 ideas that were measured and rejected, kept so they aren't re-explored from
 scratch.
 
-**Read this first — what these are and aren't.** Each entry is an
-*exploratory scout*, not a registered experiment. A scout runs on data that
-has already been used, so it **spends the sample**: it can only *kill* an idea
-or *justify* taking it to a pre-registration. It is never itself a
-confirmatory verdict. The numbers are pinned (`test_explorations.py`) so a
-dead end stays settled and so a future change can't silently revive a buried
-result — but pinning a scout does **not** promote it to a registered finding.
+**Read this first — what these are and aren't.** Most entries are
+*exploratory scouts*; the last is a real-chain *robustness check* on a
+published refinement. Neither is a registered experiment. Each runs on data
+that has already been used, so it **spends the sample**: it can only *kill* an
+idea or *justify* taking it to a pre-registration. It is never itself a
+confirmatory verdict. The numbers are pinned (`test_explorations.py`, or for
+the real-chain check `test_real_cc_backtest.py`) so a dead end stays settled
+and so a future change can't silently revive a buried result — but pinning a
+result does **not** promote it to a registered finding.
 That line is the whole point of [the pre-registration discipline](prereg_trend_gate.md):
 a result that conditions on outcome data it also generated cannot claim a
 p-value. A scout that *passes* would earn a registration, not a headline.
 
-The recurring lesson across these entries: **conditioning call-selling entry
-on recent upward price action has the sign backwards on these names.** The
+The recurring lesson across the entry-conditioning scouts: **conditioning
+call-selling entry on recent upward price action has the sign backwards on
+these names.** The
 damage a covered-call seller takes comes from the sharp *rebounds* out of
 selloffs (2020-03, 2025-04) — moves the signal reacts to *after* they've
 happened, not ones it anticipates. Every gate built on "the stock just went
@@ -118,6 +121,62 @@ markets, where covered calls do better regardless of any volatility premium.
 With the ex-post VRP at \~0 and the rank-correlation at \~0, the binary split
 is gating on the *vol level*, not harvesting a premium. There is no
 volatility-risk-premium edge to condition on at these strikes on these names.
+
+---
+
+## Delta-hedged covered call on real chains — KILLED (2026-06-14)
+
+**A different kind of dead end.** The scouts above kill *entry-timing* ideas.
+This one kills a *P&L-reconstruction* refinement, and it's the only entry here
+whose victim was a **published** number rather than a prospective hypothesis.
+Blog post 6 had already flagged that the proxy's delta-hedged t-stats (MSFT
+1.63, QQQ 1.58) "need re-measuring against real quotes before they mean
+anything"; this entry is that measurement. It is pinned in
+`test_real_cc_backtest.py` (`TestMsftRealRiskManagedRegression`,
+`TestQqqRealRiskManagedRegression`), not `test_explorations.py`.
+
+**The idea.** Delta-hedge the covered call (Israelov & Nielsen, 2015): each day
+hold extra long stock equal to the short call's delta × base shares, pinning
+the portfolio's net delta at the buy-and-hold level. This strips the
+equity-*timing* swing the short call injects — variance that adds no return —
+and should leave the pure volatility-risk premium the call sale harvests. On
+the **synthetic** IV-proxy engine it was the strongest refinement the proxy
+produced: it lifted the overlay's Newey-West t-stat from 0.46 → 1.63 on MSFT
+and 0.10 → 1.58 on QQQ (MSFT's lift quoted in blog post 4, QQQ's in post 5;
+pinned in `TestMsftRiskManagedRegression` / `TestQqqRiskManagedRegression`).
+
+**How it was tested.** Re-run the identical hedge on **real option premiums** —
+`run_real_cc_overlay(..., delta_hedge=1.0)` over each name's clean canonical
+chain (2016-06 → 2026-06, bid/ask fills) — and re-measure the excess-return
+Newey-West t-stat. A proxy twin runs on the same unadjusted price series, so
+the real-vs-proxy gap isolates the only thing that changed: where the option
+price came from.
+
+**The verdict — the edge was a proxy artifact.** On real premiums the hedged
+excess falls to noise of zero on both names; the proxy's t-stat does not
+survive:
+
+| Ticker | Proxy twin NW t (same series) | Real NW t — bid/ask | Real NW t — mid | Hedged net overlay (real) |
+| --- | --- | --- | --- | --- |
+| MSFT | +1.76 | −0.23 | +0.73 | −$82.4K |
+| QQQ | +1.52 | +0.18 | +0.30 | −$14.9K |
+
+The proxy was minting premiums richer than the market paid (\~1.6× on MSFT), so
+the premium the hedge "isolated" lived only in simulation. The hedge still does
+its mechanical job on real chains — identical trades, excess vol cut
+(MSFT 6.64% → 4.80%, QQQ 5.30% → 3.06%), and it removes the naive run's
+near-significant directional *harm* (MSFT −1.73 → −0.23, QQQ −1.78 → +0.18).
+What it cannot do is conjure a premium that isn't there. The price is paid in
+tail risk: max drawdown *rises* under the hedge (MSFT 41.00% → 44.34%,
+QQQ 38.22% → 40.92%), because the extra stock sits on negative cash — a levered
+long in selloffs.
+
+**Same conclusion as the IV-richness scout, from the other side.** That scout
+measured the *statistical* premium — ex-post IV minus realized vol at the sold
+contract — and found ≈0. This builds the strategy that would *capture* that
+premium and earns nothing significant. The statistical premium is absent and
+the capturable premium is absent: no harvestable volatility-risk premium at
+these strikes on these names, at real quotes.
 
 ---
 
