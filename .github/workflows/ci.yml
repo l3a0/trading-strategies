@@ -83,8 +83,11 @@ jobs:
       # — its dataset-gated layer pins treatment-side quantities only.
       # test_explorations.py pins the killed exploratory scouts (the
       # exploration log, docs/explorations.md) so dead ends aren't re-run.
+      # test_edge_search.py pins the automated FDR-controlled campaign (the
+      # edge-search log, docs/edge_search.md) — its always-run layer (BY /
+      # enumerator / kill-gate) runs without datasets; the campaign pins skip.
       - name: Run tests
-        run: pytest test_cc_backtest.py test_real_cc_backtest.py test_trend_gate.py test_explorations.py --cov=. --cov-branch -v
+        run: pytest test_cc_backtest.py test_real_cc_backtest.py test_trend_gate.py test_explorations.py test_edge_search.py --cov=. --cov-branch -v
 
       # Smoke test: run the actual backtest against the committed MSFT CSV
       # to catch any breakage in the main entry point that the unit tests
