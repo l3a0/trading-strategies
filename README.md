@@ -118,6 +118,9 @@ CI runs `ruff`, `pyright`, all three test suites (fetching the checksum-verified
 | [docs/explorations.md](docs/explorations.md) | Exploration log — cheap kill-gate scouts on ideas that didn't survive (the post-rip cooldown, the IV-richness gate), pinned so dead ends aren't re-explored; exploratory, not registered verdicts |
 | [explorations.py](explorations.py) | The scout code behind the exploration log (reuses the pinned naked runs + fixed seeds), printed via `python explorations.py` |
 | [test_explorations.py](test_explorations.py) | Pins the killed scouts' key outputs (wrong-signed statistic, permutation percentile, no-memory measurement) plus always-run cycle/tagging logic |
+| [edge_search.py](edge_search.py) | MVP automated edge-search harness — sweeps a committed batch of cheap entry-conditioning templates through one shared kill-gate, an append-only ledger, and a campaign-wide Benjamini-Yekutieli FDR pass; MSFT+SPY searched, QQQ sealed (`python edge_search.py`) |
+| [test_edge_search.py](test_edge_search.py) | Pins the edge-search campaign (no candidate survives campaign-wide BY) plus always-run FDR / enumerator / kill-gate / seal logic |
+| [docs/edge_search.md](docs/edge_search.md) | Edge-search log — automated FDR-controlled sweeps over a committed batch; Campaign 1 emptied the cheap entry-conditioning class; exploratory, not registered verdicts |
 | [trend_gate.py](trend_gate.py) | Analysis machinery for the registered experiment — signal/spans, the seeded placebo-sequence generator, Stage 1 kill-gate tests, Stage 2 placebo families and verdict (checkpointed, resumable) |
 | [test_trend_gate.py](test_trend_gate.py) | Pure-logic tests of that machinery plus dataset-gated pins of the registration's signal-side tables (treatment-side only — no outcome data before the registered ordering allows it) |
 | [download_prices.py](download_prices.py#L11) | yfinance data downloader |

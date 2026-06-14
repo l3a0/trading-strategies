@@ -1,0 +1,409 @@
+"""edge_search.py — MVP harness for an automated, FDR-controlled edge search.
+
+WHAT THIS IS. A thin harness that sweeps a committed batch of cheap
+entry-conditioning hypotheses — each one RE-TAGS the cycles the pinned naked
+runs already produced (no new engine runs) — through one shared kill-gate,
+logs every result to an append-only ledger, and judges the whole batch with a
+single Benjamini-Yekutieli pass. It answers one question: across the cheap
+entry-conditioning template class, does ANY candidate survive campaign-wide
+false-discovery-rate control?
+
+WHY IT LOOKS LIKE THIS. explorations.py already proved that the cooldown,
+IV-richness, and trend scouts are the SAME statistic wearing different masks:
+tag each cycle with a binary treatment rule, compute D_A = mean(treated P&L)
+- mean(other P&L), and calibrate against a same-count permutation null. This
+module lifts that shared gate out and wraps it in the two things automation
+needs to stay honest:
+
+  1. A multiple-testing ledger. Test nine (or nine thousand) hypotheses at
+     p < 0.05 and noise alone hands you false positives; significance is
+     judged across the WHOLE batch with Benjamini-Yekutieli (the
+     dependence-robust FDR procedure — these candidates are correlated:
+     shared tickers, overlapping option cycles, nested windows), not
+     per-hypothesis.
+  2. A sealed vault. A machine that generates and tests in a loop can never
+     "commit before seeing the number," so we commit the DATA it never sees
+     instead: the search loads only SEARCH_TICKERS; SEALED_TICKERS are held
+     out for a later, manual confirmation step (NOT automated here). QQQ is a
+     weak vault on purpose (~0.8 correlated with the search set); the strong
+     vault is a structurally different underlying the search never saw, which
+     is a premium-data fetch and out of MVP scope.
+
+EXPLORATORY, exactly like explorations.py — a kill-gate, never a registered
+verdict. A survivor earns a pre-registration (docs/prereg_trend_gate.md is the
+template), not a headline. The ledger pins the campaign so a swept dead end
+stays dead instead of being re-derived next session.
+
+SCOPE (MVP). Templates that RE-TAG existing naked cycles only — cheap, no
+engine re-runs. Structure-side ideas (roll rules, stop-loss, spread width)
+change the trades themselves and need a full run_real_cc_overlay per
+candidate; those are the expensive verdict phase, deliberately out of scope.
+Two simplifications, named so they are not silent: (a) the permutation null
+is the uniform same-count shuffle (what iv_richness_scout uses), not the
+structure-preserving trigger/block permutation cooldown_scout uses — that is a
+documented follow-up; (b) BY (not BH) is the FDR procedure precisely because
+the candidates are dependent.
+
+Usage:
+    python edge_search.py        # run the campaign, write edge_ledger.jsonl
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Callable, Sequence
+
+import numpy as np
+
+from explorations import (
+    IV_FLOOR,
+    RV_WINDOW,
+    _ann_vol,
+    _d_a,
+    _ord,
+    load_entry_ivs,
+    load_naked_run,
+    post_rip_mask,
+)
+
+# --- campaign configuration (committed before the numbers are read) ---------
+
+# The search runs on these; SEALED_TICKERS are held out and never loaded here.
+# A survivor is confirmed on the sealed set in a separate, manual step — the
+# automation-compatible substitute for pre-registration (commit the data the
+# machine can't see, since it can't commit a hypothesis before seeing it).
+SEARCH_TICKERS: tuple[str, ...] = ('MSFT', 'SPY')
+SEALED_TICKERS: tuple[str, ...] = ('QQQ',)
+
+CAMPAIGN_SEED = 20260613   # one campaign seed → per-candidate seed = SEED + i
+N_PERM = 1000              # permutation draws per candidate
+FDR_Q = 0.10               # target false-discovery rate for the BY pass
+
+# Template parameter grids. Each (template, setting) pair is one candidate.
+COOLDOWN_NS: tuple[int, ...] = (7, 30, 60, 90)        # calendar days
+TREND_WINDOWS: tuple[int, ...] = (21, 63, 126, 252)   # trailing-return, days
+
+
+# --- the per-cycle data every template tags against (built once) ------------
+
+@dataclass
+class CycleData:
+    """Pooled, per-cycle arrays the templates re-tag. Built once from the
+    naked runs so every candidate is a cheap re-tag, not a re-run."""
+    pnls: np.ndarray                       # per-cycle P&L
+    entry_ords: list[int]                  # entry-date ordinals
+    ticker_ids: list[str]                  # per-cycle ticker
+    rip_ords_by_ticker: dict[str, list[int]]  # sorted rip terminal ordinals
+    trailing_rv: np.ndarray                # trailing realized vol at entry (nan if short)
+    trailing_ret: dict[int, np.ndarray]    # window -> trailing return at entry (nan if short)
+    richness: np.ndarray                   # entry IV - trailing RV (nan if IV missing/<floor)
+    tickers: list[str]                     # the search set actually loaded
+
+
+def build_cycle_data(
+    runs: Sequence[dict[str, Any]],
+    iv_loader: Callable[..., dict[tuple[str, str], float]] = load_entry_ivs,
+) -> CycleData:
+    """Pool the naked cycles and precompute every per-cycle quantity the
+    templates need: rip ordinals (cooldown), trailing realized vol (the
+    generic vol-confound probe), trailing returns over each window (the
+    momentum/trend templates), and entry-IV richness (the VRP template).
+
+    `iv_loader` is injectable so the synthetic test layer can run without the
+    multi-hundred-MB option-daily CSVs."""
+    pnls: list[float] = []
+    entry_ords: list[int] = []
+    ticker_ids: list[str] = []
+    trailing_rv: list[float] = []
+    trailing_ret: dict[int, list[float]] = {k: [] for k in TREND_WINDOWS}
+    richness: list[float] = []
+    rip_ords_by_ticker: dict[str, list[int]] = {}
+
+    for r in runs:
+        ticker = r['ticker']
+        prices = np.asarray(r['prices'], dtype=float)
+        logret = np.diff(np.log(prices))
+        idx = {d: i for i, d in enumerate(r['dates'])}
+        cycles = r['cycles']
+        rip_ords_by_ticker[ticker] = sorted(
+            _ord(c['terminal_date']) for c in cycles if c['rip'])
+        # one streaming pass over the dailies for this ticker's entry IVs
+        wanted = {(c['entry_date'], c['entry_contract']) for c in cycles
+                  if c.get('entry_contract')}
+        ivs = iv_loader(ticker, wanted)
+        for c in cycles:
+            pnls.append(float(c['pnl']))
+            entry_ords.append(_ord(c['entry_date']))
+            ticker_ids.append(ticker)
+            i = idx.get(c['entry_date'])
+            # trailing realized vol (known at entry); nan if history too short
+            if i is not None and i >= RV_WINDOW:
+                trv = _ann_vol(logret[i - RV_WINDOW:i])
+            else:
+                trv = float('nan')
+            trailing_rv.append(trv)
+            # trailing return over each window; nan if history too short
+            for k in TREND_WINDOWS:
+                if i is not None and i >= k:
+                    trailing_ret[k].append(float(prices[i] / prices[i - k] - 1.0))
+                else:
+                    trailing_ret[k].append(float('nan'))
+            # entry-IV richness vs trailing RV; nan if IV missing / below floor
+            iv = ivs.get((c['entry_date'], c.get('entry_contract')))
+            if iv is not None and iv >= IV_FLOOR and not np.isnan(trv):
+                richness.append(iv - trv)
+            else:
+                richness.append(float('nan'))
+
+    return CycleData(
+        pnls=np.asarray(pnls, dtype=float),
+        entry_ords=entry_ords,
+        ticker_ids=ticker_ids,
+        rip_ords_by_ticker=rip_ords_by_ticker,
+        trailing_rv=np.asarray(trailing_rv, dtype=float),
+        trailing_ret={k: np.asarray(v, dtype=float) for k, v in trailing_ret.items()},
+        richness=np.asarray(richness, dtype=float),
+        tickers=[r['ticker'] for r in runs],
+    )
+
+
+# --- the hypothesis-template enumerator -------------------------------------
+
+@dataclass(frozen=True)
+class Candidate:
+    """One fully-specified, individually-testable hypothesis. `tag` returns
+    (treated, valid) boolean arrays over the pooled cycles: `treated` is the
+    entry-conditioning mask, `valid` flags cycles where the rule is defined
+    (e.g. enough history for the trailing window)."""
+    template: str
+    params: tuple[tuple[str, Any], ...]   # hashable; dict(params) to read
+    predicted_sign: int                   # -1 ⇒ predict D_A < 0 (treated worse)
+    tag: Callable[[], tuple[np.ndarray, np.ndarray]]
+
+    def params_dict(self) -> dict[str, Any]:
+        return dict(self.params)
+
+
+def enumerate_candidates(cd: CycleData) -> list[Candidate]:
+    """Expand the mechanism templates into the committed batch. Refuses to
+    emit a candidate without a sign prediction — the constraint that keeps the
+    batch a structured family of falsifiable bets, not a blind grid."""
+    n = len(cd.pnls)
+    all_valid = np.ones(n, dtype=bool)
+    out: list[Candidate] = []
+
+    # Template 1: post-rip cooldown. Hypothesis: a cycle entered within N days
+    # of a same-ticker rip does WORSE (the stock is "running"). Predict D_A<0.
+    for N in COOLDOWN_NS:
+        def tag_cooldown(N: int = N) -> tuple[np.ndarray, np.ndarray]:
+            mask = post_rip_mask(cd.entry_ords, cd.ticker_ids,
+                                 cd.rip_ords_by_ticker, N)
+            return mask, all_valid
+        out.append(Candidate('cooldown', (('N', N),), -1, tag_cooldown))
+
+    # Template 2: trailing up-move. Hypothesis: a cycle entered after a
+    # positive trailing-k-day return does WORSE (momentum forfeits the right
+    # tail). Predict D_A<0 — this is the repo's recurring lesson under test.
+    for k in TREND_WINDOWS:
+        def tag_trend(k: int = k) -> tuple[np.ndarray, np.ndarray]:
+            ret = cd.trailing_ret[k]
+            valid = ~np.isnan(ret)
+            treated = valid & (ret > 0)
+            return treated, valid
+        out.append(Candidate('up_trend', (('window', k),), -1, tag_trend))
+
+    # Template 3: IV richness (the VRP gate). Hypothesis: a cycle whose entry
+    # IV exceeds trailing realized vol does BETTER (richer premium). Predict
+    # D_A>0. Carries a known low-vol confound the vol_confound column exposes.
+    def tag_iv() -> tuple[np.ndarray, np.ndarray]:
+        rich = cd.richness
+        valid = ~np.isnan(rich)
+        treated = valid & (rich > 0)
+        return treated, valid
+    out.append(Candidate('iv_rich', (), +1, tag_iv))
+
+    return out
+
+
+# --- the shared kill-gate ----------------------------------------------------
+
+def _add_one_p(perm: np.ndarray, observed: float, predicted_sign: int) -> float:
+    """One-sided add-one Monte Carlo p-value (Davison & Hinkley 1997), in the
+    predicted direction. Counts permutation statistics at least as extreme as
+    the observed one toward the prediction. Matches the prereg §5.2 convention
+    and keeps the test exact (never reports p = 0)."""
+    if predicted_sign < 0:
+        extreme = int(np.sum(perm <= observed))   # predicted treated worse
+    else:
+        extreme = int(np.sum(perm >= observed))    # predicted treated better
+    return (1 + extreme) / (1 + len(perm))
+
+
+def kill_gate(cd: CycleData, cand: Candidate, rng: np.random.Generator,
+              n_perm: int = N_PERM) -> dict[str, Any]:
+    """Run one candidate through the shared D_A split + permutation null and
+    return its ledger row (without the campaign-level BY verdict, added
+    later). Restricts every computation to the candidate's `valid` cycles."""
+    treated, valid = cand.tag()
+    pnls = cd.pnls[valid]
+    mask = treated[valid]
+    n_treated = int(mask.sum())
+    n_other = int((~mask).sum())
+    row: dict[str, Any] = {
+        'template': cand.template,
+        'params': cand.params_dict(),
+        'predicted_sign': cand.predicted_sign,
+        'n_valid': int(valid.sum()),
+        'n_treated': n_treated,
+        'n_other': n_other,
+        'n_perm': n_perm,
+        'seed': None,   # the per-candidate seed is stamped by run_campaign
+        'search_tickers': list(cd.tickers),
+    }
+    d_a = _d_a(pnls, mask)
+    if d_a is None or n_treated == 0 or n_other == 0:
+        # degenerate (an empty cell) — recorded, never a survivor
+        row.update({'D_A': None, 'sign_ok': False, 'p_value': None,
+                    'vol_confound': None})
+        return row
+
+    perm = np.empty(n_perm, dtype=float)
+    size = len(pnls)
+    for j in range(n_perm):
+        fake = np.zeros(size, dtype=bool)
+        fake[rng.choice(size, size=n_treated, replace=False)] = True
+        perm[j] = pnls[fake].mean() - pnls[~fake].mean()
+    p_value = _add_one_p(perm, d_a, cand.predicted_sign)
+    sign_ok = bool(np.sign(d_a) == cand.predicted_sign)
+
+    # generic vol-level confound probe: does this tag mostly sort cycles by
+    # trailing volatility? (the trap that made iv_richness's split look real).
+    vc = _vol_confound(cd.trailing_rv[valid], mask)
+
+    row.update({
+        'D_A': round(float(d_a), 2),
+        'sign_ok': sign_ok,
+        'p_value': round(p_value, 4),
+        'vol_confound': round(vc, 4) if vc is not None else None,
+    })
+    return row
+
+
+def _vol_confound(trailing_rv: np.ndarray, mask: np.ndarray) -> float | None:
+    """mean(trailing RV | treated) - mean(trailing RV | other), over cycles
+    with a defined trailing RV. A large magnitude flags a tag that is really a
+    volatility-level sort rather than the claimed signal."""
+    defined = ~np.isnan(trailing_rv)
+    a = trailing_rv[defined & mask]
+    b = trailing_rv[defined & ~mask]
+    if len(a) == 0 or len(b) == 0:
+        return None
+    return float(a.mean() - b.mean())
+
+
+# --- the FDR correction (judged across the whole batch) ---------------------
+
+def benjamini_yekutieli(pvals: Sequence[float | None], q: float = FDR_Q) -> list[bool]:
+    """Benjamini-Yekutieli step-up FDR control, valid under arbitrary
+    dependence. Equivalent to Benjamini-Hochberg but with the threshold
+    divided by the harmonic factor c(n) = Σ 1/i — the price for not assuming
+    the tests are independent (they are not: shared tickers, overlapping
+    cycles, nested windows).
+
+    Sort the p-values ascending; find the largest rank k with
+    p(k) ≤ (k / (n·c)) · q; reject every hypothesis with p ≤ p(k). `None`
+    p-values (degenerate candidates) never survive but still count toward n —
+    they were tests you ran. Returns a survivor flag per input position."""
+    n = len(pvals)
+    if n == 0:
+        return []
+    c = float(np.sum(1.0 / np.arange(1, n + 1)))
+    # None → treated as p = 1.0 (cannot be rejected) but counted in n
+    eff = [1.0 if p is None else float(p) for p in pvals]
+    order = sorted(range(n), key=lambda i: eff[i])
+    k_max = 0
+    for rank, i in enumerate(order, start=1):
+        if eff[i] <= (rank / (n * c)) * q:
+            k_max = rank
+    if k_max == 0:
+        return [False] * n
+    threshold = eff[order[k_max - 1]]
+    return [p is not None and float(p) <= threshold for p in pvals]
+
+
+# --- the ledger wrapper: run the batch, judge it, record it -----------------
+
+def run_campaign(cd: CycleData, seed: int = CAMPAIGN_SEED,
+                 n_perm: int = N_PERM, q: float = FDR_Q) -> list[dict[str, Any]]:
+    """The wrapper: enumerate the batch, run each candidate through the shared
+    kill-gate with a per-candidate seed, then add the campaign-wide BY verdict
+    to every row. Returns the ledger rows (deterministic in `seed`)."""
+    candidates = enumerate_candidates(cd)
+    rows: list[dict[str, Any]] = []
+    for i, cand in enumerate(candidates):
+        rng = np.random.default_rng(seed + i)
+        row = kill_gate(cd, cand, rng, n_perm=n_perm)
+        row['seed'] = seed + i   # record the actual per-candidate seed
+        rows.append(row)
+
+    survivors = benjamini_yekutieli([r['p_value'] for r in rows], q=q)
+    for r, surv in zip(rows, survivors):
+        r['fdr_q'] = q
+        r['by_survivor'] = bool(surv)
+        # a CLEAN survivor also has the predicted sign and no dominating vol
+        # confound; reported separately so a confounded "win" can't masquerade.
+        r['clean_survivor'] = bool(surv and r.get('sign_ok'))
+    return rows
+
+
+def write_ledger(rows: Sequence[dict[str, Any]], path: str = 'edge_ledger.jsonl') -> None:
+    """Append-only ledger: one immutable JSON row per candidate, full
+    provenance (seed, search tickers, statistic, p-value, verdict)."""
+    stamp = datetime.now().isoformat(timespec='seconds')
+    with open(path, 'a', encoding='utf-8') as f:
+        for r in rows:
+            f.write(json.dumps({**r, 'run_at': stamp}) + '\n')
+
+
+def load_search_runs() -> list[dict[str, Any]]:
+    """Load ONLY the search set — the seal is enforced here, in code:
+    SEALED_TICKERS are never read, so no candidate can train on them."""
+    return [load_naked_run(t) for t in SEARCH_TICKERS]
+
+
+def _format_summary(rows: Sequence[dict[str, Any]]) -> str:
+    lines = [
+        f'Campaign: search={list(SEARCH_TICKERS)} sealed={list(SEALED_TICKERS)} '
+        f'q={FDR_Q} n_perm={N_PERM}',
+        f'{"template":<10} {"params":<14} {"D_A":>9} {"sign":>4} '
+        f'{"p":>7} {"vol_conf":>9} {"BY":>3} {"clean":>5}',
+    ]
+    for r in rows:
+        params = ','.join(f'{k}={v}' for k, v in r['params'].items()) or '-'
+        d_a = '-' if r['D_A'] is None else f'{r["D_A"]:.0f}'
+        p = '-' if r['p_value'] is None else f'{r["p_value"]:.3f}'
+        vc = '-' if r['vol_confound'] is None else f'{r["vol_confound"]:.3f}'
+        lines.append(
+            f'{r["template"]:<10} {params:<14} {d_a:>9} '
+            f'{"ok" if r["sign_ok"] else "x":>4} {p:>7} {vc:>9} '
+            f'{"Y" if r["by_survivor"] else ".":>3} '
+            f'{"Y" if r["clean_survivor"] else ".":>5}')
+    n_clean = sum(r['clean_survivor'] for r in rows)
+    lines.append(f'\nclean survivors after BY: {n_clean} / {len(rows)}')
+    return '\n'.join(lines)
+
+
+def main() -> None:
+    print('Loading search runs (sealed set excluded; a few minutes cold) ...',
+          flush=True)
+    runs = load_search_runs()
+    cd = build_cycle_data(runs)
+    rows = run_campaign(cd)
+    write_ledger(rows)
+    print(_format_summary(rows))
+
+
+if __name__ == '__main__':
+    main()
