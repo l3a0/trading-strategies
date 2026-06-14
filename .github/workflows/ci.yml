@@ -12,96 +12,66 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# The work is split into independent jobs that run on PARALLEL runners, so the
+# wall-clock time is the slowest job, not the sum. The split is by what each
+# group needs:
+#   - lint        : ruff + pyright (no data, fast)
+#   - engine      : proxy-engine suite + smoke + figures + notebook
+#                   (needs only the committed price CSVs — no chain download)
+#   - real-chain  : the real-chain regression pins (needs the option dailies)
+#   - scouts      : the registered experiment + scouts + edge search
+#                   (also need the option dailies)
+# Each job is its own ~7GB runner, so the per-job memory footprint is one
+# chain store at a time — well within budget (a single shared process holding
+# every store at once does NOT fit, which is why there is no session cache).
+# Coverage is now reported per test-job (it is informational here — not gated
+# or uploaded); a combine step could restore a single number if ever needed.
+
 jobs:
-  check:
-    # GitHub spins up a fresh Ubuntu VM for each run. The VM is discarded after.
+  lint:
     runs-on: ubuntu-latest
-
     steps:
-      # Clone the repo into the VM. Without this, the VM has no code.
-      # @v4 pins to the latest 4.x release — not a specific patch, not @main.
-      # Dependabot will open a PR when v5 is released.
       - uses: actions/checkout@v4
-
-      # Install Python 3.12 on the VM. Pins the version so CI matches a known
-      # baseline regardless of what GitHub's default happens to be.
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-
-      # Install runtime + dev dependencies from requirements.txt.
-      # numpy is needed by cc_backtest.py; matplotlib by make_figures.py;
-      # pytest/pytest-cov drive the tests; yfinance is unused by tests but
-      # listed for the data downloader; ruff/pyright are used by the lint
-      # and type-check steps below.
       - name: Install dependencies
         run: pip install -r requirements.txt
-
       # Lint with ruff — catches style issues, unused imports, and common bugs.
-      # Exits non-zero on any violation, which fails the job.
       - name: Lint
         run: ruff check .
-
-      # Static type checking with pyright. Checks all five Python source files.
+      # Static type checking with pyright across the core source files.
       - name: Type check
         run: pyright cc_backtest.py download_prices.py make_figures.py make_notebook.py test_cc_backtest.py
 
-      # The real-chain regression pins need the QQQ and MSFT option-chain
-      # datasets, which are too large for git history. They ship as release
-      # assets (tag data-2026-06), are cached between runs keyed on the
-      # committed checksums, and are verified against those checksums after
-      # download so a silently-replaced asset fails loudly. If the steps
-      # below are ever removed, the pins skip instead of failing (see the
-      # skipif markers in test_real_cc_backtest.py).
-      - name: Restore chain-data cache
-        id: chain-cache
-        uses: actions/cache@v4
+  engine:
+    # Proxy-engine work: the in-memory engine suite plus the artifact checks.
+    # None of this touches the option-chain datasets (it runs against the
+    # committed price CSVs), so this job skips the chain download entirely and
+    # runs off the real-chain critical path.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          path: |
-            qqq_option_dailies.csv.gz
-            qqq_option_dailies_2011_2016.csv.gz
-            msft_option_dailies.csv.gz
-            msft_option_dailies_2008_2016.csv.gz
-            spy_option_dailies.csv.gz
-          key: chain-data-${{ hashFiles('data_checksums.sha256') }}
-
-      - name: Fetch chain data from the data release
-        if: steps.chain-cache.outputs.cache-hit != 'true'
-        run: gh release download data-2026-06 --pattern '*_option_dailies*.csv.gz' --clobber
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Verify chain-data checksum
-        run: sha256sum -c data_checksums.sha256
-
-      # Unit tests with branch coverage: the engine suite against in-memory
-      # price fixtures plus the real-chain regression pins against the
-      # release-asset dataset fetched above (no other network access; the
-      # unadjusted price CSV is committed). test_trend_gate.py covers the
-      # registered experiment's analysis machinery (docs/prereg_trend_gate.md)
-      # — its dataset-gated layer pins treatment-side quantities only.
-      # test_explorations.py pins the killed exploratory scouts (the
-      # exploration log, docs/explorations.md) so dead ends aren't re-run.
-      # test_edge_search.py pins the automated FDR-controlled campaign (the
-      # edge-search log, docs/edge_search.md) — its always-run layer (BY /
-      # enumerator / kill-gate) runs without datasets; the campaign pins skip.
-      - name: Run tests
-        run: pytest test_cc_backtest.py test_real_cc_backtest.py test_trend_gate.py test_explorations.py test_edge_search.py --cov=. --cov-branch -v
-
-      # Smoke test: run the actual backtest against the committed MSFT CSV
-      # to catch any breakage in the main entry point that the unit tests
-      # might miss (e.g. CSV parsing, __main__ wiring, print formatting).
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      # The engine suite against in-memory price fixtures (pricing, the overlay
+      # state machine, the statistics helper, walk-forward, Monte Carlo).
+      - name: Engine tests
+        run: pytest test_cc_backtest.py --cov=. --cov-branch -v
+      # Smoke test: run the actual backtest against the committed MSFT CSV to
+      # catch breakage in the main entry point the unit tests might miss
+      # (CSV parsing, __main__ wiring, print formatting).
       - name: Backtest smoke test
         run: python cc_backtest.py
-
       # Figure regeneration check: ensure the figure-building pipeline still
-      # works end-to-end (data parse + backtest + stats + matplotlib). We
-      # don't byte-compare against the committed PNGs because matplotlib's
-      # rendering can vary subtly across machine fonts and versions; instead
-      # we assert the script runs cleanly and produces four non-trivial PNGs.
-      # Anyone changing figure code or inputs should run `make_figures.py`
-      # locally and commit the updated outputs.
+      # works end-to-end. We don't byte-compare against the committed PNGs
+      # because matplotlib rendering varies subtly across fonts/versions;
+      # instead we assert the script runs and produces four non-trivial PNGs.
       - name: Verify tutorial figures regenerate
         run: |
           python make_figures.py
@@ -117,14 +87,87 @@ jobs:
               echo "Suspiciously small (<10KB): $f at $size bytes"; exit 1
             fi
           done
-
       # Notebook drift check: the .ipynb is generated from the tutorial
-      # markdown, so unlike the PNGs it's deterministic and we *can*
-      # byte-compare. Regenerate and fail if it differs from the committed
-      # copy — that means someone edited the tutorial or figure script
-      # without running `python make_notebook.py` and committing the result.
+      # markdown, so it's deterministic and we *can* byte-compare. Regenerate
+      # and fail if it differs — that means someone edited the tutorial or
+      # figure script without running `python make_notebook.py` and committing.
       - name: Verify notebook is up to date
         run: |
           python make_notebook.py
           git diff --exit-code covered_call_backtest.ipynb \
             || (echo "covered_call_backtest.ipynb is stale — run 'python make_notebook.py' and commit." && exit 1)
+
+  real-chain:
+    # The real-chain regression pins need the QQQ/MSFT/SPY option-chain
+    # datasets, which are too large for git history. They ship as release
+    # assets (tag data-2026-06), are cached between runs keyed on the committed
+    # checksums, and are verified after download so a silently-replaced asset
+    # fails loudly. If these steps are ever removed, the pins skip instead of
+    # failing (see the skipif markers in test_real_cc_backtest.py).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Restore chain-data cache
+        id: chain-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            qqq_option_dailies.csv.gz
+            qqq_option_dailies_2011_2016.csv.gz
+            msft_option_dailies.csv.gz
+            msft_option_dailies_2008_2016.csv.gz
+            spy_option_dailies.csv.gz
+          key: chain-data-${{ hashFiles('data_checksums.sha256') }}
+      - name: Fetch chain data from the data release
+        if: steps.chain-cache.outputs.cache-hit != 'true'
+        run: gh release download data-2026-06 --pattern '*_option_dailies*.csv.gz' --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Verify chain-data checksum
+        run: sha256sum -c data_checksums.sha256
+      - name: Real-chain regression tests
+        run: pytest test_real_cc_backtest.py --cov=. --cov-branch -v
+
+  scouts:
+    # The registered trend-gate experiment's analysis machinery
+    # (docs/prereg_trend_gate.md — dataset-gated layer pins treatment-side
+    # quantities only), the killed exploratory scouts (test_explorations.py,
+    # docs/explorations.md), and the automated FDR-controlled edge-search
+    # campaign (test_edge_search.py, docs/edge_search.md). Their dataset-gated
+    # pins need the same option dailies as the real-chain job; their always-run
+    # layers run without the datasets.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Restore chain-data cache
+        id: chain-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            qqq_option_dailies.csv.gz
+            qqq_option_dailies_2011_2016.csv.gz
+            msft_option_dailies.csv.gz
+            msft_option_dailies_2008_2016.csv.gz
+            spy_option_dailies.csv.gz
+          key: chain-data-${{ hashFiles('data_checksums.sha256') }}
+      - name: Fetch chain data from the data release
+        if: steps.chain-cache.outputs.cache-hit != 'true'
+        run: gh release download data-2026-06 --pattern '*_option_dailies*.csv.gz' --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Verify chain-data checksum
+        run: sha256sum -c data_checksums.sha256
+      - name: Experiment, scout & edge-search tests
+        run: pytest test_trend_gate.py test_explorations.py test_edge_search.py --cov=. --cov-branch -v
