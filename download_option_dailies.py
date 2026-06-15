@@ -2,23 +2,31 @@
 
 Where download_option_chains.py grabs one target call per monthly roll (entry
 premiums), this fetches a filtered slice of the chain for EVERY trading day:
-all calls with DTE 1..--max-dte and strike within ±--strike-band of spot.
-That's what the engine needs to (a) select a call at any roll date the
-strategy lands on, and (b) mark the held contract to market every day until
-it's closed, expired, or assigned.
+calls AND puts (or one wing via --keep) with DTE 1..--max-dte and strike within
+±--strike-band of spot. That's what the engine needs to (a) select a call or put
+at any roll date the strategy lands on, and (b) mark the held contract to market
+every day until it's closed, expired, or assigned.
 
-Spot is inferred from the chain itself — the call strike whose delta is
-closest to 0.50 at the nearest expiration — so strikes are filtered in
-actual-price space without needing an (adjusted!) external price series.
+Spot is inferred from the chain's CALLS — the call strike whose delta is closest
+to 0.50 at the nearest expiration (always present in a full chain) — so strikes
+are filtered in actual-price space without an (adjusted!) external price series.
+Puts in that same strike band are kept too; their NEGATIVE vendor delta is what
+the short-vol engine reads to tell the wings apart (no extra column needed).
 
 Usage:
     export ALPHAVANTAGE_API_KEY=...   # premium (options endpoints are gated)
-    python download_option_dailies.py --ticker QQQ --start 2016-06-06 --end 2026-06-05
+    # fresh ticker, both wings (default):
+    python download_option_dailies.py --ticker IWM --start 2010-12-01 \
+        --end 2026-06-05 --dates-from iwm_20yr_prices.csv
+    # add ONLY the put wing to a ticker whose calls file already exists:
+    python download_option_dailies.py --ticker SPY --keep put \
+        --out spy_option_dailies_puts.csv --dates-from spy_20yr_prices.csv \
+        --start 2010-12-01 --end 2026-06-05
 
-Output: {ticker}_option_dailies.csv, one row per surviving contract per day,
-written incrementally; resumable — re-running skips days already present.
-Trading days are taken from --dates-from (default qqq_10yr_prices.csv; any
-NYSE/Nasdaq-calendar price file works for any US-listed underlying).
+Output: {ticker}_option_dailies.csv (or --out), one row per surviving contract
+per day, written incrementally; resumable — re-running skips days already present.
+--keep {both|call|put} chooses the wing(s) (default both). Trading days come from
+--dates-from (any NYSE/Nasdaq-calendar price file for any US-listed underlying).
 """
 
 from __future__ import annotations
@@ -76,18 +84,23 @@ def infer_spot(calls: list[dict], asof: str) -> float | None:
     return best[1] if best else None
 
 
-def filter_calls(
-    data: list[dict], asof: str, max_dte: int, strike_band: float
+def filter_chain(
+    data: list[dict], asof: str, max_dte: int, strike_band: float, keep: str = 'both'
 ) -> list[dict]:
-    """Calls with 1 <= DTE <= max_dte and strike within ±strike_band of spot."""
+    """Calls and/or puts with 1 <= DTE <= max_dte and strike within ±strike_band
+    of spot. `keep` is 'both' (default), 'call', or 'put'. Spot is always inferred
+    from the CALLS (delta nearest 0.50 — present in any full chain); the strike
+    band then applies to whichever wing(s) `keep` selects, so puts (negative delta)
+    are kept by the same band when requested."""
     asof_d = datetime.strptime(asof, '%Y-%m-%d').date()
     calls = [r for r in data if r.get('type') == 'call']
     spot = infer_spot(calls, asof)
     if spot is None:
         return []
     lo, hi = spot * (1 - strike_band), spot * (1 + strike_band)
+    rows = data if keep == 'both' else [r for r in data if r.get('type') == keep]
     out: list[dict] = []
-    for r in calls:
+    for r in rows:
         try:
             exp = datetime.strptime(r['expiration'], '%Y-%m-%d').date()
             strike = float(r['strike'])
@@ -118,6 +131,8 @@ def main() -> None:
     p.add_argument('--max-dte', type=int, default=60)
     p.add_argument('--strike-band', type=float, default=0.35,
                    help='Keep strikes within ±this fraction of inferred spot')
+    p.add_argument('--keep', choices=['both', 'call', 'put'], default='both',
+                   help='Which option wing(s) to keep (default both)')
     p.add_argument('--sleep', type=float, default=0.85,
                    help='Seconds between requests (premium: 75/min)')
     p.add_argument('--out', default=None)
@@ -149,7 +164,7 @@ def main() -> None:
                 print(f'\nAlpha Vantage stopped us at {day}: {exc}', flush=True)
                 print(f'{n_rows} row(s) written this run; re-run to resume.', flush=True)
                 return
-            kept = filter_calls(data, day, args.max_dte, args.strike_band)
+            kept = filter_chain(data, day, args.max_dte, args.strike_band, args.keep)
             for r in kept:
                 writer.writerow({
                     'date': day, 'expiration': r['expiration'], 'dte': r['dte'],

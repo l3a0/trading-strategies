@@ -129,7 +129,8 @@ CI runs `ruff`, `pyright`, all three test suites (fetching the checksum-verified
 | [test_trend_gate.py](test_trend_gate.py) | Pure-logic tests of that machinery plus dataset-gated pins of the registration's signal-side tables (treatment-side only — no outcome data before the registered ordering allows it) |
 | [download_prices.py](download_prices.py#L11) | yfinance data downloader |
 | [download_option_chains.py](download_option_chains.py) | Alpha Vantage fetcher for per-roll entry snapshots (one target call per monthly roll, six tickers) |
-| [download_option_dailies.py](download_option_dailies.py) | Alpha Vantage fetcher for daily chain slices — the datasets `real_cc_backtest.py` consumes |
+| [download_option_dailies.py](download_option_dailies.py) | Alpha Vantage fetcher for daily chain slices — the datasets `real_cc_backtest.py` consumes; `--keep {both,call,put}` selects the wing(s) (puts added for the put-side VRP experiment) |
+| [test_download_option_dailies.py](test_download_option_dailies.py) | Pure-function tests of the fetcher's `filter_chain` (put support, legacy call-only parity, spot inference) |
 | [fetch_option_data.sh](fetch_option_data.sh) | Pulls the big chain datasets from the `data-2026-06` release and verifies them against [data_checksums.sha256](data_checksums.sha256) |
 | [make_figures.py](make_figures.py#L888) | Regenerates the tutorial and blog figures (`fig1`–`fig13`) into `docs/figures/` |
 | [make_notebook.py](make_notebook.py#L1) | Regenerates the runnable notebook from the tutorial markdown + figure script |
