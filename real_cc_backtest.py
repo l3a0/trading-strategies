@@ -67,7 +67,11 @@ COMMISSION_PER_SHARE = 0.0065  # $0.65 per 100-share contract, both legs (engine
 # 2008-2009 offers ~2 trustworthy entry days a year, far too few to trade,
 # so the GFC itself is untestable on these chains. QQQ needs no boundary
 # (its store begins 2011-03-23, past the era - see CLAUDE.md's era gotchas).
-CHAIN_CLEAN_START: dict[str, str] = {'MSFT': '2010-05-10', 'SPY': '2010-12-01'}
+# IWM is the same clean-from-row-one case (store begins 2010-12-01, past the
+# era; validation found entry-band raw == defect-free in every month - no
+# placeholder rows) but gets an explicit entry: the put-side VRP run reads
+# CHAIN_CLEAN_START['IWM'], so its boundary is documentary, not load-bearing.
+CHAIN_CLEAN_START: dict[str, str] = {'MSFT': '2010-05-10', 'SPY': '2010-12-01', 'IWM': '2010-12-01'}
 
 
 def open_dailies(path: str) -> TextIO:

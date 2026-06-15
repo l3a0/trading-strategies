@@ -27,14 +27,16 @@ Phase A (THIS FILE, runs today on existing call-only data): the CALL leg.
   Set target_delta=0.25 to isolate the hedge-target change alone (net-zero vs
   buy-and-hold) holding the strike fixed to the covered-call runs.
 
-Phase B (engine ready; BLOCKED ON DATA + REGISTRATION): the PUT leg. The
+Phase B (engine ready; UNBLOCKED — awaiting the one-shot run): the PUT leg. The
   equity-index VRP is concentrated in OTM PUTS (the skew / crash-insurance
-  premium). The engine capability now exists — `option_type='put'` selects via
-  `select_put_entry` and hedges with SHORT stock (signed delta) — and its
-  mechanism is pinned by synthetic tests. But no real put run may execute until
-  (1) docs/prereg_vol_premium.md merges (the registration) and (2) the
-  put-inclusive fetch lands (download_option_dailies.py still fetches calls
-  only). The ATM straddle (two legs) remains a further extension.
+  premium). The engine capability exists — `option_type='put'` selects via
+  `select_put_entry` and hedges with SHORT stock (signed delta) — pinned by
+  synthetic tests. Both prerequisites are now met: the registration merged
+  (docs/prereg_vol_premium.md) and the put-inclusive data landed
+  (download_option_dailies.py grew `--keep put`; the SPY-put and both-wing IWM
+  daily chains were published to the data release). What remains is the prereg's
+  one-shot execution — it runs once, on a deliberate start. The ATM straddle
+  (two legs) remains a further extension.
 
 EPISTEMIC STATUS
 ----------------
@@ -77,9 +79,11 @@ def select_put_entry(
     sign-flipped image of select_entry's call band). Returns the same
     candidate tuple shape select_entry does, or None.
 
-    Implements docs/prereg_vol_premium.md §2.1's entry rule. The current chain
-    store is calls-only; this finds nothing until the put-inclusive fetch (§9)
-    lands — its mechanism is exercised by synthetic put candidates in the tests.
+    Implements docs/prereg_vol_premium.md §2.1's entry rule. On a put-inclusive
+    store (the SPY-put and IWM daily chains, now published) this selects the
+    target put; on the calls-only canonical stores it finds nothing (their
+    deltas are all positive). Its mechanism is also exercised by synthetic put
+    candidates in the tests.
     """
     cands = [c for c in day['candidates'] if c[2] > 0 and -0.60 < c[1] < -0.05]
     if not cands:
