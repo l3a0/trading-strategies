@@ -139,7 +139,9 @@ jobs:
     # (docs/prereg_trend_gate.md — dataset-gated layer pins treatment-side
     # quantities only), the killed exploratory scouts (test_explorations.py,
     # docs/explorations.md), and the automated FDR-controlled edge-search
-    # campaign (test_edge_search.py, docs/edge_search.md). Their dataset-gated
+    # campaign (test_edge_search.py, docs/edge_search.md), and the delta-neutral
+    # VRP scaffold (test_vol_premium.py, docs/vol_premium.md — synthetic mechanics
+    # always run; the SPY structural check is dataset-gated). Their dataset-gated
     # pins need the same option dailies as the real-chain job; their always-run
     # layers run without the datasets.
     runs-on: ubuntu-latest
@@ -170,4 +172,4 @@ jobs:
       - name: Verify chain-data checksum
         run: sha256sum -c data_checksums.sha256
       - name: Experiment, scout & edge-search tests
-        run: pytest test_trend_gate.py test_explorations.py test_edge_search.py --cov=. --cov-branch -v
+        run: pytest test_trend_gate.py test_explorations.py test_edge_search.py test_vol_premium.py --cov=. --cov-branch -v

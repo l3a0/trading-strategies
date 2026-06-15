@@ -186,3 +186,17 @@ these strikes on these names, at real quotes.
   experiment, killed at Stage 1 with the same wrong sign (`D_A = +$439`). Full
   results in [trend_gate_results.md](trend_gate_results.md); it is not a scout,
   so it lives there with its own pins, not here.
+- **Delta-neutral / put-side VRP experiment** — the follow-up the delta-hedge
+  entry above pointed to, now run (an unpinned scaffold). The clean delta-neutral
+  isolator (net delta → 0, not buy-and-hold) confirms the covered-call \~0 was a
+  *structure* artifact: at the same strike and span the signal flips positive
+  (MSFT −0.23 → +0.87, QQQ +0.18 → +0.90; SPY 0.25Δ NW t +2.54). On SPY the premium
+  is real and marginally significant and **survives that name's realistic
+  transaction costs** (\~+2.0 at 1bp); the risk-free *financing* nets out and is
+  not a drag — an earlier "+0.93 / doesn't beat T-bills" reading was a base
+  mismatch (the helper subtracted rf on capital, not on the smaller cash base the
+  engine credited), now corrected. It stays thin and single-wing: QQQ/MSFT are
+  sub-t=2, the daily-close backtest hides the short-gamma tail, and it is the weak
+  call wing — promising, not a confirmed edge. Corrected numbers and the rf-base
+  fix are in [vol_premium.md](vol_premium.md); the put side — where the premium
+  actually lives — is blocked on a put-inclusive data fetch.
