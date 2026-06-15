@@ -69,7 +69,6 @@ class TestShortVolMechanics:
         """Stock trends up through the strike: the long hedge captures the rise,
         so the delta-neutral net loss is a small gamma cost, NOT the full naked
         assignment loss. This is the property the covered-call hedge-to-B&H lacks."""
-        days = [f'2020-02-0{i+1}' for i in range(5)]
         price_path = [('2020-02-01', 100.0), ('2020-02-02', 102.0),
                       ('2020-02-03', 105.0), ('2020-02-04', 108.0),
                       ('2020-02-05', 110.0)]
