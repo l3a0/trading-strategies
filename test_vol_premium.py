@@ -21,7 +21,7 @@ from typing import Any
 import pandas as pd
 import pytest
 
-from vol_premium import run_real_short_vol_overlay, short_vol_statistics
+from vol_premium import run_real_short_vol_overlay, select_put_entry, short_vol_statistics
 
 _SPY_DAILIES = os.path.join(os.path.dirname(__file__), 'spy_option_dailies.csv')
 _HAVE_SPY = os.path.exists(_SPY_DAILIES) or os.path.exists(_SPY_DAILIES + '.gz')
@@ -224,6 +224,66 @@ class TestShortVolCompletion:
         # The buggy flat-rf-on-capital benchmark does NOT cancel (cash != capital).
         flat = short_vol_statistics(eq_rf.drop(columns=['rf_credit']), s_rf['capital'], rf=0.045)
         assert abs(flat['mean_daily_excess_dollars'] - st_rf['mean_daily_excess_dollars']) > 1.0
+
+
+class TestShortPutMechanics:
+    """The §9 put-leg engine capability (synthetic, always-run): the put mirror
+    of TestShortVolMechanics. select_put_entry picks the nearest negative-delta
+    put; a flat market harvests the premium; the SHORT-stock hedge offsets a
+    drop. Pins the mechanism before the real put fetch (docs/prereg_vol_premium.md)
+    — no real put data exists yet, so the registered run stays gated."""
+
+    @staticmethod
+    def _put_cand(dte: int, delta: float, bid: float = 1.0) -> tuple[Any, ...]:
+        return (dte, delta, bid, bid + 0.1, bid + 0.05, '2024-01-19', 100.0, 'P')
+
+    def test_select_put_entry_nearest_negative_delta(self) -> None:
+        day = {'candidates': [
+            self._put_cand(30, -0.10), self._put_cand(30, -0.28),
+            self._put_cand(30, -0.45), self._put_cand(30, 0.30),  # a call: ignored
+            self._put_cand(30, -0.02),  # outside the -0.05 band: ignored
+        ], 'marks': {}}
+        pick = select_put_entry(day, 30, -0.25)
+        assert pick is not None
+        assert pick[1] == pytest.approx(-0.28)  # nearest to -0.25 among in-band puts
+
+    def test_put_flat_market_harvests_premium(self) -> None:
+        """OTM put (strike 95 < spot 100), flat market, decays to worthless: the
+        delta-neutral short put keeps ~the whole premium."""
+        days = [f'2020-03-0{i + 1}' for i in range(6)]
+        price_path = [(d, 100.0) for d in days]
+        option_path = [(2.0, 2.1, 2.05, -0.30), (1.55, 1.65, 1.60, -0.24),
+                       (1.05, 1.15, 1.10, -0.17), (0.55, 0.65, 0.60, -0.10),
+                       (0.15, 0.25, 0.20, -0.04), (0.0, 0.0, 0.0, 0.0)]
+        dates, prices, store = _scenario(price_path, option_path, strike=95.0)
+        s, _, _ = run_real_short_vol_overlay(
+            dates, prices, store,
+            {'option_type': 'put', 'target_delta': -0.30, 'capital': 100_000,
+             'risk_free_rate': 0.0, 'hedge_cost_bps': 0.0})
+        assert s['num_calls_sold'] == 1
+        assert s['net_pnl'] > 0
+        assert s['net_pnl'] == pytest.approx(s['total_premium_collected'], rel=0.02)
+
+    def test_put_hedge_offsets_a_drop(self) -> None:
+        """Stock falls through the strike: the SHORT-stock hedge gains as the
+        stock drops, so the delta-neutral net loss is a small gamma cost, NOT the
+        full naked put-assignment loss — the put mirror of the call hedge test."""
+        price_path = [('2020-04-01', 100.0), ('2020-04-02', 98.0),
+                      ('2020-04-03', 95.0), ('2020-04-04', 92.0),
+                      ('2020-04-05', 90.0)]
+        option_path = [(2.0, 2.1, 2.05, -0.50), (3.0, 3.1, 3.05, -0.62),
+                       (4.5, 4.6, 4.55, -0.80), (6.4, 6.6, 6.50, -0.95),
+                       (8.0, 8.1, 8.05, -1.0)]
+        dates, prices, store = _scenario(price_path, option_path, strike=102.0)
+        s, _, _ = run_real_short_vol_overlay(
+            dates, prices, store,
+            {'option_type': 'put', 'target_delta': -0.50, 'capital': 100_000,
+             'risk_free_rate': 0.0, 'hedge_cost_bps': 0.0})
+        shares = s['num_contracts'] * 100
+        premium_per_share = s['total_premium_collected'] / shares
+        naked_loss = (premium_per_share - (102.0 - 90.0)) * shares  # ~ -10/share, large
+        assert naked_loss < 0
+        assert abs(s['net_pnl']) < 0.5 * abs(naked_loss)
 
 
 @pytest.mark.skipif(not _HAVE_SPY, reason='needs spy_option_dailies.csv or its .gz twin')
