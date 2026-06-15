@@ -27,10 +27,14 @@ Phase A (THIS FILE, runs today on existing call-only data): the CALL leg.
   Set target_delta=0.25 to isolate the hedge-target change alone (net-zero vs
   buy-and-hold) holding the strike fixed to the covered-call runs.
 
-Phase B (TODO — BLOCKED ON DATA): the PUT leg and the ATM straddle. The
+Phase B (engine ready; BLOCKED ON DATA + REGISTRATION): the PUT leg. The
   equity-index VRP is concentrated in OTM PUTS (the skew / crash-insurance
-  premium); the calls-only datasets cannot test it. download_option_dailies.py
-  fetched calls only — see docs/vol_premium.md for the put-inclusive fetch plan.
+  premium). The engine capability now exists — `option_type='put'` selects via
+  `select_put_entry` and hedges with SHORT stock (signed delta) — and its
+  mechanism is pinned by synthetic tests. But no real put run may execute until
+  (1) docs/prereg_vol_premium.md merges (the registration) and (2) the
+  put-inclusive fetch lands (download_option_dailies.py still fetches calls
+  only). The ATM straddle (two legs) remains a further extension.
 
 EPISTEMIC STATUS
 ----------------
@@ -63,6 +67,28 @@ from real_cc_backtest import (
 )
 
 
+def select_put_entry(
+    day: dict[str, Any], target_dte: int, target_delta: float
+) -> tuple[int, float, float, float, float, str, float, str] | None:
+    """Nearest-DTE expiration, then nearest-delta PUT — the put mirror of
+    `select_entry` (real_cc_backtest.py). Puts carry NEGATIVE vendor delta, so
+    `target_delta` is negative (e.g. -0.25 for the 25-delta put, the mirror of
+    the call wing's +0.25). Band: `bid > 0` and `-0.60 < delta < -0.05` (the
+    sign-flipped image of select_entry's call band). Returns the same
+    candidate tuple shape select_entry does, or None.
+
+    Implements docs/prereg_vol_premium.md §2.1's entry rule. The current chain
+    store is calls-only; this finds nothing until the put-inclusive fetch (§9)
+    lands — its mechanism is exercised by synthetic put candidates in the tests.
+    """
+    cands = [c for c in day['candidates'] if c[2] > 0 and -0.60 < c[1] < -0.05]
+    if not cands:
+        return None
+    best_dte = min({c[0] for c in cands}, key=lambda x: abs(x - target_dte))
+    cohort = [c for c in cands if c[0] == best_dte]
+    return min(cohort, key=lambda c: abs(c[1] - target_delta))
+
+
 def run_real_short_vol_overlay(
     dates: list[str],
     prices: list[float],
@@ -92,6 +118,8 @@ def run_real_short_vol_overlay(
 
     params: target_delta (0.50), dte (30 calendar days), fill ('bid_ask'|'mid'),
             capital (100_000), close_at_pct (None), manage_deep_itm (False),
+            option_type ('call' | 'put' — for 'put' pass a NEGATIVE target_delta,
+            e.g. -0.25; the short put hedges with SHORT stock),
             risk_free_rate (0.045, earned daily on cash), hedge_cost_bps (1.0,
             share-rebalance half-spread in bps of notional traded).
 
@@ -109,6 +137,12 @@ def run_real_short_vol_overlay(
     capital = float(params.get('capital', 100_000))
     close_at_pct = params.get('close_at_pct')  # None => hold to expiry
     manage_deep_itm = bool(params.get('manage_deep_itm', False))
+    # 'call' (default) or 'put'. A short put neutralizes with SHORT stock (its
+    # vendor delta is negative), so the only differences are the entry selector,
+    # the settlement intrinsic, and the sign of the hedge clamp; the call path is
+    # byte-identical (call deltas are >= 0, so its [0,1] clamp is unchanged).
+    # For puts the caller passes a NEGATIVE target_delta (e.g. -0.25).
+    is_put = str(params.get('option_type', 'call')) == 'put'
     rf = float(params.get('risk_free_rate', 0.045))  # earned daily on the cash balance
     # Schwab charges $0 commission on stock/ETF trades, so the only cost of a
     # share-hedge rebalance is the bid/ask half-spread, modeled as bps of the
@@ -157,7 +191,7 @@ def run_real_short_vol_overlay(
         # 2. Entry / close / settlement -- all cash flows.
         if position is None:
             if day is not None:
-                pick = select_entry(day, dte, target_delta)
+                pick = (select_put_entry if is_put else select_entry)(day, dte, target_delta)
                 if pick is not None:
                     _dte, _delta, bid, _ask, mid, expiration, strike, cid = pick
                     sell_px = bid if fill == 'bid_ask' else mid
@@ -186,7 +220,8 @@ def run_real_short_vol_overlay(
                     assert gap <= 4, (f'{gap} days between {prev_date} and '
                                       f'expiration {position["expiration"]} — missing data?')
                     settle_price = prev_price
-                intrinsic = max(0.0, settle_price - position['strike'])
+                intrinsic = max(0.0, (position['strike'] - settle_price) if is_put
+                                else (settle_price - position['strike']))
                 cash -= intrinsic * shares  # PAY assignment (premium already received)
                 option_pnl = (position['entry_premium'] - intrinsic) * shares
                 wins, losses = (wins + 1, losses) if option_pnl >= 0 else (wins, losses + 1)
@@ -202,7 +237,7 @@ def run_real_short_vol_overlay(
                     short_buy = ask_q if fill == 'bid_ask' else mid_q
                     hit_target = (close_at_pct is not None
                                   and short_buy <= position['entry_premium'] * (1 - close_at_pct))
-                    deep_itm = manage_deep_itm and delta_q > 0.70
+                    deep_itm = manage_deep_itm and (delta_q < -0.70 if is_put else delta_q > 0.70)
                     if hit_target or deep_itm:
                         buyback = short_buy + COMMISSION_PER_SHARE
                         cash -= buyback * shares  # PAY to close
@@ -213,10 +248,13 @@ def run_real_short_vol_overlay(
                                        'action': 'close' if hit_target else 'close_itm',
                                        'call_value': ask_q, 'pnl': option_pnl})
 
-        # 3. Delta-NEUTRAL rebalance: hold +delta*shares so net delta
-        #    (short call -delta*shares + hedge) ~ 0. Clamp delta to [0,1]. Shares
-        #    fill at the close, commission-free, charged the half-spread.
-        target_hedge = (int(round(min(max(position['real_delta'], 0.0), 1.0) * shares))
+        # 3. Delta-NEUTRAL rebalance: hold (signed vendor delta)*shares of stock
+        #    so net delta (short option -delta*shares + hedge) ~ 0 — LONG stock for
+        #    a short call (delta>0), SHORT stock for a short put (delta<0). Clamp to
+        #    the option's delta range ([0,1] call / [-1,0] put) to guard noisy
+        #    vendor rows. Shares fill at the close, commission-free, half-spread cost.
+        _lo, _hi = (-1.0, 0.0) if is_put else (0.0, 1.0)
+        target_hedge = (int(round(min(max(position['real_delta'], _lo), _hi) * shares))
                         if position is not None else 0)
         hedge_trade = target_hedge - hedge_shares
         if hedge_trade != 0:
