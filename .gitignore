@@ -37,3 +37,6 @@ trend_gate_runs/
 # test_edge_search.py and narrated in docs/edge_search.md — regenerable via
 # `python edge_search.py`)
 edge_ledger.jsonl
+
+# Transient fetch-loop progress log (download_option_dailies.py wrapper output)
+fetch_progress.log
