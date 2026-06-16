@@ -353,6 +353,32 @@ defined-risk wrapper bounds the loss; it does not conjure a premium that isn't t
 Pinned (exploratory) by `TestSpyIronCondorExploratory`, mechanics by
 `TestIronCondorMechanics`.
 
+### The complete grid: every wing, every ticker
+
+With the MSFT/QQQ put wings fetched, the cross-section closes. Every delta-hedged
+short-vol instrument, every daily-chain ticker, net of the 0.5 bp headline cost
+(Newey-West t):
+
+| net-0.5 bp NW t | SPY | QQQ | IWM | MSFT |
+| --- | --- | --- | --- | --- |
+| Call wing (0.25Δ) | **+2.25** ✓ | +1.88 | +1.18 | −0.37 |
+| Put wing (−0.25Δ) | +0.09 | −1.00 | +0.91 | −0.84 |
+| ATM straddle | +0.72 | +0.21 | +1.28 | **−1.36** 💥 |
+
+**Exactly one cell clears t = 2 net of cost — the SPY call wing.** Everything else is
+null or negative. Two patterns close the story: the single name (MSFT) is negative on
+all three wings, and its ATM straddle is an outright **blow-up** (−$206K vol-P&L, a
+156.9% drawdown that takes the account *negative* — short both wings against a 12.8×
+run, fixed-contract sizing, no modeled margin call); and QQQ's put and straddle are
+null-to-negative even though its *call* wing was gross-significant — the premium is
+wing- and structure-specific even within one index.
+
+The SPY/IWM cells are registered (the put primary §5, the §7 straddle); the MSFT/QQQ
+put and straddle cells are exploratory extensions, pinned by `TestMsftShortPutExploratory`
+/ `TestQqqShortPutExploratory` and `TestMsftStraddleExploratory` /
+`TestQqqStraddleExploratory`. The post-2010 decline is total: one thin, single-index,
+cost-fragile call-wing survivor, nulls and a blow-up everywhere else.
+
 ## Remaining limitations
 
 The hedge cost is modeled (commission-free shares, half-spread) and the rf-base

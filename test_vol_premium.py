@@ -51,6 +51,11 @@ _HAVE_MSFT = _have(_MSFT_DAILIES) and _have(_MSFT_BACKFILL)
 _QQQ_DAILIES = os.path.join(os.path.dirname(__file__), 'qqq_option_dailies.csv')
 _QQQ_BACKFILL = os.path.join(os.path.dirname(__file__), 'qqq_option_dailies_2011_2016.csv')
 _HAVE_QQQ = _have(_QQQ_DAILIES) and _have(_QQQ_BACKFILL)
+# MSFT / QQQ PUT wings — for the put + straddle cross-section extensions.
+_MSFT_PUTS = os.path.join(os.path.dirname(__file__), 'msft_option_dailies_puts.csv')
+_HAVE_MSFT_PUTS = _have(_MSFT_PUTS)
+_QQQ_PUTS = os.path.join(os.path.dirname(__file__), 'qqq_option_dailies_puts.csv')
+_HAVE_QQQ_PUTS = _have(_QQQ_PUTS)
 
 
 def _scenario(
@@ -1114,3 +1119,179 @@ class TestSpyIronCondorExploratory:
     def test_rate_invariant(self, market: Any) -> None:
         _, st0 = self._run(market, 'bid_ask', rf=0.0)
         assert st0['t_stat_newey_west'] == pytest.approx(-1.08, abs=0.02)
+
+
+# ---------------------------------------------------------------------------
+# EXPLORATORY put + straddle cross-section on MSFT/QQQ (NOT registered). Extends
+# the registered SPY/IWM put (TestSpy/IwmShortPutRegression) and §7 straddle
+# (TestSpy/IwmStraddleSecondary) to the two tickers whose puts were fetched later.
+# Completes the 4-for-4 picture: only the SPY call wing clears t=2 net of cost;
+# the put wing is null-to-negative everywhere, and the single-name (MSFT) straddle
+# is an outright blow-up. Pinned so the cross-section isn't re-derived.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.skipif(not _HAVE_MSFT_PUTS, reason='needs msft_option_dailies_puts.csv or its .gz twin')
+class TestMsftShortPutExploratory:
+    """EXPLORATORY: short -0.25d PUT on real MSFT chains, 2010-05-10 -> 2026-04-10.
+    NEGATIVE: gross Newey-West t -0.75, net-0.5bp -0.84 (vol-P&L -$58K -> -$65K), 28%
+    drawdown. The single-name put wing loses; rate-invariant. Not registered."""
+
+    @pytest.fixture(scope='class')
+    def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
+        from real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
+        store = load_chain_store(_MSFT_PUTS, start=CHAIN_CLEAN_START['MSFT'])
+        days = sorted(store)
+        dates, prices = load_unadjusted_prices('MSFT', days[0], '2026-04-11')
+        pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
+        return [d for d, _ in pairs], [p for _, p in pairs], store
+
+    def _run(self, market: Any, bps: float, rf: float = 0.045) -> tuple[Any, Any]:
+        dates, prices, store = market
+        s, _, eq = run_real_short_vol_overlay(
+            dates, prices, store,
+            {'target_delta': -0.25, 'dte': 30, 'capital': 100_000, 'option_type': 'put',
+             'risk_free_rate': rf, 'hedge_cost_bps': bps})
+        return s, short_vol_statistics(eq, s['capital'], rf=rf)
+
+    def test_headline(self, market: Any) -> None:
+        s, _ = self._run(market, 0.0)
+        assert s['num_contracts'] == 34
+        assert s['num_calls_sold'] == 172
+        assert s['win_rate'] == pytest.approx(88.3, abs=0.1)
+        assert s['alpha_vs_cash'] == pytest.approx(-58_419.28, abs=5.0)
+        assert s['max_drawdown_pct'] == pytest.approx(27.71, abs=0.1)
+
+    def test_negative_null(self, market: Any) -> None:
+        _, st0 = self._run(market, 0.0)
+        assert st0['t_stat_newey_west'] == pytest.approx(-0.75, abs=0.02)
+        assert st0['passes_t_2'] is False
+        _, st5 = self._run(market, 0.5)
+        assert st5['t_stat_newey_west'] == pytest.approx(-0.84, abs=0.02)
+        assert st5['sharpe'] == pytest.approx(-0.186, abs=0.005)
+        _, st0rf = self._run(market, 0.5, rf=0.0)
+        assert st0rf['t_stat_newey_west'] == pytest.approx(-0.84, abs=0.02)  # rate-invariant
+
+
+@pytest.mark.skipif(not _HAVE_QQQ_PUTS, reason='needs qqq_option_dailies_puts.csv or its .gz twin')
+class TestQqqShortPutExploratory:
+    """EXPLORATORY: short -0.25d PUT on real QQQ chains, 2011-03-23 -> 2026-06-05.
+    NEGATIVE: gross Newey-West t -0.92, net-0.5bp -1.00 (vol-P&L -$48K -> -$52K), 21%
+    drawdown. Even on the index, the put wing loses on QQQ. Not registered."""
+
+    @pytest.fixture(scope='class')
+    def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
+        from real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
+        store = load_chain_store(_QQQ_PUTS, start=CHAIN_CLEAN_START.get('QQQ'))
+        days = sorted(store)
+        dates, prices = load_unadjusted_prices('QQQ', days[0], '2026-06-06')
+        pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
+        return [d for d, _ in pairs], [p for _, p in pairs], store
+
+    def _run(self, market: Any, bps: float, rf: float = 0.045) -> tuple[Any, Any]:
+        dates, prices, store = market
+        s, _, eq = run_real_short_vol_overlay(
+            dates, prices, store,
+            {'target_delta': -0.25, 'dte': 30, 'capital': 100_000, 'option_type': 'put',
+             'risk_free_rate': rf, 'hedge_cost_bps': bps})
+        return s, short_vol_statistics(eq, s['capital'], rf=rf)
+
+    def test_headline(self, market: Any) -> None:
+        s, _ = self._run(market, 0.0)
+        assert s['num_contracts'] == 17
+        assert s['num_calls_sold'] == 166
+        assert s['win_rate'] == pytest.approx(87.9, abs=0.1)
+        assert s['alpha_vs_cash'] == pytest.approx(-47_745.40, abs=5.0)
+        assert s['max_drawdown_pct'] == pytest.approx(20.92, abs=0.1)
+
+    def test_negative_null(self, market: Any) -> None:
+        _, st0 = self._run(market, 0.0)
+        assert st0['t_stat_newey_west'] == pytest.approx(-0.92, abs=0.02)
+        assert st0['passes_t_2'] is False
+        _, st5 = self._run(market, 0.5)
+        assert st5['t_stat_newey_west'] == pytest.approx(-1.00, abs=0.02)
+        assert st5['nw_lag'] == 8
+        _, st0rf = self._run(market, 0.5, rf=0.0)
+        assert st0rf['t_stat_newey_west'] == pytest.approx(-1.00, abs=0.02)  # rate-invariant
+
+
+@pytest.mark.skipif(not (_HAVE_MSFT and _HAVE_MSFT_PUTS),
+                    reason='needs msft calls + backfill + puts (or .gz)')
+class TestMsftStraddleExploratory:
+    """EXPLORATORY: ATM short STRADDLE on real MSFT chains (calls + backfill + puts
+    merged), 2010-05-10 -> 2026-04-10. The single-name BLOW-UP: gross Newey-West t
+    -1.26, net-0.5bp -1.36, vol-P&L -$206K, and TOTAL net P&L is also negative
+    (-$145K incl. rf) -- a 156.9% max drawdown means the account goes NEGATIVE (no
+    modeled margin call). Short both wings on a stock that ran 12.8x, with the hedge
+    chasing and the notional ballooning (fixed-contract sizing). The extreme of the
+    single-name short-vol cautionary tale. Not registered."""
+
+    @pytest.fixture(scope='class')
+    def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
+        from real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
+        store = load_chain_store(_MSFT_DAILIES, extra_paths=[_MSFT_BACKFILL, _MSFT_PUTS],
+                                 start=CHAIN_CLEAN_START['MSFT'])
+        days = sorted(store)
+        dates, prices = load_unadjusted_prices('MSFT', days[0], '2026-04-11')
+        pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
+        return [d for d, _ in pairs], [p for _, p in pairs], store
+
+    def _run(self, market: Any, bps: float, rf: float = 0.045) -> tuple[Any, Any]:
+        dates, prices, store = market
+        s, _, eq = run_real_straddle_overlay(
+            dates, prices, store,
+            {'dte': 30, 'capital': 100_000, 'call_delta': 0.50, 'put_delta': -0.50,
+             'risk_free_rate': rf, 'hedge_cost_bps': bps})
+        return s, short_vol_statistics(eq, s['capital'], rf=rf)
+
+    def test_blowup(self, market: Any) -> None:
+        s, st = self._run(market, 0.0)
+        assert s['num_straddles_sold'] == 172
+        assert st['t_stat_newey_west'] == pytest.approx(-1.26, abs=0.02)
+        assert st['passes_t_2'] is False
+        assert s['alpha_vs_cash'] == pytest.approx(-206_419.91, abs=20.0)
+        assert s['net_pnl'] < 0                              # even total P&L is negative
+        assert s['max_drawdown_pct'] == pytest.approx(156.86, abs=0.5)  # account goes negative
+
+    def test_net_of_cost_and_rate_invariant(self, market: Any) -> None:
+        _, st5 = self._run(market, 0.5)
+        assert st5['t_stat_newey_west'] == pytest.approx(-1.36, abs=0.02)
+        _, st0 = self._run(market, 0.5, rf=0.0)
+        assert st0['t_stat_newey_west'] == pytest.approx(-1.36, abs=0.02)
+
+
+@pytest.mark.skipif(not (_HAVE_QQQ and _HAVE_QQQ_PUTS),
+                    reason='needs qqq calls + backfill + puts (or .gz)')
+class TestQqqStraddleExploratory:
+    """EXPLORATORY: ATM short STRADDLE on real QQQ chains (calls + backfill + puts
+    merged), 2011-03-23 -> 2026-06-05. Null: gross Newey-West t +0.33, net-0.5bp
+    +0.21 (vol-P&L +$31K -> +$19K), 53% drawdown. Positive but nowhere near t=2 --
+    the index straddle harvests a little but does not clear the bar. Not registered."""
+
+    @pytest.fixture(scope='class')
+    def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
+        from real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
+        store = load_chain_store(_QQQ_DAILIES, extra_paths=[_QQQ_BACKFILL, _QQQ_PUTS],
+                                 start=CHAIN_CLEAN_START.get('QQQ'))
+        days = sorted(store)
+        dates, prices = load_unadjusted_prices('QQQ', days[0], '2026-06-06')
+        pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
+        return [d for d, _ in pairs], [p for _, p in pairs], store
+
+    def _run(self, market: Any, bps: float, rf: float = 0.045) -> tuple[Any, Any]:
+        dates, prices, store = market
+        s, _, eq = run_real_straddle_overlay(
+            dates, prices, store,
+            {'dte': 30, 'capital': 100_000, 'call_delta': 0.50, 'put_delta': -0.50,
+             'risk_free_rate': rf, 'hedge_cost_bps': bps})
+        return s, short_vol_statistics(eq, s['capital'], rf=rf)
+
+    def test_null(self, market: Any) -> None:
+        s, st0 = self._run(market, 0.0)
+        assert s['num_straddles_sold'] == 166
+        assert st0['t_stat_newey_west'] == pytest.approx(0.33, abs=0.02)
+        assert st0['passes_t_2'] is False
+        assert s['alpha_vs_cash'] == pytest.approx(31_251.49, abs=20.0)
+        assert s['max_drawdown_pct'] == pytest.approx(53.15, abs=0.5)
+        _, st5 = self._run(market, 0.5)
+        assert st5['t_stat_newey_west'] == pytest.approx(0.21, abs=0.02)
+        assert st5['nw_lag'] == 8
