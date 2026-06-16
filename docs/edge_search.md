@@ -48,6 +48,42 @@ Two simplifications are named, not silent: the permutation null is the uniform
 same-count shuffle (structure-preserving per-template nulls are a follow-up),
 and BY rather than BH is used because the candidates are dependent.
 
+## Architecture
+
+The harness is a funnel — spend the sample cheaply on the left, gate expensive
+confirmation on the right:
+
+```text
+enumerate → kill-gate → FDR ledger  ║  register → confirm on sealed vault → pinned verdict
+```
+
+Everything left of the `║` is automated and spends the sample; everything to
+the right is a committed, manual act, on purpose.
+
+- **Enumerate a mechanism-template batch** (`enumerate_candidates`). Each
+  template is a falsifiable, sign-predicting family — cooldown(N), up-move(k),
+  IV-richness — expanded across its settings into one committed batch. A
+  candidate with no predicted sign is refused, so the batch is structured bets,
+  not a blind grid.
+- **Run each through the one shared kill-gate** (`kill_gate`): the `D_A`
+  treated-minus-other split against a same-count permutation null, plus a
+  generic vol-confound probe.
+- **Record everything; judge the batch, not the candidate** (`run_campaign`,
+  logged to `edge_ledger.jsonl`). Significance is decided across the whole
+  campaign by `benjamini_yekutieli` — automating the search multiplies the
+  multiple-comparisons danger, and the ledger is the only thing that keeps it
+  honest.
+- **Cross the gate by hand.** The loop never promotes a survivor; a survivor
+  earns a pre-registration (a human step) and is confirmed on the **sealed
+  vault** — the held-out tickers (`SEALED_TICKERS`) the search never loads. A
+  loop can't "commit before seeing the number," so it commits the *data it
+  never sees* instead; the sealed vault is the automation-compatible substitute
+  for pre-registration.
+
+**The principle:** automate the bookkeeping that keeps the search honest — the
+enumeration, the shared gate, the FDR ledger — never the judgment that promotes
+a result.
+
 ---
 
 ## Campaign 1 — cheap entry-conditioning class — EMPTY (2026-06-13)
