@@ -22,8 +22,10 @@ import pandas as pd
 import pytest
 
 from vol_premium import (
+    run_real_iron_condor_overlay,
     run_real_short_vol_overlay,
     run_real_straddle_overlay,
+    select_iron_condor,
     select_put_entry,
     select_straddle,
     short_vol_statistics,
@@ -974,3 +976,141 @@ class TestMsftShortVolRegression:
         assert self._run(market, 1.0)[1]['t_stat_newey_west'] == pytest.approx(-0.48, abs=0.02)
         _, st0 = self._run(market, 0.5, rf=0.0)
         assert st0['t_stat_newey_west'] == pytest.approx(-0.37, abs=0.02)
+
+
+def _condor_scenario(
+    price_path: list[tuple[str, float]],
+    legs: dict[str, tuple[float, list[tuple[float, float, float, float]]]],
+) -> tuple[list[str], list[float], dict[str, dict[str, Any]]]:
+    """One-cycle 4-leg synthetic. legs maps contractID -> (strike, path) where
+    path[i] = (bid, ask, mid, delta) per day. Last date = expiration."""
+    exp = price_path[-1][0]
+    dte0 = len(price_path) - 1
+    store: dict[str, dict[str, Any]] = {}
+    dates: list[str] = []
+    prices: list[float] = []
+    for i, (date, px) in enumerate(price_path):
+        dates.append(date)
+        prices.append(px)
+        cands, marks = [], {}
+        for cid, (strike, path) in legs.items():
+            b, a, m, dl = path[i]
+            cands.append((dte0 - i, dl, b, a, m, exp, strike, cid))
+            marks[cid] = (b, a, m, dl)
+        store[date] = {'candidates': cands, 'marks': marks}
+    return dates, prices, store
+
+
+def _flat_condor_legs() -> dict[str, tuple[float, list[tuple[float, float, float, float]]]]:
+    """A 6-day cycle: short 25d strangle (95 put / 105 call) + 10d wings (90 / 110),
+    all decaying to worthless. Entry-day deltas put select_iron_condor on the right
+    strikes."""
+    decay = [1.0, 0.8, 0.6, 0.4, 0.2, 0.0]
+    wdecay = [0.4, 0.32, 0.24, 0.16, 0.08, 0.0]
+    sc = [(round(v, 2), round(v + 0.1, 2), round(v + 0.05, 2), d) for v, d in zip(decay, [0.25, 0.22, 0.18, 0.12, 0.06, 0.0])]
+    lc = [(round(v, 2), round(v + 0.1, 2), round(v + 0.05, 2), d) for v, d in zip(wdecay, [0.10, 0.08, 0.06, 0.04, 0.02, 0.0])]
+    sp = [(round(v, 2), round(v + 0.1, 2), round(v + 0.05, 2), d) for v, d in zip(decay, [-0.25, -0.22, -0.18, -0.12, -0.06, 0.0])]
+    lp = [(round(v, 2), round(v + 0.1, 2), round(v + 0.05, 2), d) for v, d in zip(wdecay, [-0.10, -0.08, -0.06, -0.04, -0.02, 0.0])]
+    return {'SC': (105.0, sc), 'LC': (110.0, lc), 'SP': (95.0, sp), 'LP': (90.0, lp)}
+
+
+class TestIronCondorMechanics:
+    """Synthetic, always-run checks of the four-leg run_real_iron_condor_overlay:
+    correct leg selection, the net credit kept when price finishes inside the short
+    strikes, and the loss CAPPED by the long wing on a breach. Pin the §-exploratory
+    iron-condor MECHANISM regardless of real data."""
+
+    def test_selects_four_ordered_legs(self) -> None:
+        days = [f'2020-01-0{i + 1}' for i in range(6)]
+        dates, _, store = _condor_scenario([(d, 100.0) for d in days], _flat_condor_legs())
+        pick = select_iron_condor(store[dates[0]], 30, 0.25, 0.10)
+        assert pick is not None
+        sc, lc, sp, lp = pick
+        assert lp[6] < sp[6] < sc[6] < lc[6]          # long put < short put < short call < long call
+        assert sc[1] > 0 and lc[1] > 0 and sp[1] < 0 and lp[1] < 0
+        assert abs(sc[1]) > abs(lc[1]) and abs(sp[1]) > abs(lp[1])  # shorts nearer the money
+
+    def test_inside_strikes_keeps_net_credit(self) -> None:
+        """Price finishes between the short strikes; all four legs expire worthless,
+        so the condor keeps ~its whole net credit (the win case)."""
+        days = [f'2020-02-0{i + 1}' for i in range(6)]
+        dates, prices, store = _condor_scenario([(d, 100.0) for d in days], _flat_condor_legs())
+        s, _, _ = run_real_iron_condor_overlay(
+            dates, prices, store,
+            {'short_delta': 0.25, 'wing_delta': 0.10, 'capital': 100_000, 'risk_free_rate': 0.0})
+        assert s['num_condors_sold'] == 1
+        assert s['net_pnl'] > 0
+        assert s['net_pnl'] == pytest.approx(s['total_premium_collected'], rel=0.02)
+
+    def test_loss_is_capped_by_the_wing(self) -> None:
+        """Price crashes through the long put: the loss is CAPPED at (short_put −
+        long_put width) − net credit, a fraction of the naked short put's loss."""
+        days = [f'2020-03-0{i + 1}' for i in range(6)]
+        price_path = [(days[0], 100.0)] + [(days[i], 100.0 - 4 * i) for i in range(1, 6)]  # -> 80
+        dates, prices, store = _condor_scenario(price_path, _flat_condor_legs())
+        s, _, _ = run_real_iron_condor_overlay(
+            dates, prices, store,
+            {'short_delta': 0.25, 'wing_delta': 0.10, 'capital': 100_000, 'risk_free_rate': 0.0})
+        shares = s['num_contracts'] * 100
+        credit_ps = s['total_premium_collected'] / shares
+        spread_w = 95.0 - 90.0  # short put 95, long put 90
+        capped_loss = (credit_ps - spread_w) * shares          # ~ -(5 - credit)*shares
+        naked_loss = (credit_ps - (95.0 - 80.0)) * shares       # short put ITM by 15, no wing
+        assert s['net_pnl'] == pytest.approx(capped_loss, rel=0.05)
+        assert s['net_pnl'] < 0 and abs(s['net_pnl']) < abs(naked_loss)  # wing capped it
+
+
+@pytest.mark.skipif(not (_HAVE_SPY and _HAVE_SPY_PUTS),
+                    reason='needs spy_option_dailies.csv + spy_option_dailies_puts.csv (or .gz)')
+class TestSpyIronCondorExploratory:
+    """EXPLORATORY (not registered, not even a prereg secondary): a daily short IRON
+    CONDOR on real SPY chains (calls merged with puts), 25d shorts / 10d wings, 30 DTE,
+    hold-to-expiry, NO stock hedge -- the defined-risk retail structure.
+
+    Verdict: it LOSES vs cash. At realistic bid/ask fills the excess-over-cash is
+    -$47.6K (Newey-West t -1.08, Sharpe -0.21); even frictionless (mid) it is -0.89.
+    Total P&L is +$49.5K, but that is ENTIRELY rf interest on idle collateral -- the
+    condor itself underperformed T-bills. The long wings DID cap the per-event tail
+    (17.5% max drawdown vs the naked single name's 74.6%), but the structure still
+    bled: thin OTM premium minus the wing cost minus four legs of bid/ask minus the
+    unhedged directional losses. Worse than the delta-hedged SPY straddle (+0.72) and
+    every wing. Rate-invariant. Pinned so the exploration isn't re-derived.
+    """
+
+    @pytest.fixture(scope='class')
+    def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
+        from real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
+        store = load_chain_store(_SPY_DAILIES, extra_paths=[_SPY_PUTS], start=CHAIN_CLEAN_START['SPY'])
+        days = sorted(store)
+        dates, prices = load_unadjusted_prices('SPY', days[0], '2026-06-06')
+        pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
+        return [d for d, _ in pairs], [p for _, p in pairs], store
+
+    def _run(self, market: Any, fill: str, rf: float = 0.045) -> tuple[Any, Any]:
+        dates, prices, store = market
+        s, _, eq = run_real_iron_condor_overlay(
+            dates, prices, store,
+            {'dte': 30, 'capital': 100_000, 'short_delta': 0.25, 'wing_delta': 0.10,
+             'fill': fill, 'risk_free_rate': rf})
+        return s, short_vol_statistics(eq, s['capital'], rf=rf)
+
+    def test_headline(self, market: Any) -> None:
+        s, _ = self._run(market, 'bid_ask')
+        assert s['num_condors_sold'] == 175
+        assert s['win_rate'] == pytest.approx(59.8, abs=0.1)
+        assert s['alpha_vs_cash'] == pytest.approx(-47_600.01, abs=10.0)  # loses vs cash
+        assert s['net_pnl'] == pytest.approx(49_521.44, abs=10.0)         # positive ONLY via rf
+        assert s['max_drawdown_pct'] == pytest.approx(17.5, abs=0.1)
+
+    def test_loses_vs_cash(self, market: Any) -> None:
+        _, st = self._run(market, 'bid_ask')
+        assert st['t_stat_newey_west'] == pytest.approx(-1.08, abs=0.02)
+        assert st['sharpe'] == pytest.approx(-0.207, abs=0.005)
+        assert st['nw_lag'] == 9
+        assert st['passes_t_2'] is False
+        _, st_mid = self._run(market, 'mid')
+        assert st_mid['t_stat_newey_west'] == pytest.approx(-0.89, abs=0.02)  # negative even frictionless
+
+    def test_rate_invariant(self, market: Any) -> None:
+        _, st0 = self._run(market, 'bid_ask', rf=0.0)
+        assert st0['t_stat_newey_west'] == pytest.approx(-1.08, abs=0.02)

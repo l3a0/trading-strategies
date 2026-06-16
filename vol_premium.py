@@ -599,6 +599,180 @@ def run_real_straddle_overlay(
     return summary, trades, daily_equity
 
 
+def select_iron_condor(
+    day: dict[str, Any], target_dte: int,
+    short_delta: float = 0.25, wing_delta: float = 0.10,
+) -> tuple[tuple[Any, ...], tuple[Any, ...], tuple[Any, ...], tuple[Any, ...]] | None:
+    """Four legs of a short IRON CONDOR at ONE expiration: short ~short_delta call +
+    long ~wing_delta call (higher strike), short ~short_delta put + long ~wing_delta
+    put (lower strike). Sells the inner strangle, buys the outer wings — a defined-risk
+    short-vol structure. Returns (short_call, long_call, short_put, long_put) candidate
+    tuples or None when any leg is unavailable at the nearest expiration.
+
+    EXPLORATORY, not a registered instrument: a practical retail structure, not the
+    delta-hedged-gain VRP isolator.
+    """
+    short_call = select_entry(day, target_dte, short_delta)
+    if short_call is None:
+        return None
+    exp = short_call[5]
+    cands = [c for c in day['candidates'] if c[5] == exp]
+    puts = [c for c in cands if c[1] < 0]
+    calls = [c for c in cands if c[1] > 0]
+    in_band = [p for p in puts if p[2] > 0 and -0.60 < p[1] < -0.05]
+    if not in_band:
+        return None
+    short_put = min(in_band, key=lambda c: abs(c[1] + short_delta))
+    # Long wings: strictly further OTM than the shorts, and buyable (ask > 0).
+    long_put = min([p for p in puts if p[6] < short_put[6] and p[3] > 0],
+                   key=lambda c: abs(c[1] + wing_delta), default=None)
+    long_call = min([c for c in calls if c[6] > short_call[6] and c[3] > 0],
+                    key=lambda c: abs(c[1] - wing_delta), default=None)
+    if long_put is None or long_call is None:
+        return None
+    return short_call, long_call, short_put, long_put
+
+
+def run_real_iron_condor_overlay(
+    dates: list[str],
+    prices: list[float],
+    store: dict[str, dict[str, Any]],
+    params: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]], pd.DataFrame]:
+    """Daily short IRON CONDOR — short ~0.25d strangle + long ~0.10d wings, same
+    expiry, hold-to-expiry, NO stock hedge. The defined-risk, practical retail
+    short-vol structure: the long wings cap the tail the naked straddle leaves open,
+    at the cost of premium plus four legs of bid/ask.
+
+    EXPLORATORY, not registered. There is NO delta hedge (a static, defined-risk
+    position — delta-neutral only at entry, then it rides between the strikes), so the
+    verdict is a PRACTICAL-strategy excess-over-cash Newey-West t / Sharpe via
+    short_vol_statistics, NOT the rate-invariant delta-hedged-gain measure the put/call
+    wings and straddle use. A separate loop, so the frozen hedged engines (and every
+    pin on them) stay byte-identical. Shorts fill at the bid and longs at the ask
+    (`bid_ask`) or both at the mid (`mid`, frictionless); each leg keeps
+    COMMISSION_PER_SHARE. params: dte (30), capital (100_000), fill, short_delta
+    (0.25), wing_delta (0.10), risk_free_rate (0.045).
+    """
+    dte = int(params.get('dte', 30))
+    fill = str(params.get('fill', 'bid_ask'))
+    capital = float(params.get('capital', 100_000))
+    short_delta = float(params.get('short_delta', 0.25))
+    wing_delta = float(params.get('wing_delta', 0.10))
+    rf = float(params.get('risk_free_rate', 0.045))
+    daily_rf = rf / 252.0
+
+    initial_price = prices[0]
+    num_contracts = int(capital // (initial_price * 100))
+    if num_contracts < 1:
+        raise ValueError('capital insufficient for one contract')
+    shares = 100 * num_contracts
+
+    cash = capital
+    position: dict[str, Any] | None = None
+    num_condors_sold = 0
+    total_premium_collected = 0.0  # net credit collected
+    interest_earned = 0.0
+    wins = losses = 0
+    trades: list[dict[str, Any]] = []
+    daily_rows: list[dict[str, Any]] = []
+    prev_date: str | None = None
+    prev_price: float | None = None
+
+    for i, (date, price) in enumerate(zip(dates, prices)):
+        day = store.get(date)
+        day_rf_credit = 0.0
+        if i > 0:
+            day_rf_credit = cash * daily_rf
+            cash += day_rf_credit
+            interest_earned += day_rf_credit
+
+        if position is None:
+            if day is not None:
+                pick = select_iron_condor(day, dte, short_delta, wing_delta)
+                if pick is not None:
+                    sc, lc, sp, lp = pick
+                    sc_in = sc[2] if fill == 'bid_ask' else sc[4]  # sell shorts at bid
+                    sp_in = sp[2] if fill == 'bid_ask' else sp[4]
+                    lc_in = lc[3] if fill == 'bid_ask' else lc[4]  # buy longs at ask
+                    lp_in = lp[3] if fill == 'bid_ask' else lp[4]
+                    net_credit = (sc_in + sp_in) - (lc_in + lp_in) - 4 * COMMISSION_PER_SHARE
+                    if net_credit > 0:
+                        cash += net_credit * shares  # RECEIVE the net credit
+                        position = {
+                            'expiration': sc[5], 'credit': net_credit,
+                            'sc': {'k': sc[6], 'cid': sc[7], 'mid': sc[4]},
+                            'lc': {'k': lc[6], 'cid': lc[7], 'mid': lc[4]},
+                            'sp': {'k': sp[6], 'cid': sp[7], 'mid': sp[4]},
+                            'lp': {'k': lp[6], 'cid': lp[7], 'mid': lp[4]},
+                        }
+                        num_condors_sold += 1
+                        total_premium_collected += net_credit * shares
+                        trades.append({'date': date, 'action': 'sell', 'net_credit': net_credit,
+                                       'short_call_k': sc[6], 'long_call_k': lc[6],
+                                       'short_put_k': sp[6], 'long_put_k': lp[6], 'expiration': sc[5]})
+        elif date >= position['expiration']:
+            if date == position['expiration']:
+                settle = price
+            else:
+                assert prev_date is not None and prev_price is not None
+                gap = (pd.Timestamp(position['expiration']) - pd.Timestamp(prev_date)).days
+                assert gap <= 4, (f'{gap} days between {prev_date} and expiration '
+                                  f'{position["expiration"]} — missing data?')
+                settle = prev_price
+            sc_i = max(0.0, settle - position['sc']['k'])   # short call: we PAY
+            lc_i = max(0.0, settle - position['lc']['k'])   # long call: we RECEIVE
+            sp_i = max(0.0, position['sp']['k'] - settle)   # short put: we PAY
+            lp_i = max(0.0, position['lp']['k'] - settle)   # long put: we RECEIVE
+            net_settle = (-sc_i + lc_i - sp_i + lp_i)
+            cash += net_settle * shares
+            pnl = (position['credit'] + net_settle) * shares
+            wins, losses = (wins + 1, losses) if pnl >= 0 else (wins, losses + 1)
+            position = None
+            trades.append({'date': date, 'price': settle, 'action': 'expiration', 'pnl': pnl})
+        elif day is not None:
+            for leg in ('sc', 'lc', 'sp', 'lp'):
+                q = day['marks'].get(position[leg]['cid'])
+                if q is not None:
+                    position[leg]['mid'] = q[2]
+
+        # Mark to market: cash - SHORT legs (liabilities) + LONG legs (assets).
+        equity = cash
+        if position is not None:
+            equity -= (position['sc']['mid'] + position['sp']['mid']) * shares
+            equity += (position['lc']['mid'] + position['lp']['mid']) * shares
+        daily_rows.append({'date': date, 'equity': round(equity, 2), 'price': price,
+                           'rf_credit': day_rf_credit})
+        prev_date, prev_price = date, price
+
+    daily_equity = pd.DataFrame(daily_rows, columns=['date', 'equity', 'price', 'rf_credit'])
+    final_equity = float(daily_equity['equity'].iloc[-1])
+    net_pnl = final_equity - capital
+    alpha_vs_cash = net_pnl - interest_earned
+
+    eq = daily_equity['equity'].astype(float)
+    peak = eq.cummax().clip(lower=capital)
+    max_dd = float(((peak - eq) / peak * 100).max())
+
+    summary = {
+        'capital': round(capital, 2),
+        'num_contracts': num_contracts,
+        'final_equity': round(final_equity, 2),
+        'net_pnl': round(net_pnl, 2),
+        'alpha_vs_cash': round(alpha_vs_cash, 2),
+        'interest_earned': round(interest_earned, 2),
+        'total_premium_collected': round(total_premium_collected, 2),
+        'num_condors_sold': num_condors_sold,
+        'wins': wins,
+        'losses': losses,
+        'win_rate': round(wins / (wins + losses) * 100, 1) if (wins + losses) else 0.0,
+        'max_drawdown_pct': round(max_dd, 2),
+        'risk_free_rate': rf,
+        'cash': round(capital, 2),
+    }
+    return summary, trades, daily_equity
+
+
 def _cli() -> None:
     """Preview run: python vol_premium.py SPY  (delta-neutral ATM short call)."""
     import sys

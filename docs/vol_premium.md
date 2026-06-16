@@ -329,6 +329,30 @@ The straddle does not rescue the premium; it reinforces the primary read. Even t
 full variance strip, on a naive out-of-sample index, isn't significant net of cost
 over this post-2010 span.
 
+### Exploration: the iron condor (defined-risk short vol)
+
+A natural follow-up: does the **defined-risk** version do better? An iron condor sells
+the 25Δ strangle and *buys* 10Δ wings, so the crash tail the naked straddle leaves
+open is capped by construction. It is **not** a registered instrument and **not**
+delta-hedged — a static, practical retail structure — so the verdict is its excess
+over cash (Newey-West t / Sharpe), not the delta-hedged-gain measure.
+
+On SPY (2010–2026, 175 condors, hold-to-expiry) it **loses vs cash**: the
+excess-over-cash is **−$47.6K, NW t −1.08** (Sharpe −0.21) at realistic bid/ask fills,
+and **−0.89 even frictionless** (mid). Its total P&L is positive (+$49.5K) — but that
+is *entirely* risk-free interest on the idle collateral; the condor itself
+underperformed T-bills.
+
+The wings did their job on *risk*: the per-event tail is capped (17.5% max drawdown
+vs the naked single-name call's 74.6%). But on *return* it is the worst of the set —
+below the delta-hedged straddle (+0.72) and every wing — because it stacks three drags
+on an already-thin premium: it gives up premium for the wings, pays four legs of
+bid/ask, and (unhedged) eats the directional losses in every vol event (SPY 2018
+−$15K, 2022 −$16K, 2024 −$16K, 2026 −$22K) that overwhelm the calm-year harvest. The
+defined-risk wrapper bounds the loss; it does not conjure a premium that isn't there.
+Pinned (exploratory) by `TestSpyIronCondorExploratory`, mechanics by
+`TestIronCondorMechanics`.
+
 ## Remaining limitations
 
 The hedge cost is modeled (commission-free shares, half-spread) and the rf-base
