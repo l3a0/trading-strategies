@@ -155,22 +155,33 @@ verdict is identical whether the engine charges rf=0 or rf=4.5%.
 
 ### The cross-section (rf-netted vol-P&L t-stats)
 
-| Underlying | Strike | Span | NW t |
-| --- | --- | --- | --- |
-| SPY (index) | 0.25Δ | 2010–2026 | +2.54 |
-| SPY | ATM | 2010–2026 | +2.03 |
-| SPY | 0.25Δ | 2016–2026 | +2.51 |
-| QQQ (index) | ATM | 2016–2026 | +1.23 |
-| QQQ | 0.25Δ | 2016–2026 | +0.90 |
-| MSFT (single) | ATM | 2016–2026 | +0.87 |
-| MSFT | 0.25Δ | 2016–2026 | +0.87 |
+Running the *same* 0.25Δ short-call instrument on every ticker that carries calls,
+each over its full clean chain span, pins the call wing as an **index, cost-fragile**
+premium — gross and net of the 0.5 bp headline hedge cost:
 
-S&P > Nasdaq > single name — the literature's ordering (broad-index VRP is a
-correlation risk premium; single-name variance is barely priced). Only SPY clears
-t=2; QQQ and MSFT are positive but sub-significant. SPY's lead is not a span
-artifact — on the matched 2016–2026 window SPY 0.25Δ is +2.51, essentially its
-full-span +2.54. (SPY's canonical chain store reaches back to 2010; the MSFT/QQQ
-canonical stores start 2016.)
+| Underlying | Span | gross NW t | net-0.5 bp | verdict |
+| --- | --- | --- | --- | --- |
+| SPY (index) | 2010–2026 | **+2.54** | **+2.25** | clears t=2 to 0.5 bp |
+| QQQ (index) | 2011–2026 | +2.07 | +1.88 | gross-significant, dies at cost |
+| IWM (small-cap index) | 2010–2026 | +1.37 | +1.18 | null |
+| MSFT (single name) | 2010–2026 | −0.26 | −0.37 | **loses; 74.6% drawdown** |
+
+S&P > Nasdaq > small-cap > single name — the literature's ordering (a broad-index
+VRP is largely a correlation risk premium; single-name variance is barely priced and
+the position is dominated by idiosyncratic drift). Only SPY clears the bar net of
+realistic cost; QQQ clears it *gross* but gives it back to the 0.5 bp hedge spread;
+IWM is an outright null. The single name is the cautionary tale: a delta-hedged short
+call on MSFT — which ran **12.8×** over the span — **loses** (−$58K net) with a
+catastrophic 74.6% drawdown (equity peaked $114K, troughed $29K), short-gamma bleed
+against a relentless trend on the *same frozen engine* that scores SPY +2.54.
+
+Spans matter: QQQ is gross-significant only with its full 2011 start (on the matched
+2016–2026 window the call wing was sub-significant everywhere but SPY), and MSFT flips
+from marginally positive on 2016–2026 to this full-span loss as its 12.8× run
+dominates. But SPY still leads IWM and MSFT on the *same* 2010-start window, so its
+edge is not merely a longer sample. These are pinned — **exploratory, not registered**
+— by `TestSpyShortVolRegression` (SPY) and the cross-section `TestQqqShortVolRegression`
+/ `TestIwmShortVolRegression` / `TestMsftShortVolRegression`.
 
 ### Against buy-and-hold
 
