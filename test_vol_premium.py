@@ -37,6 +37,20 @@ _IWM_DAILIES = os.path.join(os.path.dirname(__file__), 'iwm_option_dailies.csv')
 _HAVE_IWM = os.path.exists(_IWM_DAILIES) or os.path.exists(_IWM_DAILIES + '.gz')
 
 
+def _have(path: str) -> bool:
+    return os.path.exists(path) or os.path.exists(path + '.gz')
+
+
+# MSFT / QQQ daily CALLS (canonical + backfill) — for the call-wing VRP cross-section.
+# The pinned spans start at 2010-05 (MSFT) / 2011-03 (QQQ), so both files are required.
+_MSFT_DAILIES = os.path.join(os.path.dirname(__file__), 'msft_option_dailies.csv')
+_MSFT_BACKFILL = os.path.join(os.path.dirname(__file__), 'msft_option_dailies_2008_2016.csv')
+_HAVE_MSFT = _have(_MSFT_DAILIES) and _have(_MSFT_BACKFILL)
+_QQQ_DAILIES = os.path.join(os.path.dirname(__file__), 'qqq_option_dailies.csv')
+_QQQ_BACKFILL = os.path.join(os.path.dirname(__file__), 'qqq_option_dailies_2011_2016.csv')
+_HAVE_QQQ = _have(_QQQ_DAILIES) and _have(_QQQ_BACKFILL)
+
+
 def _scenario(
     price_path: list[tuple[str, float]],
     option_path: list[tuple[float, float, float, float]],
@@ -804,3 +818,159 @@ class TestIwmStraddleSecondary:
         assert self._run(market, 1.0)[1]['t_stat_newey_west'] == pytest.approx(1.15, abs=0.02)
         _, st0 = self._run(market, 0.5, rf=0.0)
         assert st0['t_stat_newey_west'] == pytest.approx(1.28, abs=0.02)
+
+
+# ---------------------------------------------------------------------------
+# EXPLORATORY call-wing VRP cross-section (NOT registered). Extends the pinned
+# SPY call wing (TestSpyShortVolRegression, +2.54 gross / +2.25 net-0.5bp) to the
+# other tickers that already carry calls -- no new data, just measurement. The
+# finding: the call-wing delta-hedged premium is an INDEX, COST-FRAGILE phenomenon.
+# SPY clears the bar to 0.5bp; QQQ is gross-significant but dies at cost; IWM is
+# null; the single name (MSFT) LOSES with a catastrophic drawdown. Pinned so the
+# cross-section isn't re-derived; exploratory, not a registered verdict.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.skipif(not _HAVE_QQQ, reason='needs qqq_option_dailies.csv + its 2011_2016 backfill (or .gz)')
+class TestQqqShortVolRegression:
+    """EXPLORATORY: the delta-neutral short 0.25d CALL on real QQQ chains (canonical
+    + 2011_2016 backfill), 2011-03-23 -> 2026-06-05. The closest thing to a partial
+    replication of the SPY call wing: gross Newey-West t +2.07 (clears 2), but it
+    dies at the 0.5bp headline cost (+1.88) -- the SPY signal (+2.54 -> +2.25) is
+    stronger and cost-surviving; QQQ's is gross-only. Rate-invariant, delta-neutral
+    (corr +0.15). Not registered, cannot be promoted."""
+
+    @pytest.fixture(scope='class')
+    def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
+        from real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
+        store = load_chain_store(_QQQ_DAILIES, extra_paths=[_QQQ_BACKFILL], start=CHAIN_CLEAN_START.get('QQQ'))
+        days = sorted(store)
+        dates, prices = load_unadjusted_prices('QQQ', days[0], '2026-06-06')
+        pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
+        return [d for d, _ in pairs], [p for _, p in pairs], store
+
+    def _run(self, market: Any, bps: float, rf: float = 0.045) -> tuple[Any, Any]:
+        dates, prices, store = market
+        s, _, eq = run_real_short_vol_overlay(
+            dates, prices, store,
+            {'target_delta': 0.25, 'dte': 30, 'capital': 100_000, 'risk_free_rate': rf, 'hedge_cost_bps': bps})
+        return s, short_vol_statistics(eq, s['capital'], rf=rf)
+
+    def test_headline(self, market: Any) -> None:
+        s, _ = self._run(market, 0.0)
+        assert s['num_contracts'] == 17
+        assert s['num_calls_sold'] == 166
+        assert s['win_rate'] == pytest.approx(68.5, abs=0.1)
+        assert s['alpha_vs_cash'] == pytest.approx(69_381.23, abs=3.0)
+        assert s['max_drawdown_pct'] == pytest.approx(13.73, abs=0.05)
+
+    def test_gross_significant_but_dies_at_cost(self, market: Any) -> None:
+        _, st0 = self._run(market, 0.0)
+        assert st0['t_stat_newey_west'] == pytest.approx(2.07, abs=0.02)
+        assert st0['passes_t_2'] is True   # gross clears the bar
+        _, st5 = self._run(market, 0.5)
+        assert st5['t_stat_newey_west'] == pytest.approx(1.88, abs=0.02)
+        assert st5['passes_t_2'] is False  # but dies at the 0.5bp headline cost
+        assert st5['sharpe'] == pytest.approx(0.362, abs=0.005)
+
+    def test_cost_curve_and_rate_invariant(self, market: Any) -> None:
+        assert self._run(market, 1.0)[1]['t_stat_newey_west'] == pytest.approx(1.70, abs=0.02)
+        _, st0 = self._run(market, 0.5, rf=0.0)
+        assert st0['t_stat_newey_west'] == pytest.approx(1.88, abs=0.02)
+
+
+@pytest.mark.skipif(not _HAVE_IWM, reason='needs iwm_option_dailies.csv or its .gz twin')
+class TestIwmShortVolRegression:
+    """EXPLORATORY: the delta-neutral short 0.25d CALL on real IWM chains (both-wing
+    file; select_entry takes the calls), 2010-12-01 -> 2026-06-05. Null: gross
+    Newey-West t +1.37, net-0.5bp +1.18 -- never clears 2. Delta-neutral (corr +0.15),
+    small 7% drawdown. The call-wing premium is absent on the small-cap index. Not
+    registered, cannot be promoted."""
+
+    @pytest.fixture(scope='class')
+    def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
+        from real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
+        store = load_chain_store(_IWM_DAILIES, start=CHAIN_CLEAN_START['IWM'])
+        days = sorted(store)
+        dates, prices = load_unadjusted_prices('IWM', days[0], '2026-06-06')
+        pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
+        return [d for d, _ in pairs], [p for _, p in pairs], store
+
+    def _run(self, market: Any, bps: float, rf: float = 0.045) -> tuple[Any, Any]:
+        dates, prices, store = market
+        s, _, eq = run_real_short_vol_overlay(
+            dates, prices, store,
+            {'target_delta': 0.25, 'dte': 30, 'capital': 100_000, 'risk_free_rate': rf, 'hedge_cost_bps': bps})
+        return s, short_vol_statistics(eq, s['capital'], rf=rf)
+
+    def test_headline(self, market: Any) -> None:
+        s, _ = self._run(market, 0.0)
+        assert s['num_contracts'] == 13
+        assert s['num_calls_sold'] == 169
+        assert s['win_rate'] == pytest.approx(78.0, abs=0.1)
+        assert s['alpha_vs_cash'] == pytest.approx(19_777.18, abs=3.0)
+        assert s['max_drawdown_pct'] == pytest.approx(6.83, abs=0.05)
+
+    def test_null(self, market: Any) -> None:
+        _, st0 = self._run(market, 0.0)
+        assert st0['t_stat_newey_west'] == pytest.approx(1.37, abs=0.02)
+        assert st0['passes_t_2'] is False
+        _, st5 = self._run(market, 0.5)
+        assert st5['t_stat_newey_west'] == pytest.approx(1.18, abs=0.02)
+        assert st5['sharpe'] == pytest.approx(0.257, abs=0.005)
+        assert st5['passes_t_2'] is False
+
+    def test_cost_curve_and_rate_invariant(self, market: Any) -> None:
+        assert self._run(market, 1.0)[1]['t_stat_newey_west'] == pytest.approx(0.98, abs=0.02)
+        _, st0 = self._run(market, 0.5, rf=0.0)
+        assert st0['t_stat_newey_west'] == pytest.approx(1.18, abs=0.02)
+
+
+@pytest.mark.skipif(not _HAVE_MSFT, reason='needs msft_option_dailies.csv + its 2008_2016 backfill (or .gz)')
+class TestMsftShortVolRegression:
+    """EXPLORATORY: the delta-neutral short 0.25d CALL on the single name MSFT
+    (canonical + 2008_2016 backfill), 2010-05-10 -> 2026-04-10. The single-name
+    disaster: it LOSES (gross Newey-West t -0.26, net-0.5bp -0.37, net P&L -$58K) with
+    a catastrophic 74.6% drawdown (equity peaked $114K, troughed $29K) as MSFT ran
+    12.8x. Delta-neutral (corr +0.20) -- the loss is genuine short-gamma bleed on a
+    violently-trending single name, not a hedge bug (the same frozen engine gives the
+    sane SPY +2.54). Confirms the call-wing premium is an INDEX phenomenon, destructive
+    on single names. Not registered."""
+
+    @pytest.fixture(scope='class')
+    def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
+        from real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
+        store = load_chain_store(_MSFT_DAILIES, extra_paths=[_MSFT_BACKFILL], start=CHAIN_CLEAN_START['MSFT'])
+        days = sorted(store)
+        dates, prices = load_unadjusted_prices('MSFT', days[0], '2026-04-11')
+        pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
+        return [d for d, _ in pairs], [p for _, p in pairs], store
+
+    def _run(self, market: Any, bps: float, rf: float = 0.045) -> tuple[Any, Any]:
+        dates, prices, store = market
+        s, _, eq = run_real_short_vol_overlay(
+            dates, prices, store,
+            {'target_delta': 0.25, 'dte': 30, 'capital': 100_000, 'risk_free_rate': rf, 'hedge_cost_bps': bps})
+        return s, short_vol_statistics(eq, s['capital'], rf=rf)
+
+    def test_headline_is_a_loss(self, market: Any) -> None:
+        s, _ = self._run(market, 0.0)
+        assert s['num_contracts'] == 34
+        assert s['num_calls_sold'] == 172
+        assert s['win_rate'] == pytest.approx(72.5, abs=0.1)
+        assert s['alpha_vs_cash'] == pytest.approx(-18_202.17, abs=5.0)  # NEGATIVE
+        assert s['net_pnl'] == pytest.approx(-48_198.61, abs=5.0)        # loses money
+        assert s['max_drawdown_pct'] == pytest.approx(68.39, abs=0.1)    # catastrophic
+
+    def test_null_negative(self, market: Any) -> None:
+        _, st0 = self._run(market, 0.0)
+        assert st0['t_stat_newey_west'] == pytest.approx(-0.26, abs=0.02)
+        assert st0['passes_t_2'] is False
+        s5, st5 = self._run(market, 0.5)
+        assert st5['t_stat_newey_west'] == pytest.approx(-0.37, abs=0.02)
+        assert s5['max_drawdown_pct'] == pytest.approx(74.58, abs=0.1)
+        assert s5['alpha_vs_cash'] == pytest.approx(-26_086.06, abs=5.0)
+
+    def test_cost_curve_and_rate_invariant(self, market: Any) -> None:
+        assert self._run(market, 1.0)[1]['t_stat_newey_west'] == pytest.approx(-0.48, abs=0.02)
+        _, st0 = self._run(market, 0.5, rf=0.0)
+        assert st0['t_stat_newey_west'] == pytest.approx(-0.37, abs=0.02)
