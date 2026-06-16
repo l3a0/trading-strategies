@@ -126,6 +126,8 @@ jobs:
             spy_option_dailies.csv.gz
             spy_option_dailies_puts.csv.gz
             iwm_option_dailies.csv.gz
+            msft_option_dailies_puts.csv.gz
+            qqq_option_dailies_puts.csv.gz
           key: chain-data-${{ hashFiles('data_checksums.sha256') }}
       - name: Fetch chain data from the data release
         if: steps.chain-cache.outputs.cache-hit != 'true'
@@ -168,6 +170,8 @@ jobs:
             spy_option_dailies.csv.gz
             spy_option_dailies_puts.csv.gz
             iwm_option_dailies.csv.gz
+            msft_option_dailies_puts.csv.gz
+            qqq_option_dailies_puts.csv.gz
           key: chain-data-${{ hashFiles('data_checksums.sha256') }}
       - name: Fetch chain data from the data release
         if: steps.chain-cache.outputs.cache-hit != 'true'
