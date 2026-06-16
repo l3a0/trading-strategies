@@ -17,7 +17,11 @@ from __future__ import annotations
 from typing import Any
 
 from real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
-from vol_premium import run_real_short_vol_overlay, short_vol_statistics
+from vol_premium import (
+    run_real_short_vol_overlay,
+    run_real_straddle_overlay,
+    short_vol_statistics,
+)
 
 COSTS = [0.0, 0.2, 0.5, 1.0]
 # Pinned SPY call-wing t's (TestSpyShortVolRegression), for the like-for-like
@@ -61,6 +65,38 @@ def report(ticker: str, days: list[str], out: dict[float, tuple[Any, Any]]) -> N
     print(f"  -- {ticker} 0.5bp stats:   " + ", ".join(f"{k}={v}" for k, v in sorted(st5.items())))
 
 
+def run_straddle(paths: list[str], ticker: str, rf: float = 0.045) -> tuple[list[str], dict[float, tuple[Any, Any]]]:
+    """§7 SECONDARY (reported, never promoted): the ATM short straddle, the canonical
+    Coval-Shumway / AQR variance harvester. SPY merges its calls + puts files; IWM is
+    one both-wing file."""
+    store = load_chain_store(paths[0], extra_paths=paths[1:], start=CHAIN_CLEAN_START[ticker])
+    days = sorted(store)
+    dates, prices = load_unadjusted_prices(ticker, days[0], '2026-06-06')
+    pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
+    dts = [d for d, _ in pairs]
+    pxs = [p for _, p in pairs]
+    out: dict[float, tuple[Any, Any]] = {}
+    for bps in COSTS:
+        s, _, eq = run_real_straddle_overlay(
+            dts, pxs, store,
+            {'dte': 30, 'capital': 100_000, 'call_delta': 0.50, 'put_delta': -0.50,
+             'risk_free_rate': rf, 'hedge_cost_bps': bps})
+        out[bps] = (s, short_vol_statistics(eq, s['capital'], rf=rf))
+    return dts, out  # the actual run dates (a merged store can extend past them)
+
+
+def report_straddle(ticker: str, days: list[str], out: dict[float, tuple[Any, Any]]) -> None:
+    s0, _ = out[0.0]
+    print(f"\n=== {ticker} ATM STRADDLE (§7 secondary)  {days[0]} -> {days[-1]} ===")
+    print(f"  contracts={s0['num_contracts']}  straddles={s0['num_straddles_sold']}  win%={s0['win_rate']:.1f}")
+    print(f"  {'bps':>5} {'NW_t':>7} {'sharpe':>8} {'volP&L$':>11} {'net$':>11} {'hedge$':>9} {'maxDD%':>7} {'>2':>5}")
+    for bps in COSTS:
+        s, st = out[bps]
+        print(f"  {bps:>5.1f} {st['t_stat_newey_west']:>7.2f} {st['sharpe']:>8.3f} "
+              f"{s['alpha_vs_cash']:>11.0f} {s['net_pnl']:>11.0f} {s['total_hedge_cost']:>9.0f} "
+              f"{s['max_drawdown_pct']:>7.2f} {str(st['passes_t_2']):>5}")
+
+
 def main() -> None:
     spy_days, spy = run_put('spy_option_dailies_puts.csv', 'SPY')
     report('SPY', spy_days, spy)
@@ -81,6 +117,16 @@ def main() -> None:
     print(f"  mechanism clause (SPY net0.5bp >= +2.54 call wing): {'MET' if mechanism else 'NOT MET'}")
     print(f"  IWM  gross t={iwm_t0:+.2f}  net0.5bp t={iwm_t5:+.2f}  -> {'CONFIRMS' if iwm_confirm else 'DOES NOT CONFIRM'}")
     print(f"  ==> {'CONFIRMED' if confirmed else 'NOT CONFIRMED (see §6 row for exact language)'}")
+
+    # §7 SECONDARY (reported, never promoted; CANNOT change the §5 verdict above):
+    # the ATM straddle, the canonical Coval-Shumway / AQR variance harvester.
+    print("\n========= §7 SECONDARY: ATM straddle (reported, never promoted) =========")
+    sd, sstr = run_straddle(['spy_option_dailies.csv', 'spy_option_dailies_puts.csv'], 'SPY')
+    report_straddle('SPY', sd, sstr)
+    idd, istr = run_straddle(['iwm_option_dailies.csv'], 'IWM')
+    report_straddle('IWM', idd, istr)
+    print(f"  straddle is null too: SPY net0.5bp t={sstr[0.5][1]['t_stat_newey_west']:+.2f}, "
+          f"IWM {istr[0.5][1]['t_stat_newey_west']:+.2f} — both < 2; reinforces the primary.")
 
 
 if __name__ == '__main__':

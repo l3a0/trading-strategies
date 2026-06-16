@@ -21,7 +21,13 @@ from typing import Any
 import pandas as pd
 import pytest
 
-from vol_premium import run_real_short_vol_overlay, select_put_entry, short_vol_statistics
+from vol_premium import (
+    run_real_short_vol_overlay,
+    run_real_straddle_overlay,
+    select_put_entry,
+    select_straddle,
+    short_vol_statistics,
+)
 
 _SPY_DAILIES = os.path.join(os.path.dirname(__file__), 'spy_option_dailies.csv')
 _HAVE_SPY = os.path.exists(_SPY_DAILIES) or os.path.exists(_SPY_DAILIES + '.gz')
@@ -574,3 +580,227 @@ class TestIwmShortPutRegression:
         assert self._run(market, 1.0)[1]['t_stat_newey_west'] == pytest.approx(0.81, abs=0.02)
         _, st0 = self._run(market, 0.5, rf=0.0)
         assert st0['t_stat_newey_west'] == pytest.approx(0.91, abs=0.02)
+
+
+def _straddle_scenario(
+    price_path: list[tuple[str, float]],
+    call_path: list[tuple[float, float, float, float]],
+    put_path: list[tuple[float, float, float, float]],
+    call_strike: float,
+    put_strike: float,
+) -> tuple[list[str], list[float], dict[str, dict[str, Any]]]:
+    """One-cycle two-leg synthetic (dates, prices, store). Last date = expiration.
+    call_path[i] / put_path[i] = (bid, ask, mid, delta) for day i."""
+    exp = price_path[-1][0]
+    dte0 = len(price_path) - 1
+    store: dict[str, dict[str, Any]] = {}
+    dates: list[str] = []
+    prices: list[float] = []
+    for i, ((date, px), c, p) in enumerate(zip(price_path, call_path, put_path)):
+        dates.append(date)
+        prices.append(px)
+        cc = (dte0 - i, c[3], c[0], c[1], c[2], exp, call_strike, 'C')
+        pc = (dte0 - i, p[3], p[0], p[1], p[2], exp, put_strike, 'P')
+        store[date] = {'candidates': [cc, pc],
+                       'marks': {'C': (c[0], c[1], c[2], c[3]), 'P': (p[0], p[1], p[2], p[3])}}
+    return dates, prices, store
+
+
+class TestStraddleMechanics:
+    """Synthetic, always-run checks of the two-leg run_real_straddle_overlay: both
+    premiums collected, the combined-delta hedge offsets a move, and BOTH legs settle
+    at expiry. Pin the §7 straddle MECHANISM regardless of real data. select_straddle
+    picks both legs at one expiration (a true straddle, not a diagonal)."""
+
+    def test_selects_both_legs_same_expiry(self) -> None:
+        d, _, store = _straddle_scenario(
+            [('2020-01-01', 100.0), ('2020-01-31', 100.0)],
+            [(2.0, 2.1, 2.05, 0.50), (0.0, 0.0, 0.0, 0.0)],
+            [(2.0, 2.1, 2.05, -0.50), (0.0, 0.0, 0.0, 0.0)], 100.0, 100.0)
+        pick = select_straddle(store[d[0]], 30, 0.50, -0.50)
+        assert pick is not None
+        call, put = pick
+        assert call[1] > 0 and put[1] < 0 and call[5] == put[5]  # opposite signs, one expiry
+
+    def test_flat_market_harvests_both_premiums(self) -> None:
+        """Stock dead flat at the strike; both legs decay to worthless. The
+        delta-neutral short straddle (combined delta ~0 -> ~0 hedge) keeps ~the whole
+        two-leg premium."""
+        days = [f'2020-01-0{i + 1}' for i in range(6)]
+        price_path = [(d, 100.0) for d in days]
+        call_path = [(2.0, 2.1, 2.05, 0.50), (1.55, 1.65, 1.60, 0.45),
+                     (1.05, 1.15, 1.10, 0.35), (0.55, 0.65, 0.60, 0.20),
+                     (0.15, 0.25, 0.20, 0.08), (0.0, 0.0, 0.0, 0.0)]
+        put_path = [(2.0, 2.1, 2.05, -0.50), (1.55, 1.65, 1.60, -0.45),
+                    (1.05, 1.15, 1.10, -0.35), (0.55, 0.65, 0.60, -0.20),
+                    (0.15, 0.25, 0.20, -0.08), (0.0, 0.0, 0.0, 0.0)]
+        dates, prices, store = _straddle_scenario(price_path, call_path, put_path, 100.0, 100.0)
+        s, _, _ = run_real_straddle_overlay(
+            dates, prices, store,
+            {'call_delta': 0.50, 'put_delta': -0.50, 'capital': 100_000,
+             'risk_free_rate': 0.0, 'hedge_cost_bps': 0.0})
+        assert s['num_straddles_sold'] == 1
+        assert s['net_pnl'] > 0
+        assert s['net_pnl'] == pytest.approx(s['total_premium_collected'], rel=0.02)
+
+    def test_hedge_offsets_an_up_move(self) -> None:
+        """Stock trends up through the strikes: the combined delta -> +1, the hedge
+        goes LONG and captures the rise, so the net loss is a small gamma cost, not
+        the full naked-straddle assignment loss (call finishes ITM by 10)."""
+        days = ['2020-02-0' + str(i + 1) for i in range(5)]
+        price_path = [(days[0], 100.0), (days[1], 102.0), (days[2], 105.0),
+                      (days[3], 108.0), (days[4], 110.0)]
+        call_path = [(2.0, 2.1, 2.05, 0.50), (3.0, 3.1, 3.05, 0.62),
+                     (4.5, 4.6, 4.55, 0.80), (6.4, 6.6, 6.50, 0.95), (8.0, 8.1, 8.05, 1.0)]
+        put_path = [(2.0, 2.1, 2.05, -0.50), (1.2, 1.3, 1.25, -0.35),
+                    (0.5, 0.6, 0.55, -0.18), (0.1, 0.2, 0.15, -0.05), (0.0, 0.05, 0.02, -0.01)]
+        dates, prices, store = _straddle_scenario(price_path, call_path, put_path, 100.0, 100.0)
+        s, _, _ = run_real_straddle_overlay(
+            dates, prices, store,
+            {'call_delta': 0.50, 'put_delta': -0.50, 'capital': 100_000,
+             'risk_free_rate': 0.0, 'hedge_cost_bps': 0.0})
+        shares = s['num_contracts'] * 100
+        prem_per_share = s['total_premium_collected'] / shares  # ~4 (both legs)
+        naked = (prem_per_share - (110.0 - 100.0)) * shares  # call ITM by 10 => big loss
+        assert naked < 0
+        assert abs(s['net_pnl']) < 0.5 * abs(naked)
+
+    def test_put_leg_settles_on_a_down_move(self) -> None:
+        """Stock falls below the strikes: the put leg finishes ITM and IS paid (the
+        combined delta -> -1, hedge SHORT). The hedged net loss is a fraction of the
+        naked straddle's, confirming the second leg settles and hedges correctly."""
+        days = ['2020-03-0' + str(i + 1) for i in range(5)]
+        price_path = [(days[0], 100.0), (days[1], 97.0), (days[2], 94.0),
+                      (days[3], 92.0), (days[4], 90.0)]
+        call_path = [(2.0, 2.1, 2.05, 0.50), (1.0, 1.1, 1.05, 0.35),
+                     (0.4, 0.5, 0.45, 0.18), (0.1, 0.2, 0.15, 0.06), (0.0, 0.05, 0.02, 0.01)]
+        put_path = [(2.0, 2.1, 2.05, -0.50), (3.2, 3.3, 3.25, -0.66),
+                    (5.0, 5.1, 5.05, -0.84), (7.0, 7.1, 7.05, -0.95), (10.0, 10.1, 10.05, -1.0)]
+        dates, prices, store = _straddle_scenario(price_path, call_path, put_path, 100.0, 100.0)
+        s, _, _ = run_real_straddle_overlay(
+            dates, prices, store,
+            {'call_delta': 0.50, 'put_delta': -0.50, 'capital': 100_000,
+             'risk_free_rate': 0.0, 'hedge_cost_bps': 0.0})
+        shares = s['num_contracts'] * 100
+        prem_per_share = s['total_premium_collected'] / shares
+        naked = (prem_per_share - (100.0 - 90.0)) * shares  # put ITM by 10
+        assert naked < 0
+        assert abs(s['net_pnl']) < 0.5 * abs(naked)
+
+
+@pytest.mark.skipif(not (_HAVE_SPY and _HAVE_SPY_PUTS),
+                    reason='needs spy_option_dailies.csv + spy_option_dailies_puts.csv (or .gz)')
+class TestSpyStraddleSecondary:
+    """Pin the §7 ATM-straddle SECONDARY on real SPY chains (calls merged with puts).
+    REPORTED, NEVER PROMOTED (prereg §7): a secondary that cannot change the §5 primary
+    (short-put) verdict. Span 2010-12-01 -> 2026-06-05.
+
+    Result: the full variance harvester (short ~0.50d call + short ~-0.50d put, same
+    expiry, hold-to-expiry, net-delta hedged) clears MORE than the put wing alone
+    (gross Newey-West t +0.90, net-0.5bp +0.72) but still does NOT reach t=2 -- a
+    richer null. Rate-invariant, delta-neutral (corr -0.03 to SPY), 16.9% drawdown
+    (short both wings); 2022's grinding bear is the biggest single drag (-$30.5K).
+    """
+
+    @pytest.fixture(scope='class')
+    def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
+        from real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
+        store = load_chain_store(_SPY_DAILIES, extra_paths=[_SPY_PUTS], start=CHAIN_CLEAN_START['SPY'])
+        days = sorted(store)
+        dates, prices = load_unadjusted_prices('SPY', days[0], '2026-06-06')
+        pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
+        return [d for d, _ in pairs], [p for _, p in pairs], store
+
+    def _run(self, market: Any, bps: float, rf: float = 0.045) -> tuple[Any, Any]:
+        dates, prices, store = market
+        s, _, eq = run_real_straddle_overlay(
+            dates, prices, store,
+            {'dte': 30, 'capital': 100_000, 'call_delta': 0.50, 'put_delta': -0.50,
+             'risk_free_rate': rf, 'hedge_cost_bps': bps})
+        return s, short_vol_statistics(eq, s['capital'], rf=rf)
+
+    def test_headline(self, market: Any) -> None:
+        """175 straddles (8 contracts), 55.2% win, $1.54M two-leg premium;
+        frictionless vol-P&L +$39.1K, 16.6% drawdown."""
+        s, _ = self._run(market, 0.0)
+        assert s['num_contracts'] == 8
+        assert s['num_straddles_sold'] == 175
+        assert s['win_rate'] == pytest.approx(55.2, abs=0.1)
+        assert s['alpha_vs_cash'] == pytest.approx(39_070.76, abs=3.0)
+        assert s['max_drawdown_pct'] == pytest.approx(16.55, abs=0.05)
+
+    def test_secondary_null(self, market: Any) -> None:
+        """Richer than the put wing alone but still null: gross t +0.90, net-0.5bp
+        +0.72 -- never clears t=2. Cannot change the §5 verdict (§7)."""
+        _, st0 = self._run(market, 0.0)
+        assert st0['t_stat_newey_west'] == pytest.approx(0.90, abs=0.02)
+        assert st0['passes_t_2'] is False
+        _, st5 = self._run(market, 0.5)
+        assert st5['t_stat_newey_west'] == pytest.approx(0.72, abs=0.02)
+        assert st5['sharpe'] == pytest.approx(0.128, abs=0.005)
+        assert st5['nw_lag'] == 9
+        assert st5['passes_t_2'] is False
+
+    def test_cost_curve_and_rate_invariant(self, market: Any) -> None:
+        """+0.90 gross -> +0.72 (0.5bp) -> +0.54 (1bp), never near 2; rate-invariant."""
+        assert self._run(market, 1.0)[1]['t_stat_newey_west'] == pytest.approx(0.54, abs=0.02)
+        _, st0 = self._run(market, 0.5, rf=0.0)
+        assert st0['t_stat_newey_west'] == pytest.approx(0.72, abs=0.02)
+
+
+@pytest.mark.skipif(not _HAVE_IWM, reason='needs iwm_option_dailies.csv or its .gz twin')
+class TestIwmStraddleSecondary:
+    """Pin the §7 ATM-straddle SECONDARY on real IWM chains (both wings in one file).
+    REPORTED, NEVER PROMOTED. Span 2010-12-01 -> 2026-06-05.
+
+    Result: IWM's straddle is the strongest variance harvester of the set (gross t
+    +1.42, net-0.5bp +1.28, +$62.9K gross vol-P&L) but STILL does not reach t=2.
+    Delta-neutral (corr -0.01), 24.7% drawdown; 2021 is the big harvest (+$36.3K).
+    Reinforces the primary null: even the full strip, on the naive index, isn't
+    significant net of cost over this span.
+    """
+
+    @pytest.fixture(scope='class')
+    def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
+        from real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
+        store = load_chain_store(_IWM_DAILIES, start=CHAIN_CLEAN_START['IWM'])
+        days = sorted(store)
+        dates, prices = load_unadjusted_prices('IWM', days[0], '2026-06-06')
+        pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
+        return [d for d, _ in pairs], [p for _, p in pairs], store
+
+    def _run(self, market: Any, bps: float, rf: float = 0.045) -> tuple[Any, Any]:
+        dates, prices, store = market
+        s, _, eq = run_real_straddle_overlay(
+            dates, prices, store,
+            {'dte': 30, 'capital': 100_000, 'call_delta': 0.50, 'put_delta': -0.50,
+             'risk_free_rate': rf, 'hedge_cost_bps': bps})
+        return s, short_vol_statistics(eq, s['capital'], rf=rf)
+
+    def test_headline(self, market: Any) -> None:
+        """169 straddles (13 contracts), 64.9% win, $1.61M premium; frictionless
+        vol-P&L +$62.9K, 24.2% drawdown."""
+        s, _ = self._run(market, 0.0)
+        assert s['num_contracts'] == 13
+        assert s['num_straddles_sold'] == 169
+        assert s['win_rate'] == pytest.approx(64.9, abs=0.1)
+        assert s['alpha_vs_cash'] == pytest.approx(62_862.08, abs=3.0)
+        assert s['max_drawdown_pct'] == pytest.approx(24.18, abs=0.05)
+
+    def test_secondary_null(self, market: Any) -> None:
+        """The strongest harvester of the set, still null: gross t +1.42, net-0.5bp
+        +1.28 -- below t=2. Cannot change the §5 verdict (§7)."""
+        _, st0 = self._run(market, 0.0)
+        assert st0['t_stat_newey_west'] == pytest.approx(1.42, abs=0.02)
+        assert st0['passes_t_2'] is False
+        _, st5 = self._run(market, 0.5)
+        assert st5['t_stat_newey_west'] == pytest.approx(1.28, abs=0.02)
+        assert st5['sharpe'] == pytest.approx(0.251, abs=0.005)
+        assert st5['nw_lag'] == 9
+        assert st5['passes_t_2'] is False
+
+    def test_cost_curve_and_rate_invariant(self, market: Any) -> None:
+        """+1.42 gross -> +1.28 (0.5bp) -> +1.15 (1bp), never reaching 2; rate-invariant."""
+        assert self._run(market, 1.0)[1]['t_stat_newey_west'] == pytest.approx(1.15, abs=0.02)
+        _, st0 = self._run(market, 0.5, rf=0.0)
+        assert st0['t_stat_newey_west'] == pytest.approx(1.28, abs=0.02)
