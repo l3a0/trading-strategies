@@ -93,6 +93,33 @@ def select_put_entry(
     return min(cohort, key=lambda c: abs(c[1] - target_delta))
 
 
+def select_straddle(
+    day: dict[str, Any], target_dte: int,
+    call_delta: float = 0.50, put_delta: float = -0.50,
+) -> tuple[tuple[Any, ...], tuple[Any, ...]] | None:
+    """The two legs of an ATM short straddle on the SAME expiration: the
+    ~call_delta call (via select_entry) and, at that call's expiration, the put
+    nearest put_delta (bid > 0, in the put band) — the canonical Coval-Shumway /
+    AQR variance harvester. Forcing one expiration keeps it a true straddle, not a
+    diagonal.
+
+    Pre-registered §7 SECONDARY of docs/prereg_vol_premium.md: REPORTED, NEVER
+    PROMOTED — it cannot change the §5 primary (short-put) verdict. Returns the
+    (call, put) candidate tuples (the shape select_entry returns) or None when
+    either leg is unavailable at the nearest expiration.
+    """
+    call = select_entry(day, target_dte, call_delta)
+    if call is None:
+        return None
+    expiration = call[5]
+    puts = [c for c in day['candidates']
+            if c[5] == expiration and c[2] > 0 and -0.60 < c[1] < -0.05]
+    if not puts:
+        return None
+    put = min(puts, key=lambda c: abs(c[1] - put_delta))
+    return call, put
+
+
 def run_real_short_vol_overlay(
     dates: list[str],
     prices: list[float],
@@ -400,6 +427,176 @@ def short_vol_statistics(
         'mean_daily_pnl_dollars': round(float(np.mean(np.diff(eq))), 2),  # gross, incl. rf
         'mean_daily_excess_dollars': round(mean_e * capital, 2),  # vol-P&L, rf netted
     }
+
+
+def run_real_straddle_overlay(
+    dates: list[str],
+    prices: list[float],
+    store: dict[str, dict[str, Any]],
+    params: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]], pd.DataFrame]:
+    """Daily delta-neutral short ATM STRADDLE — short ~0.50d call + short ~-0.50d
+    put at the SAME expiration, hold-to-expiry, the COMBINED net delta hedged to ~0
+    with stock rebalanced daily on the signed vendor deltas.
+
+    A pre-registered §7 SECONDARY of docs/prereg_vol_premium.md: REPORTED, NEVER
+    PROMOTED — it cannot change the §5 primary (short-put) verdict; it is the one
+    two-leg piece §2.2/§9 deferred. A SEPARATE loop, so the frozen single-leg
+    run_real_short_vol_overlay path (and every pin on it) stays byte-identical
+    (prereg §9). Same single cash account, recorded per-day rf credit, signed hedge,
+    and daily_equity schema (date/equity/price/rf_credit), so short_vol_statistics
+    consumes it unchanged — the same rate-invariant delta-hedged-gain verdict.
+
+    A short straddle's combined position delta is -(call_delta + put_delta); holding
+    (call_delta + put_delta)*shares of stock neutralizes it — ~0 at the money, LONG
+    as spot rises and the call dominates, SHORT as it falls and the put dominates.
+    The half-spread cost applies to |hedge_trade|; each leg is sold at its own bid
+    and keeps COMMISSION_PER_SHARE.
+
+    params: dte (30), capital (100_000), fill ('bid_ask'|'mid'), risk_free_rate
+            (0.045), hedge_cost_bps (0.5), call_delta (0.50), put_delta (-0.50).
+    """
+    dte = int(params.get('dte', 30))
+    fill = str(params.get('fill', 'bid_ask'))
+    capital = float(params.get('capital', 100_000))
+    call_delta = float(params.get('call_delta', 0.50))
+    put_delta = float(params.get('put_delta', -0.50))
+    rf = float(params.get('risk_free_rate', 0.045))
+    hedge_cost_bps = float(params.get('hedge_cost_bps', 0.5))
+    daily_rf = rf / 252.0
+
+    initial_price = prices[0]
+    num_contracts = int(capital // (initial_price * 100))
+    if num_contracts < 1:
+        raise ValueError('capital insufficient for one contract')
+    shares = 100 * num_contracts  # notional of EACH leg
+
+    cash = capital
+    hedge_shares = 0
+    position: dict[str, Any] | None = None
+    num_straddles_sold = 0
+    total_premium_collected = 0.0
+    total_hedge_cost = 0.0
+    interest_earned = 0.0
+    wins = losses = 0
+    trades: list[dict[str, Any]] = []
+    daily_rows: list[dict[str, Any]] = []
+    prev_date: str | None = None
+    prev_price: float | None = None
+
+    for i, (date, price) in enumerate(zip(dates, prices)):
+        day = store.get(date)
+
+        # 1. Interest on cash carried from yesterday (recorded for rf-netting).
+        day_rf_credit = 0.0
+        if i > 0:
+            day_rf_credit = cash * daily_rf
+            cash += day_rf_credit
+            interest_earned += day_rf_credit
+
+        # 2. Entry (BOTH legs) / settlement (BOTH legs at expiry).
+        if position is None:
+            if day is not None:
+                pick = select_straddle(day, dte, call_delta, put_delta)
+                if pick is not None:
+                    call, put = pick
+                    c_sell = call[2] if fill == 'bid_ask' else call[4]
+                    p_sell = put[2] if fill == 'bid_ask' else put[4]
+                    c_prem = c_sell - COMMISSION_PER_SHARE
+                    p_prem = p_sell - COMMISSION_PER_SHARE
+                    if c_prem > 0 and p_prem > 0:
+                        cash += (c_prem + p_prem) * shares  # RECEIVE both premiums
+                        position = {
+                            'expiration': call[5],
+                            'call': {'strike': call[6], 'premium': c_prem,
+                                     'contract': call[7], 'last_mid': call[4], 'delta': call[1]},
+                            'put': {'strike': put[6], 'premium': p_prem,
+                                    'contract': put[7], 'last_mid': put[4], 'delta': put[1]},
+                        }
+                        num_straddles_sold += 1
+                        total_premium_collected += (c_prem + p_prem) * shares
+                        trades.append({'date': date, 'price': price, 'action': 'sell',
+                                       'call_strike': call[6], 'put_strike': put[6],
+                                       'call_premium': c_prem, 'put_premium': p_prem,
+                                       'expiration': call[5]})
+        elif date >= position['expiration']:
+            if date == position['expiration']:
+                settle_price = price
+            else:
+                assert prev_date is not None and prev_price is not None
+                gap = (pd.Timestamp(position['expiration']) - pd.Timestamp(prev_date)).days
+                assert gap <= 4, (f'{gap} days between {prev_date} and expiration '
+                                  f'{position["expiration"]} — missing data?')
+                settle_price = prev_price
+            c_intr = max(0.0, settle_price - position['call']['strike'])
+            p_intr = max(0.0, position['put']['strike'] - settle_price)
+            cash -= (c_intr + p_intr) * shares  # PAY both intrinsics (premiums received)
+            pnl = (position['call']['premium'] + position['put']['premium']
+                   - c_intr - p_intr) * shares
+            wins, losses = (wins + 1, losses) if pnl >= 0 else (wins, losses + 1)
+            position = None
+            trades.append({'date': date, 'price': settle_price, 'action': 'expiration', 'pnl': pnl})
+        elif day is not None:
+            # Mark both legs to market (hold-to-expiry: no early close).
+            cq = day['marks'].get(position['call']['contract'])
+            pq = day['marks'].get(position['put']['contract'])
+            if cq is not None:
+                position['call']['last_mid'], position['call']['delta'] = cq[2], cq[3]
+            if pq is not None:
+                position['put']['last_mid'], position['put']['delta'] = pq[2], pq[3]
+
+        # 3. Delta-neutral rebalance on the COMBINED delta. Hold
+        #    (call_delta + put_delta)*shares of stock (clamped to [-1, 1]) to
+        #    neutralize the short straddle's -(call_delta + put_delta) position delta.
+        if position is not None:
+            combined = position['call']['delta'] + position['put']['delta']
+            target_hedge = int(round(min(max(combined, -1.0), 1.0) * shares))
+        else:
+            target_hedge = 0
+        hedge_trade = target_hedge - hedge_shares
+        if hedge_trade != 0:
+            cash -= hedge_trade * price
+            cost = abs(hedge_trade) * price * (hedge_cost_bps / 10_000.0)
+            cash -= cost
+            total_hedge_cost += cost
+            hedge_shares = target_hedge
+
+        # 4. Mark to market: cash + hedge stock - value of BOTH short legs.
+        equity = cash + price * hedge_shares
+        if position is not None:
+            equity -= (position['call']['last_mid'] + position['put']['last_mid']) * shares
+        daily_rows.append({'date': date, 'equity': round(equity, 2), 'price': price,
+                           'rf_credit': day_rf_credit})
+        prev_date, prev_price = date, price
+
+    daily_equity = pd.DataFrame(daily_rows, columns=['date', 'equity', 'price', 'rf_credit'])
+    final_equity = float(daily_equity['equity'].iloc[-1])
+    net_pnl = final_equity - capital
+    alpha_vs_cash = net_pnl - interest_earned
+
+    eq = daily_equity['equity'].astype(float)
+    peak = eq.cummax().clip(lower=capital)
+    max_dd = float(((peak - eq) / peak * 100).max())
+
+    summary = {
+        'capital': round(capital, 2),
+        'num_contracts': num_contracts,
+        'final_equity': round(final_equity, 2),
+        'net_pnl': round(net_pnl, 2),
+        'alpha_vs_cash': round(alpha_vs_cash, 2),
+        'interest_earned': round(interest_earned, 2),
+        'total_premium_collected': round(total_premium_collected, 2),
+        'total_hedge_cost': round(total_hedge_cost, 2),
+        'hedge_cost_bps': hedge_cost_bps,
+        'num_straddles_sold': num_straddles_sold,
+        'wins': wins,
+        'losses': losses,
+        'win_rate': round(wins / (wins + losses) * 100, 1) if (wins + losses) else 0.0,
+        'max_drawdown_pct': round(max_dd, 2),
+        'risk_free_rate': rf,
+        'cash': round(capital, 2),
+    }
+    return summary, trades, daily_equity
 
 
 def _cli() -> None:

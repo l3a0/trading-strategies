@@ -74,7 +74,7 @@ transaction costs; the risk-free financing nets out (the earlier +0.93 "doesn't
 beat T-bills" was a base-mismatch artifact, now fixed). Full numbers and the
 cross-section are in **Results** below.
 
-### Phase B — the put side (run) and the ATM straddle (pending)
+### Phase B — the put side and the ATM straddle (both run)
 
 The equity-index VRP is concentrated in **OTM puts** (the skew / crash-insurance
 premium; Constantinides-Jackwerth-Savov find index *call* alphas \~0 while put
@@ -83,8 +83,9 @@ side is the point of the experiment. At the time of the scaffold it was **blocke
 `download_option_dailies.py` fetched calls only. It has since been pre-registered
 (`prereg_vol_premium.md`), the put-inclusive SPY and IWM data fetched, and the run
 completed — the null verdict is in *The registered put-side run* below, and the
-fetch plan that follows is the one that was executed. The ATM straddle (a two-leg
-engine extension) is the one piece still pending.
+fetch plan that follows is the one that was executed. The ATM straddle (the two-leg
+engine extension) has since been run too, as a §7 secondary — see *§7 secondary: the
+ATM straddle* below.
 
 The fetch plan (premium Alpha Vantage `HISTORICAL_OPTIONS`, which returns both
 wings per day):
@@ -289,6 +290,33 @@ pin on the same shared engine, confirming no regression. The result is pinned by
 `TestSpyShortPutRegression` and `TestIwmShortPutRegression`; IWM's clean span
 (2010-12-01 → 2026-06-05, set by the validation battery, clean from row one) is recorded
 as the §10 amendment to the registration.
+
+### §7 secondary: the ATM straddle
+
+The registration pre-committed one more instrument as a §7 secondary — **reported,
+never promoted, unable to change the §5 verdict**: the ATM short straddle (short
+\~0.50Δ call + short \~−0.50Δ put, same expiry, hold-to-expiry, the combined delta
+hedged to \~0), the canonical Coval-Shumway / AQR variance harvester. It is the full
+strip, not one wing. Run on SPY (calls merged with puts) and IWM over the same
+2010-12-01 → 2026-06-05 span:
+
+| ATM straddle | gross | 0.2 bp | **0.5 bp** | 1 bp |
+| --- | --- | --- | --- | --- |
+| SPY Newey-West t | +0.90 | +0.83 | **+0.72** | +0.54 |
+| IWM Newey-West t | +1.42 | +1.37 | **+1.28** | +1.15 |
+
+Selling both wings harvests far more gross premium (\~$1.5M vs the put wing's
+\~$364K) and lifts the t above the put wing alone — but **still short of t = 2 on
+both indices**. Its drawdown is correspondingly larger (16.9% SPY, 24.7% IWM, vs the
+put wing's 13.3%) — short both wings is short more gamma — and 2022's grinding bear
+is the single biggest drag (SPY −$30.5K). It is rate-invariant and cleanly
+delta-neutral (the daily vol-P&L correlates −0.03 / −0.01 with the underlying).
+Pinned by `TestSpyStraddleSecondary` / `TestIwmStraddleSecondary`, mechanics by
+`TestStraddleMechanics`, run by `run_registered_vrp.py`.
+
+The straddle does not rescue the premium; it reinforces the primary read. Even the
+full variance strip, on a naive out-of-sample index, isn't significant net of cost
+over this post-2010 span.
 
 ## Remaining limitations
 
