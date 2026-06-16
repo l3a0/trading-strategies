@@ -355,6 +355,25 @@ result has been computed — must be recorded in an "Amendments" section appende
 here, with date, what changed, and why; every claim affected is demoted to
 exploratory. Silent edits void the registration.
 
+### Amendment 1 — 2026-06-15 (results recording; no rule change)
+
+Recorded with the results, as §3.1 instructed for the IWM span. **No registered
+rule, instrument, span, cost band, pass rule, or outcome language was changed, and
+no claim is demoted** — this fills two values the registration explicitly deferred
+to the data:
+
+- **IWM clean span: 2010-12-01 → 2026-06-05** (3,895 chain days, 169 cycles). Set by
+  the §3.1 validation battery — the same placeholder-greeks / era-clip rule that fixed
+  SPY's 2010-12-01 boundary. The IWM fetch began at 2010-12-01 (past the dirty 2008–2010
+  era) and validated clean from row one (entry-band raw == defect-free in every month),
+  so `CHAIN_CLEAN_START['IWM'] = '2010-12-01'` is the file's first day, not a post-hoc
+  trim, and was determined before any result was viewed.
+- **Result:** the run executed once (analysis code `run_registered_vrp.py`), citing
+  this registration's merge commit (PR #23) and the analysis-code commit. The verdict is
+  §6 row 4 — null on the put wing (SPY gross t +0.20, net-0.5bp +0.09; IWM +1.00 / +0.91,
+  does not confirm) — reported in `docs/vol_premium.md` and pinned by
+  `TestSpyShortPutRegression` / `TestIwmShortPutRegression`.
+
 ---
 
 ## 11. Lineage and references

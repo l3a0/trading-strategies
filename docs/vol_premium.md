@@ -74,14 +74,17 @@ transaction costs; the risk-free financing nets out (the earlier +0.93 "doesn't
 beat T-bills" was a base-mismatch artifact, now fixed). Full numbers and the
 cross-section are in **Results** below.
 
-### Phase B — the put side and the ATM straddle (blocked on data)
+### Phase B — the put side (run) and the ATM straddle (pending)
 
 The equity-index VRP is concentrated in **OTM puts** (the skew / crash-insurance
 premium; Constantinides-Jackwerth-Savov find index *call* alphas \~0 while put
 alphas stay large). The call leg is the weakest wing to harvest. Testing the put
-side and the ATM straddle is the point of the experiment — and it is **blocked**:
-`download_option_dailies.py` fetched **calls only** (verified: zero negative-delta
-rows in the MSFT/QQQ/SPY stores).
+side is the point of the experiment. At the time of the scaffold it was **blocked**:
+`download_option_dailies.py` fetched calls only. It has since been pre-registered
+(`prereg_vol_premium.md`), the put-inclusive SPY and IWM data fetched, and the run
+completed — the null verdict is in *The registered put-side run* below, and the
+fetch plan that follows is the one that was executed. The ATM straddle (a two-leg
+engine extension) is the one piece still pending.
 
 The fetch plan (premium Alpha Vantage `HISTORICAL_OPTIONS`, which returns both
 wings per day):
@@ -127,7 +130,10 @@ with rf credited and debited on the same base, (b) net the *actual* per-day cred
 took **(b)**, which subsumes (a): netting the actual credit makes the excess
 identical to the rf=0 run's raw vol-P&L. It needs no change to the engine's
 economics — you cannot earn rf on hedge *stock*, which rules out (c) — and it makes
-the excess sum exactly to `alpha_vs_cash` (one conservation law).
+the excess sum to `alpha_vs_cash` up to the day-0 entry-spread mark (`eq[0]` is
+already struck at the entry bid/ask mid before the first daily diff, so the summed
+series omits that one day-0 cost — a near-exact conservation that, by dropping a
+cost, slightly flatters the premium rather than deflating it).
 
 ### The result on SPY (call wing)
 
@@ -227,9 +233,62 @@ hypothesis is **not** killed the way the pre-fix doc claimed — it is a thin,
 promising carry. What keeps it from being a confirmed edge: the daily-close
 backtest cannot see the short-gamma crash tail (the +0.21 SPY correlation says it
 bleeds when the index falls hard), it is the weak call wing, and it rests on one
-index over one decade. The live question is the richer **put side / ATM straddle**,
-which needs the blocked put-data fetch — and because this phase already peeked at
-SPY, that wing should be pre-registered before the data is spent.
+index over one decade. The live question was the richer **put side**, which needed
+the blocked put-data fetch — and because this phase had already peeked at SPY, that
+wing was pre-registered before the data was spent (`prereg_vol_premium.md`). That
+registered run is now done; its verdict is next.
+
+## The registered put-side run — the verdict
+
+The put side was the point of the experiment: the equity-index premium is supposed
+to live in the OTM puts, not the call wing the covered-call work had measured. It was
+pre-registered before the put data existed — registration effective at PR #23's merge
+— precisely because the call phase had already seen the SPY price path. The run is now
+complete (`run_registered_vrp.py`), and the pre-committed outcome language (§6, row 4)
+is published verbatim:
+
+> **Null on the put wing: no significant delta-hedged premium on SPY over this span,
+> even gross.** (IWM reported beside.)
+
+The mechanism clause (§1.3) is not met either: the SPY put t does not reach the +2.54
+call wing, so the put wing is no stronger than the call — the reverse of the
+skew-premium prediction.
+
+| Short put, −0.25Δ, 30 DTE | gross | 0.2 bp | **0.5 bp** | 1 bp | call wing (0.5 bp) |
+| --- | --- | --- | --- | --- | --- |
+| SPY Newey-West t | +0.20 | +0.16 | **+0.09** | −0.02 | +2.25 |
+| IWM Newey-West t | +1.00 | +0.96 | **+0.91** | +0.81 | — |
+
+SPY's headline verdict — the 0.5 bp net-of-cost t — is **+0.09**, and even the
+frictionless gross t is **+0.20**. The premium is absent before transaction costs get
+a vote. IWM, the naive out-of-sample index, harvests more (+$25.1K gross vol-P&L vs
+SPY's +$5.2K) but its t is still only +1.00; it does not confirm. By the §5
+conjunction — both indices must clear t = 2 — the finding is **not confirmed**.
+
+**Why the put wing came in weaker, not stronger.** A short OTM put is short gamma on
+the downside, and equity down-moves are the violent, vol-expanding ones. The book
+collects premium in calm years and gives it back in the vol events the span contains:
+on SPY, +$9.9K in 2021 and +$5.2K in 2016 against −$8.1K in 2018, −$6.7K in 2022, and
+−$6.4K in 2025 — netting near zero. Its 13.3% max drawdown, against the call wing's
+4.1% on the identical span, is that same skew tail. The call wing kept its +2.54
+because its gamma is on the upside, where moves are smaller and there is no "crash up."
+
+**The registration anticipated this.** The house prior (§1.5) was explicitly split:
+the skew literature predicts a *larger* put premium, but Dew-Becker & Giglio (2025)
+find the post-2010 tradeable index premium \~0 net of costs, and the call wing had
+only barely survived. The null is the post-2010 result — now shown on the put wing
+too, the wing the premium was supposed to favor.
+
+**Verified before pinning.** Because the put path is newer code and a sign error could
+fake a plausible null, the result was checked by five independent adversarial lenses
+(hedge sign, rf-netting, entry/settlement, economic coherence, and a catch-all), each
+tasked with *refuting* it. None could. The run is rate-invariant (identical t at rf = 0
+and 4.5%), delta-neutral (the daily vol-P&L correlates −0.06 with SPY, the signature of
+a neutralized book — a flipped hedge would show \~+0.5), and reproduces the +2.54 call
+pin on the same shared engine, confirming no regression. The result is pinned by
+`TestSpyShortPutRegression` and `TestIwmShortPutRegression`; IWM's clean span
+(2010-12-01 → 2026-06-05, set by the validation battery, clean from row one) is recorded
+as the §10 amendment to the registration.
 
 ## Remaining limitations
 
@@ -242,9 +301,10 @@ accounting is corrected (Lesson 2). What still bounds the result:
    fatter than the \~4% max drawdown here, and its market correlation (+0.21, not
    \~0) means it loses when SPY falls hard. This is the main reason the \~0.5
    backtested Sharpe should not be read as a clean edge.
-2. **The put side — where the premium lives — is untested.** Every run is a short
-   CALL; the equity-index VRP is concentrated in OTM puts. The blocked put-data
-   fetch is the experiment that could test the rich wing.
+2. **The put side is now tested — and null.** The registered short-put run (above)
+   found no significant delta-hedged premium on SPY (gross t +0.20) or IWM (+1.00);
+   the wing the premium was supposed to favor did not deliver. What remains untested
+   is the ATM straddle, a §7 secondary.
 3. **The verdict nets financing out by design.** The vol-P&L answers "is the
    variance premium there," not "what does a *levered* book net after margin." The
    engine charges rf on the cash the hedge drives negative, but a real book pays
@@ -261,8 +321,9 @@ gross premium on SPY that survives that name's realistic transaction costs (with
 financing netted out), positive on the call wing and strongest on the broad index,
 thin and sub-significant on the single names. That is a promising but unproven,
 single-wing, single-decade signal whose backtested risk understates the short-gamma
-tail — **not** a confirmatory verdict and not a tradeable edge yet. The live
-follow-up — the put side / ATM straddle — should be **pre-registered** (the way
-`prereg_trend_gate.md` does) before the put-data fetch is spent, especially since
-this phase already peeked at SPY. See the [exploration log](explorations.md) for
-the prior covered-call dead end this builds on.
+tail — **not** a confirmatory verdict and not a tradeable edge yet. The follow-up —
+the put side — was **pre-registered** (`prereg_vol_premium.md`, the way
+`prereg_trend_gate.md` does) and run: a **null** on both SPY and IWM (above), the
+informative post-2010 result. The ATM straddle remains the one unspent secondary.
+See the [exploration log](explorations.md) for the prior covered-call dead end this
+builds on.

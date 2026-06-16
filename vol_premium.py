@@ -133,7 +133,11 @@ def run_real_short_vol_overlay(
     series out so the VRP verdict is the pure gamma/vega vol-P&L — rf cancels on
     the same (cash) base it was earned on, making the verdict rate-invariant.
     summary['alpha_vs_cash'] is net_pnl minus the rf interest, i.e. that same vol
-    premium harvested net of hedge costs (it equals the summed excess).
+    premium harvested net of hedge costs. It equals the daily excess that
+    short_vol_statistics sums UP TO the day-0 entry-spread mark: that series starts
+    from eq[0], which is already struck at the entry bid/ask mid, so it omits the
+    single day-0 entry cost that alpha_vs_cash carries (see short_vol_statistics for
+    the exact gap — it OMITS a cost, so the summed excess slightly flatters).
     """
     target_delta = float(params.get('target_delta', 0.50))
     dte = int(params.get('dte', 30))
@@ -329,8 +333,17 @@ def short_vol_statistics(
         excess = d(equity) - rf_credit  ==  the pure gamma/vega vol-P&L
 
     so rf CANCELS and the verdict is rate-invariant: the same answer whether the
-    engine charged rf=0 (gross) or rf=4.5%. The excess sums exactly to
-    summary['alpha_vs_cash'] (one conservation law). This measures the
+    engine charged rf=0 (gross) or rf=4.5%. The excess sums to
+    summary['alpha_vs_cash'] UP TO the day-0 entry-spread mark: np.diff(eq) starts
+    from eq[0], which is ALREADY struck at the entry bid/ask mid (the short was sold
+    at the bid, day 0 is marked at the mid, less commission and the day-0 hedge
+    half-spread), so the summed series omits that single day-0 cost that
+    alpha_vs_cash includes. The clean identity is
+    excess.sum()*capital == (eq[-1] - eq[0]) - interest_earned, leaving the gap
+    alpha_vs_cash - excess.sum()*capital == eq[0] - capital — ONE entry spread no
+    matter how many cycles run (only the first entry predates a diff), and a COST it
+    omits, so the summed excess slightly flatters the vol-P&L, never deflates it
+    (test_summed_excess_omits_day0_entry_spread). This measures the
     Bakshi-Kapadia delta-hedged gain — "was the seller paid for bearing variance
     risk?" — NOT "did the $100K beat T-bills?"; the latter would charge a financing
     penalty on the hedge sleeve, which is the very base mismatch this fix removes.

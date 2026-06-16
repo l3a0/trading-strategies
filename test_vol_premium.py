@@ -25,6 +25,10 @@ from vol_premium import run_real_short_vol_overlay, select_put_entry, short_vol_
 
 _SPY_DAILIES = os.path.join(os.path.dirname(__file__), 'spy_option_dailies.csv')
 _HAVE_SPY = os.path.exists(_SPY_DAILIES) or os.path.exists(_SPY_DAILIES + '.gz')
+_SPY_PUTS = os.path.join(os.path.dirname(__file__), 'spy_option_dailies_puts.csv')
+_HAVE_SPY_PUTS = os.path.exists(_SPY_PUTS) or os.path.exists(_SPY_PUTS + '.gz')
+_IWM_DAILIES = os.path.join(os.path.dirname(__file__), 'iwm_option_dailies.csv')
+_HAVE_IWM = os.path.exists(_IWM_DAILIES) or os.path.exists(_IWM_DAILIES + '.gz')
 
 
 def _scenario(
@@ -225,6 +229,60 @@ class TestShortVolCompletion:
         flat = short_vol_statistics(eq_rf.drop(columns=['rf_credit']), s_rf['capital'], rf=0.045)
         assert abs(flat['mean_daily_excess_dollars'] - st_rf['mean_daily_excess_dollars']) > 1.0
 
+    def test_summed_excess_omits_day0_entry_spread(self) -> None:
+        """short_vol_statistics' summed daily excess and summary['alpha_vs_cash']
+        are NOT identical — they differ by the day-0 entry-spread mark.
+
+        np.diff(eq) starts from eq[0], which is ALREADY struck at the entry bid/ask
+        mid (the short was sold at the bid, day 0 is marked at the mid, less
+        commission and the day-0 hedge half-spread), so the summed-excess series
+        omits that single day-0 cost that alpha_vs_cash carries. The gap is exactly
+        eq[0] - capital — ONE entry spread no matter how many cycles run, since only
+        the first entry predates a diff — and because it OMITS a cost, the summed
+        excess slightly flatters the vol-P&L, never deflates it. The earlier 1-cycle
+        checks compared the summed excess to the eq[0] baseline (the correct one), so
+        none pinned this gap to alpha_vs_cash directly; a multi-cycle run makes the
+        single-spread offset unambiguous."""
+        # Three back-to-back call cycles, each 6 trading days with its own
+        # expiration, so the engine re-enters twice after the day-0 cycle.
+        dates: list[str] = []
+        prices: list[float] = []
+        store: dict[str, dict[str, Any]] = {}
+        base = pd.Timestamp('2020-01-02')
+        idx = 0
+        for c in range(3):
+            cid = f'OPT{c}'
+            cyc = [(base + pd.Timedelta(days=idx + k)).strftime('%Y-%m-%d') for k in range(6)]
+            exp = cyc[-1]
+            for k, d in enumerate(cyc):
+                frac = 1 - k / 5
+                mid = round(2.0 * frac, 2)
+                bid, ask = round(max(0.0, mid - 0.05), 2), round(mid + 0.05, 2)
+                delta = round(max(0.06, 0.50 * frac + 0.06), 2)  # stays in (0.05, 0.60)
+                store[d] = {'candidates': [(5 - k, delta, bid, ask, mid, exp, 102.0, cid)],
+                            'marks': {cid: (bid, ask, mid, delta)}}
+                dates.append(d)
+                prices.append(100.0 + 0.5 * k)
+            idx += 6
+        params = {'target_delta': 0.50, 'dte': 5, 'capital': 100_000,
+                  'risk_free_rate': 0.045, 'hedge_cost_bps': 1.0}
+        s, _, eq = run_real_short_vol_overlay(dates, prices, store, params)
+        assert s['num_calls_sold'] >= 2  # genuinely multi-cycle
+        st = short_vol_statistics(eq, s['capital'], rf=0.045)
+
+        eqv = eq['equity'].to_numpy(float)
+        # What short_vol_statistics actually conserves: equity growth from the day-0
+        # mark, net of the engine's recorded rf — NOT growth from capital.
+        summed_excess = (eqv[-1] - eqv[0]) - s['interest_earned']
+        assert st['mean_daily_excess_dollars'] * st['n_days'] == pytest.approx(summed_excess, abs=0.5)
+        # The gap to alpha_vs_cash is exactly the day-0 entry-spread mark.
+        day0_mark = eqv[0] - s['capital']
+        assert s['alpha_vs_cash'] - summed_excess == pytest.approx(day0_mark, abs=0.02)
+        # It is a real cost (sold at the bid, marked at the mid + fees), not rounding
+        # noise — so the gap genuinely exists and the summed excess flatters.
+        assert day0_mark < 0.0
+        assert abs(day0_mark) > 1.0
+
 
 class TestShortPutMechanics:
     """The §9 put-leg engine capability (synthetic, always-run): the put mirror
@@ -370,3 +428,149 @@ class TestSpyShortVolRegression:
         _, st5 = self._run(market, 5.0)
         assert st5['t_stat_newey_west'] == pytest.approx(-0.35, abs=0.02)
         assert st5['passes_t_2'] is False
+
+
+@pytest.mark.skipif(not _HAVE_SPY_PUTS, reason='needs spy_option_dailies_puts.csv or its .gz twin')
+class TestSpyShortPutRegression:
+    """Pin the REGISTERED put-side VRP result on real SPY chains (docs/prereg_vol_premium.md,
+    registered at PR #23's merge commit; analysis run_registered_vrp.py). A daily
+    delta-neutral short PUT at target delta -0.25, 30 DTE, hold-to-expiry, sold at the
+    bid, hedged with SHORT stock; full 2010-12 -> 2026-06 span (CHAIN_CLEAN_START['SPY'])
+    -- the exact mirror of the pinned 0.25-delta CALL wing (TestSpyShortVolRegression,
+    +2.54), only the wing flipped (prereg §2.3).
+
+    REGISTERED VERDICT (prereg §5/§6, row 4): NULL. The put-wing delta-hedged gain is
+    INSIGNIFICANT even gross (Newey-West t +0.20) and net of the 0.5bp headline cost
+    (+0.09) -- far below the t=2 bar and below the +2.54 call wing, so the §1.3 mechanism
+    clause is NOT met. The short-put (crash-insurance) book harvests premium in calm years
+    and gives it back in vol events (2018 -$8.1K, 2022 -$6.7K, 2025 -$6.4K), netting ~0;
+    its 13.3% drawdown vs the call's 4.1% is the skew tail. Adversarially verified (5
+    independent lenses, 0 refutations): rate-invariant, delta-neutral (corr -0.06 to SPY),
+    economically coherent, correct mechanics. Consistent with Dew-Becker & Giglio (2025)
+    post-2010 decline, now on the put wing.
+    """
+
+    @pytest.fixture(scope='class')
+    def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
+        from real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
+        store = load_chain_store(_SPY_PUTS, start=CHAIN_CLEAN_START['SPY'])
+        days = sorted(store)
+        dates, prices = load_unadjusted_prices('SPY', days[0], '2026-06-06')
+        pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
+        return [d for d, _ in pairs], [p for _, p in pairs], store
+
+    def _run(self, market: Any, bps: float, rf: float = 0.045) -> tuple[Any, Any]:
+        dates, prices, store = market
+        s, _, eq = run_real_short_vol_overlay(
+            dates, prices, store,
+            {'target_delta': -0.25, 'dte': 30, 'capital': 100_000, 'option_type': 'put',
+             'risk_free_rate': rf, 'hedge_cost_bps': bps})
+        return s, short_vol_statistics(eq, s['capital'], rf=rf)
+
+    def test_headline(self, market: Any) -> None:
+        """175 put cycles (8 contracts), 88.5% win, $364,106 premium collected;
+        frictionless net +$155.9K = +$150.7K rf interest + only +$5.2K vol premium."""
+        s, _ = self._run(market, 0.0)
+        assert s['num_contracts'] == 8
+        assert s['num_calls_sold'] == 175
+        assert s['win_rate'] == pytest.approx(88.5, abs=0.1)
+        assert s['total_premium_collected'] == pytest.approx(364_106.0, abs=2.0)
+        assert s['alpha_vs_cash'] == pytest.approx(5_186.86, abs=2.0)
+        assert s['interest_earned'] == pytest.approx(150_666.32, abs=2.0)
+        assert s['net_pnl'] == pytest.approx(155_853.18, abs=2.0)
+        assert s['max_drawdown_pct'] == pytest.approx(13.18, abs=0.05)
+        assert s['net_pnl'] == pytest.approx(s['alpha_vs_cash'] + s['interest_earned'], abs=0.01)
+
+    def test_registered_verdict_null(self, market: Any) -> None:
+        """H1 FAILS (prereg §5.1): the put-wing gross t is +0.20 and the net-0.5bp t
+        is +0.09 -- both far below 2, and below the +2.54 call wing, so §1.3's mechanism
+        clause is not met. passes_t_2 is False at the verdict cost."""
+        _, st0 = self._run(market, 0.0)
+        assert st0['t_stat_newey_west'] == pytest.approx(0.20, abs=0.02)
+        assert st0['passes_t_2'] is False
+        _, st5 = self._run(market, 0.5)
+        assert st5['t_stat_newey_west'] == pytest.approx(0.09, abs=0.02)
+        assert st5['sharpe'] == pytest.approx(0.014, abs=0.005)
+        assert st5['nw_lag'] == 9
+        assert st5['passes_t_2'] is False
+        assert st5['t_stat_newey_west'] < 2.54  # §1.3 mechanism clause not met
+
+    def test_cost_curve(self, market: Any) -> None:
+        """The put wing never clears t=2: +0.20 gross -> +0.16 (0.2bp) -> +0.09
+        (0.5bp headline) -> -0.02 (1bp). It is null before costs even bite."""
+        assert self._run(market, 0.2)[1]['t_stat_newey_west'] == pytest.approx(0.16, abs=0.02)
+        s1, st1 = self._run(market, 1.0)
+        assert st1['t_stat_newey_west'] == pytest.approx(-0.02, abs=0.02)
+        assert s1['total_hedge_cost'] == pytest.approx(5_830.11, abs=5.0)
+        assert st1['passes_t_2'] is False
+
+    def test_rate_invariant(self, market: Any) -> None:
+        """The verdict nets rf on the cash base it was earned on, so the put t is the
+        same at rf=0 and rf=4.5% (the audited measure, guarding the null)."""
+        _, st0 = self._run(market, 0.5, rf=0.0)
+        _, st45 = self._run(market, 0.5, rf=0.045)
+        assert st0['t_stat_newey_west'] == pytest.approx(st45['t_stat_newey_west'], abs=0.01)
+        assert st45['t_stat_newey_west'] == pytest.approx(0.09, abs=0.02)
+
+
+@pytest.mark.skipif(not _HAVE_IWM, reason='needs iwm_option_dailies.csv or its .gz twin')
+class TestIwmShortPutRegression:
+    """Pin the REGISTERED out-of-sample confirmation arm (prereg §5.2): the same
+    -0.25-delta short put on real IWM (Russell 2000) chains, an index this project had
+    never run -- so its underlying is genuinely naive. Span 2010-12-01 -> 2026-06-05
+    (CHAIN_CLEAN_START['IWM'], validated clean from row one).
+
+    DOES NOT CONFIRM (§5.2): IWM's put-wing gain is larger than SPY's (+$25.1K gross vol
+    P&L) but still INSIGNIFICANT -- gross t +1.00, net-0.5bp +0.91, below the t=2 bar.
+    With SPY also null, the §6 conjunction is not met: not a confirmed put-wing VRP. Same
+    short-gamma signature (delta-neutral, corr -0.12 to IWM; 13.4% drawdown).
+    """
+
+    @pytest.fixture(scope='class')
+    def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
+        from real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
+        store = load_chain_store(_IWM_DAILIES, start=CHAIN_CLEAN_START['IWM'])
+        days = sorted(store)
+        dates, prices = load_unadjusted_prices('IWM', days[0], '2026-06-06')
+        pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
+        return [d for d, _ in pairs], [p for _, p in pairs], store
+
+    def _run(self, market: Any, bps: float, rf: float = 0.045) -> tuple[Any, Any]:
+        # identical instrument + cost rule to SPY (prereg §5.2)
+        dates, prices, store = market
+        s, _, eq = run_real_short_vol_overlay(
+            dates, prices, store,
+            {'target_delta': -0.25, 'dte': 30, 'capital': 100_000, 'option_type': 'put',
+             'risk_free_rate': rf, 'hedge_cost_bps': bps})
+        return s, short_vol_statistics(eq, s['capital'], rf=rf)
+
+    def test_headline(self, market: Any) -> None:
+        """169 put cycles (13 contracts), 86.3% win, $361,467 premium; frictionless net
+        +$181.3K = +$156.2K rf interest + +$25.1K vol premium."""
+        s, _ = self._run(market, 0.0)
+        assert s['num_contracts'] == 13
+        assert s['num_calls_sold'] == 169
+        assert s['win_rate'] == pytest.approx(86.3, abs=0.1)
+        assert s['total_premium_collected'] == pytest.approx(361_466.95, abs=2.0)
+        assert s['alpha_vs_cash'] == pytest.approx(25_126.99, abs=2.0)
+        assert s['net_pnl'] == pytest.approx(181_284.80, abs=2.0)
+        assert s['max_drawdown_pct'] == pytest.approx(13.30, abs=0.05)
+
+    def test_does_not_confirm(self, market: Any) -> None:
+        """§5.2: IWM confirms only if gross AND net-0.5bp t > 2. Both fail (+1.00 gross,
+        +0.91 net) -- larger than SPY's null but still insignificant."""
+        _, st0 = self._run(market, 0.0)
+        assert st0['t_stat_newey_west'] == pytest.approx(1.00, abs=0.02)
+        assert st0['passes_t_2'] is False
+        _, st5 = self._run(market, 0.5)
+        assert st5['t_stat_newey_west'] == pytest.approx(0.91, abs=0.02)
+        assert st5['sharpe'] == pytest.approx(0.129, abs=0.005)
+        assert st5['nw_lag'] == 9
+        assert st5['passes_t_2'] is False
+
+    def test_cost_curve_and_rate_invariant(self, market: Any) -> None:
+        """Cost curve +1.00 -> +0.91 (0.5bp) -> +0.81 (1bp), never near 2; rate-invariant
+        (same t at rf=0 and 4.5%)."""
+        assert self._run(market, 1.0)[1]['t_stat_newey_west'] == pytest.approx(0.81, abs=0.02)
+        _, st0 = self._run(market, 0.5, rf=0.0)
+        assert st0['t_stat_newey_west'] == pytest.approx(0.91, abs=0.02)
