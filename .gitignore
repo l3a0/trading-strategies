@@ -38,5 +38,6 @@ trend_gate_runs/
 # `python edge_search.py`)
 edge_ledger.jsonl
 
-# Transient fetch-loop progress log (download_option_dailies.py wrapper output)
+# Transient fetch-loop progress logs (download_option_dailies.py wrapper output)
 fetch_progress.log
+gld_tlt_fetch.log
