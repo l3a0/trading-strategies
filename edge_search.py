@@ -38,11 +38,12 @@ SCOPE (MVP). Templates that RE-TAG existing naked cycles only — cheap, no
 engine re-runs. Structure-side ideas (roll rules, stop-loss, spread width)
 change the trades themselves and need a full run_real_cc_overlay per
 candidate; those are the expensive verdict phase, deliberately out of scope.
-Two simplifications, named so they are not silent: (a) the permutation null
-is the uniform same-count shuffle (what iv_richness_scout uses), not the
-structure-preserving trigger/block permutation cooldown_scout uses — that is a
-documented follow-up; (b) BY (not BH) is the FDR procedure precisely because
-the candidates are dependent.
+The permutation null is per-template: the default is the uniform same-count
+shuffle (what iv_richness_scout uses), and a template whose treatment has
+temporal structure supplies its own — cooldown uses the structure-preserving
+trigger-placement permutation cooldown_scout uses (redraw each ticker's rips
+from its own terminals). BY (not BH) is the FDR procedure because the candidates
+are dependent.
 
 Usage:
     python edge_search.py        # run the campaign, write edge_ledger.jsonl
@@ -51,7 +52,7 @@ Usage:
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Sequence
 
@@ -129,6 +130,10 @@ class CycleData:
     trailing_ret: dict[int, np.ndarray]    # window -> trailing return at entry (nan if short)
     richness: np.ndarray                   # entry IV - trailing RV (nan if IV missing/<floor)
     tickers: list[str]                     # the search set actually loaded
+    # all terminal ordinals per ticker — the pool the cooldown trigger-placement
+    # null redraws fake rips from. Defaulted so ad-hoc CycleData(...) in tests
+    # need not supply it (only build_cycle_data and the cooldown null use it).
+    term_ords_by_ticker: dict[str, list[int]] = field(default_factory=dict)
 
 
 def build_cycle_data(
@@ -149,6 +154,7 @@ def build_cycle_data(
     trailing_ret: dict[int, list[float]] = {k: [] for k in TREND_WINDOWS}
     richness: list[float] = []
     rip_ords_by_ticker: dict[str, list[int]] = {}
+    term_ords_by_ticker: dict[str, list[int]] = {}
 
     for r in runs:
         ticker = r['ticker']
@@ -158,6 +164,7 @@ def build_cycle_data(
         cycles = r['cycles']
         rip_ords_by_ticker[ticker] = sorted(
             _ord(c['terminal_date']) for c in cycles if c['rip'])
+        term_ords_by_ticker[ticker] = sorted(_ord(c['terminal_date']) for c in cycles)
         # one streaming pass over the dailies for this ticker's entry IVs
         wanted = {(c['entry_date'], c['entry_contract']) for c in cycles
                   if c.get('entry_contract')}
@@ -191,6 +198,7 @@ def build_cycle_data(
         entry_ords=entry_ords,
         ticker_ids=ticker_ids,
         rip_ords_by_ticker=rip_ords_by_ticker,
+        term_ords_by_ticker=term_ords_by_ticker,
         trailing_rv=np.asarray(trailing_rv, dtype=float),
         trailing_ret={k: np.asarray(v, dtype=float) for k, v in trailing_ret.items()},
         richness=np.asarray(richness, dtype=float),
@@ -210,6 +218,10 @@ class Candidate:
     params: tuple[tuple[str, Any], ...]   # hashable; dict(params) to read
     predicted_sign: int                   # -1 ⇒ predict D_A < 0 (treated worse)
     tag: Callable[[], tuple[np.ndarray, np.ndarray]]
+    # optional structure-preserving permutation null; None = the uniform
+    # same-count shuffle (the default). A template whose treatment has temporal
+    # structure (cooldown's rip clustering) supplies its own faithful null here.
+    null_fn: Callable[..., np.ndarray] | None = None
 
     def params_dict(self) -> dict[str, Any]:
         return dict(self.params)
@@ -230,7 +242,8 @@ def enumerate_candidates(cd: CycleData) -> list[Candidate]:
             mask = post_rip_mask(cd.entry_ords, cd.ticker_ids,
                                  cd.rip_ords_by_ticker, N)
             return mask, all_valid
-        out.append(Candidate('cooldown', (('N', N),), -1, tag_cooldown))
+        out.append(Candidate('cooldown', (('N', N),), -1, tag_cooldown,
+                             null_fn=_cooldown_null))
 
     # Template 2: trailing up-move. Hypothesis: a cycle entered after a
     # positive trailing-k-day return does WORSE (momentum forfeits the right
@@ -270,6 +283,42 @@ def _add_one_p(perm: np.ndarray, observed: float, predicted_sign: int) -> float:
     return (1 + extreme) / (1 + len(perm))
 
 
+def _uniform_null(pnls: np.ndarray, n_treated: int,
+                  rng: np.random.Generator, n_perm: int) -> np.ndarray:
+    """The default null: a uniform same-count label shuffle over the valid
+    cycles. Works for any binary tag, but ignores any temporal structure in the
+    treatment — the lowest-common-denominator null."""
+    perm = np.empty(n_perm, dtype=float)
+    size = len(pnls)
+    for j in range(n_perm):
+        fake = np.zeros(size, dtype=bool)
+        fake[rng.choice(size, size=n_treated, replace=False)] = True
+        perm[j] = pnls[fake].mean() - pnls[~fake].mean()
+    return perm
+
+
+def _cooldown_null(cd: CycleData, cand: Candidate,
+                   rng: np.random.Generator, n_perm: int) -> np.ndarray:
+    """Structure-preserving trigger-placement null for the cooldown template:
+    redraw each ticker's rip dates from its OWN terminals (same count), recompute
+    the post-rip mask, recompute D_A. Preserves the per-ticker rip count and the
+    treatment's temporal clustering — the faithful null cooldown_scout uses,
+    where the generic uniform shuffle would break it. (Cooldown's `valid` is all
+    cycles, so D_A is over the full pooled P&L, exactly like the scout.)"""
+    horizon = int(cand.params_dict()['N'])
+    perm = np.empty(n_perm, dtype=float)
+    for j in range(n_perm):
+        fake: dict[str, list[int]] = {}
+        for ticker, rips in cd.rip_ords_by_ticker.items():
+            terms = cd.term_ords_by_ticker[ticker]
+            picks = rng.choice(len(terms), size=len(rips), replace=False)
+            fake[ticker] = sorted(terms[i] for i in picks)
+        mask = post_rip_mask(cd.entry_ords, cd.ticker_ids, fake, horizon)
+        d = _d_a(cd.pnls, mask)
+        perm[j] = d if d is not None else np.nan
+    return perm
+
+
 def kill_gate(cd: CycleData, cand: Candidate, rng: np.random.Generator,
               n_perm: int = N_PERM) -> dict[str, Any]:
     """Run one candidate through the shared D_A split + permutation null and
@@ -298,12 +347,12 @@ def kill_gate(cd: CycleData, cand: Candidate, rng: np.random.Generator,
                     'vol_confound': None})
         return row
 
-    perm = np.empty(n_perm, dtype=float)
-    size = len(pnls)
-    for j in range(n_perm):
-        fake = np.zeros(size, dtype=bool)
-        fake[rng.choice(size, size=n_treated, replace=False)] = True
-        perm[j] = pnls[fake].mean() - pnls[~fake].mean()
+    # the null: the template's own structure-preserving permutation if it has
+    # one (cooldown's trigger placement), else the uniform same-count shuffle.
+    if cand.null_fn is None:
+        perm = _uniform_null(pnls, n_treated, rng, n_perm)
+    else:
+        perm = cand.null_fn(cd, cand, rng, n_perm)
     p_value = _add_one_p(perm, d_a, cand.predicted_sign)
     sign_ok = bool(np.sign(d_a) == cand.predicted_sign)
 
