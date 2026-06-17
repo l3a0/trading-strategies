@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="612" viewBox="0 0 680 612" role="img" aria-labelledby="title desc">
+  <title id="title">Automated edge-search architecture</title>
+  <desc id="desc">A funnel. A hypothesis generator feeds a cheap seeded scout and a multiple-testing FDR ledger; most candidates are auto-pinned as nulls and the loop regenerates the next batch. A survivor crosses a one-way gate to human registration and confirmation on a sealed, held-out data vault, ending in a pinned, reproducible verdict. Teal stages are the automated, sample-spending loop; amber stages are the human-gated, sealed confirmation; gray boxes are infrastructure.</desc>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M1,1 L8,5 L1,9" fill="none" stroke="#8a8a8a" stroke-width="1.5"/>
+    </marker>
+    <style>
+      text { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+      .title { font-size: 14px; font-weight: 600; }
+      .sub { font-size: 12px; }
+      .anno { font-size: 12px; fill: #8a8a8a; }
+      .box { stroke-width: 1.5; }
+      .gray { fill: #3f3f3f; stroke: #6b6b6b; }
+      .teal { fill: #0e5e4e; stroke: #1f8f78; }
+      .amber { fill: #7a4a06; stroke: #b9831f; }
+      .gray-t { fill: #f2f2f2; } .gray-s { fill: #b0b0b0; }
+      .teal-t { fill: #eafff8; } .teal-s { fill: #86ccba; }
+      .amber-t { fill: #f4cf8d; } .amber-s { fill: #cf9f54; }
+      .arr { stroke: #8a8a8a; stroke-width: 1.5; fill: none; }
+    </style>
+  </defs>
+
+  <line class="arr" x1="340" y1="98" x2="340" y2="126" marker-end="url(#ah)"/>
+  <line class="arr" x1="340" y1="180" x2="340" y2="208" marker-end="url(#ah)"/>
+  <line class="arr" x1="340" y1="262" x2="340" y2="294" marker-end="url(#ah)"/>
+  <line class="arr" x1="340" y1="350" x2="340" y2="378" marker-end="url(#ah)"/>
+  <line class="arr" x1="340" y1="432" x2="340" y2="460" marker-end="url(#ah)"/>
+  <line class="arr" x1="205" y1="154" x2="228" y2="154" marker-end="url(#ah)"/>
+  <line class="arr" x1="205" y1="406" x2="228" y2="406" marker-end="url(#ah)"/>
+  <line class="arr" x1="450" y1="236" x2="488" y2="236" marker-end="url(#ah)"/>
+  <path class="arr" d="M560,210 V72 H454" marker-end="url(#ah)"/>
+
+  <rect class="box gray" x="230" y="46" width="220" height="52" rx="6"/>
+  <text class="title gray-t" x="340" y="69" text-anchor="middle">Hypothesis generator</text>
+  <text class="sub gray-s" x="340" y="87" text-anchor="middle">mechanism templates</text>
+
+  <rect class="box gray" x="40" y="128" width="165" height="52" rx="6"/>
+  <text class="title gray-t" x="122" y="151" text-anchor="middle">Working data</text>
+  <text class="sub gray-s" x="122" y="169" text-anchor="middle">resumable fetch</text>
+
+  <rect class="box teal" x="230" y="128" width="220" height="52" rx="6"/>
+  <text class="title teal-t" x="340" y="151" text-anchor="middle">Cheap scout (Stage 1)</text>
+  <text class="sub teal-s" x="340" y="169" text-anchor="middle">placebo null, seeded</text>
+
+  <rect class="box teal" x="230" y="210" width="220" height="52" rx="6"/>
+  <text class="title teal-t" x="340" y="233" text-anchor="middle">Multiple-testing ledger</text>
+  <text class="sub teal-s" x="340" y="251" text-anchor="middle">FDR across the campaign</text>
+
+  <rect class="box teal" x="490" y="210" width="140" height="52" rx="6"/>
+  <text class="title teal-t" x="560" y="233" text-anchor="middle">Auto-pin null</text>
+  <text class="sub teal-s" x="560" y="251" text-anchor="middle">most die here</text>
+
+  <rect class="box amber" x="230" y="296" width="220" height="54" rx="6"/>
+  <text class="title amber-t" x="340" y="320" text-anchor="middle">Human registration</text>
+  <text class="sub amber-s" x="340" y="338" text-anchor="middle">commit before the number</text>
+
+  <rect class="box amber" x="40" y="380" width="165" height="52" rx="6"/>
+  <text class="title amber-t" x="122" y="403" text-anchor="middle">Sealed data</text>
+  <text class="sub amber-s" x="122" y="421" text-anchor="middle">held out from search</text>
+
+  <rect class="box amber" x="230" y="380" width="220" height="52" rx="6"/>
+  <text class="title amber-t" x="340" y="403" text-anchor="middle">Confirm on sealed vault</text>
+  <text class="sub amber-s" x="340" y="421" text-anchor="middle">held-out names, frozen span</text>
+
+  <rect class="box gray" x="230" y="462" width="220" height="52" rx="6"/>
+  <text class="title gray-t" x="340" y="485" text-anchor="middle">Pinned verdict</text>
+  <text class="sub gray-s" x="340" y="503" text-anchor="middle">reproducible from seeds</text>
+
+  <text class="anno" x="506" y="66" text-anchor="middle">killed, next batch</text>
+  <text class="anno" x="466" y="314">machine writes H —</text>
+  <text class="anno" x="466" y="330">can't confirm it alone</text>
+
+  <rect class="teal" x="205" y="540" width="13" height="13" rx="3"/>
+  <text class="anno" x="224" y="551">automated loop — spends the sample</text>
+  <rect class="amber" x="205" y="562" width="13" height="13" rx="3"/>
+  <text class="anno" x="224" y="573">human-gated + sealed confirmation</text>
+  <rect class="gray" x="205" y="584" width="13" height="13" rx="3"/>
+  <text class="anno" x="224" y="595">infrastructure</text>
+</svg>

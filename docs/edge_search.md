@@ -53,12 +53,12 @@ and BY rather than BH is used because the candidates are dependent.
 The harness is a funnel — spend the sample cheaply on the left, gate expensive
 confirmation on the right:
 
-```text
-enumerate → kill-gate → FDR ledger  ║  register → confirm on sealed vault → pinned verdict
-```
+![Automated edge-search architecture: a hypothesis generator feeds a cheap seeded scout and an FDR ledger that auto-pins most candidates as nulls and regenerates the next batch; a survivor crosses a one-way gate to human registration and confirmation on a sealed, held-out vault, ending in a pinned verdict.](figures/edge_search_architecture.svg)
 
-Everything left of the `║` is automated and spends the sample; everything to
-the right is a committed, manual act, on purpose.
+*The teal stages are the automated, sample-spending loop; the amber stages are
+the human-gated, sealed confirmation a survivor must cross; gray boxes are
+infrastructure. Most candidates die at the ledger and the loop regenerates —
+only a survivor reaches the one-way gate.*
 
 - **Enumerate a mechanism-template batch** (`enumerate_candidates`). Each
   template is a falsifiable, sign-predicting family — cooldown(N), up-move(k),
