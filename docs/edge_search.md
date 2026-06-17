@@ -38,7 +38,10 @@ search into a machine that manufactures false positives at speed:
   confirmed on the sealed set in a separate, manual step. QQQ is a weak vault
   on purpose (\~0.8 correlated with the search set); the strong vault is a
   structurally different underlying the search never saw — a premium-data
-  fetch, out of MVP scope.
+  fetch, out of MVP scope. The split is a `Campaign(search, sealed)` config
+  (run via `run_batch`), not a hardcoded constant, so the same templates sweep
+  the next batch of tickers — roll a fresh underlying into `sealed` each round
+  and the held-out vault stays genuinely unseen as the search expands.
 
 **Scope (MVP).** Templates that *re-tag existing naked cycles* only — cheap,
 no engine re-runs. Structure-side ideas (roll rules, stop-loss, spread width)

@@ -24,9 +24,11 @@ import pytest
 
 from edge_search import (
     COOLDOWN_NS,
+    DEFAULT_CAMPAIGN,
     SEALED_TICKERS,
     SEARCH_TICKERS,
     TREND_WINDOWS,
+    Campaign,
     Candidate,
     CycleData,
     _add_one_p,
@@ -36,6 +38,7 @@ from edge_search import (
     enumerate_candidates,
     kill_gate,
     load_search_runs,
+    run_batch,
     run_campaign,
 )
 from test_real_cc_backtest import _HAVE_MSFT_DAILIES, _HAVE_SPY_DAILIES
@@ -232,6 +235,57 @@ class TestCampaignInvariants:
         search set, so no candidate can train on it."""
         assert set(SEARCH_TICKERS).isdisjoint(SEALED_TICKERS)
         assert 'QQQ' in SEALED_TICKERS and 'QQQ' not in SEARCH_TICKERS
+
+
+# ---- always-run: the ticker batch is a parameter (Campaign), not a constant --
+
+class TestCampaignConfig:
+    """The search/sealed ticker sets are a Campaign config, not hardcoded
+    constants — so the same templates sweep the next batch of tickers, with the
+    seal enforced in config and by omission at load time."""
+
+    def test_default_campaign_matches_module_constants(self) -> None:
+        """Backward-compat: the default batch is exactly the published one, so
+        the pinned campaign is unchanged."""
+        assert DEFAULT_CAMPAIGN.search == SEARCH_TICKERS
+        assert DEFAULT_CAMPAIGN.sealed == SEALED_TICKERS
+        assert set(DEFAULT_CAMPAIGN.search).isdisjoint(DEFAULT_CAMPAIGN.sealed)
+
+    def test_campaign_enforces_disjoint_seal(self) -> None:
+        """A ticker can't be both searched and sealed — the seal is a config
+        invariant. Lists are coerced to tuples so the frozen config is hashable."""
+        c = Campaign(search=['AAA', 'BBB'], sealed=['CCC'])
+        assert c.search == ('AAA', 'BBB') and c.sealed == ('CCC',)
+        with pytest.raises(ValueError):
+            Campaign(search=('AAA', 'BBB'), sealed=('BBB',))
+
+    def test_load_search_runs_is_parameterized(self, monkeypatch) -> None:
+        """load_search_runs loads exactly the tickers it is given (default =
+        SEARCH_TICKERS), and never a sealed name."""
+        seen: list[str] = []
+        monkeypatch.setattr('edge_search.load_naked_run',
+                            lambda t: (seen.append(t), {'ticker': t})[1])
+        runs = load_search_runs(['AAA', 'BBB'])
+        assert seen == ['AAA', 'BBB']
+        assert [r['ticker'] for r in runs] == ['AAA', 'BBB']
+        seen.clear()
+        assert load_search_runs([]) == [] and seen == []   # empty → loads nothing
+        seen.clear()
+        load_search_runs()                                  # default
+        assert seen == list(SEARCH_TICKERS) and 'QQQ' not in seen
+
+    def test_run_batch_loads_only_search_never_sealed(self, monkeypatch) -> None:
+        """run_batch sweeps a Campaign end-to-end: it requests exactly the
+        search tickers, never the sealed ones, and the rows carry that search
+        set — so the templates run on whatever batch the Campaign names."""
+        seen: list[str] = []
+        synth = {r['ticker']: r for r in _synthetic_runs()}
+        monkeypatch.setattr('edge_search.load_naked_run',
+                            lambda t: (seen.append(t), synth[t])[1])
+        camp = Campaign(search=('MSFT', 'SPY'), sealed=('QQQ',))
+        rows = run_batch(camp, n_perm=100, iv_loader=_fake_iv())
+        assert seen == ['MSFT', 'SPY'] and 'QQQ' not in seen
+        assert rows and all(r['search_tickers'] == ['MSFT', 'SPY'] for r in rows)
 
 
 # ---- dataset-gated: the pinned real-chain campaign ----
