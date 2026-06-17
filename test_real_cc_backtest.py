@@ -1382,25 +1382,26 @@ class TestMsftRealCallSpreadRegression:
     reason='needs spy_option_dailies.csv or its committed .gz twin',
 )
 class TestSpyRealWalkForwardRegression:
-    """Pin the SPY walk-forward on real chains (2010-12 -> 2026-06, 4y train).
+    """Pin the SPY walk-forward on real chains (2010-05 -> 2026-06, 4y train).
 
-    Third underlying, same verdict: across 23 half-year test windows
-    (2014-12 -> 2026-06) the tuned covered call chains to +143% OOS vs
-    +171% for buy-and-hold, beating it in 10/23 windows — the closest race
-    in the matrix, and still a loss. The 2008 -> late-2010 placeholder-
-    greeks era is excluded at load time (CHAIN_CLEAN_START['SPY'] =
-    '2010-12-01'; the in-band vendor-junk signature straggles through
-    2010-11 on SPY). SPY-specific wrinkle worth keeping pinned: the
-    optimizer is LESS extreme here than on MSFT — 0.25 delta wins 9/23
-    windows (index premiums are lean but spreads are tight, so moderate
-    deltas punish less) — while close=1.00 still dominates at 21/23.
-    Every grid fit clears the Pardo 30-trade floor in every window
-    (leanest 32).
+    Third underlying, same verdict: across 24 half-year test windows
+    (2014-05 -> 2026-05) the tuned covered call chains to +150% OOS vs
+    +191% for buy-and-hold, beating it in 10/24 windows — the closest race
+    in the matrix, and still a loss. The 2008 -> 2010 placeholder-greeks
+    era is excluded at load time (CHAIN_CLEAN_START['SPY'] = '2010-05-17',
+    corrected from 2010-12-01 by validate_dailies.py: SPY's entry band is
+    clean from 2010-05-17, and the later-2010 stragglers are out-of-band
+    rows that never reach a delta-targeted entry). SPY-specific wrinkle
+    worth keeping pinned: the optimizer's delta stays spread, not pinned to
+    one extreme — 0.25 delta wins 11/24 windows and 0.15 wins 10/24 (index
+    premiums are lean but spreads are tight, so moderate deltas punish
+    less) — while close=1.00 still dominates at 23/24. Every grid fit
+    clears the Pardo 30-trade floor in every window (leanest 32).
 
-    The proxy twin (deliberately NOT pinned, per review scope) claims the
-    opposite on the same span: +365% chained, beating B&H in 22/23
-    windows — the starkest real-vs-proxy inversion in the repo. If that
-    comparison is ever published, pin it first.
+    The proxy twin (deliberately NOT pinned, per review scope) inverts the
+    verdict — it claimed B&H-beating returns on the prior 2010-12 span and
+    is the starkest real-vs-proxy inversion in the repo. If that comparison
+    is ever published, pin it (on the current span) first.
 
     Data: spy_option_dailies.csv.gz ships on the data-2026-06 release
     (checksum-verified by CI); the unadjusted close series is committed in
@@ -1419,25 +1420,25 @@ class TestSpyRealWalkForwardRegression:
                                  train_years=4)
 
     def test_window_layout(self, records) -> None:
-        """23 non-overlapping 6-month test windows, 2014-12 -> 2026-06."""
-        assert len(records) == 23
-        assert records[0]['train_start'] == '2010-12-01'
-        assert records[0]['test_start'] == '2014-12-01'
-        assert records[-1]['test_start'] == '2025-12-01'
-        assert records[-1]['test_end'] == '2026-06-01'
+        """24 non-overlapping 6-month test windows, 2014-05 -> 2026-05."""
+        assert len(records) == 24
+        assert records[0]['train_start'] == '2010-05-17'
+        assert records[0]['test_start'] == '2014-05-17'
+        assert records[-1]['test_start'] == '2025-11-17'
+        assert records[-1]['test_end'] == '2026-05-17'
 
     def test_optimizer_choices(self, records) -> None:
-        """Delta is less extreme than MSFT's (0.25 wins 9/23); close=1.00 still rules."""
+        """Delta stays spread (0.25 wins 11/24, 0.15 wins 10/24); close=1.00 still rules (23/24)."""
         assert Counter(r['best_params']['call_delta'] for r in records) == \
-            {0.15: 11, 0.20: 3, 0.25: 9}
+            {0.15: 10, 0.20: 3, 0.25: 11}
         assert Counter(int(r['best_params']['dte']) for r in records) == \
-            {21: 11, 30: 7, 45: 5}
+            {21: 14, 30: 8, 45: 2}
         assert Counter(r['best_params']['close_at_pct'] for r in records) == \
-            {1.00: 21, 0.50: 1, 0.75: 1}
-        assert records[0]['best_params'] == {'call_delta': 0.20, 'dte': 21,
-                                             'close_at_pct': 1.00}
-        assert records[0]['train_sharpe'] == pytest.approx(1.026, abs=5e-4)
-        assert records[-1]['train_sharpe'] == pytest.approx(0.749, abs=5e-4)
+            {1.00: 23, 0.75: 1}
+        assert records[0]['best_params'] == {'call_delta': 0.15, 'dte': 21,
+                                             'close_at_pct': 0.75}
+        assert records[0]['train_sharpe'] == pytest.approx(0.942, abs=5e-4)
+        assert records[-1]['train_sharpe'] == pytest.approx(0.713, abs=5e-4)
 
     def test_pardo_floor(self, records) -> None:
         """Every grid combo clears 30 IS trades in every window (leanest: 32)."""
@@ -1446,11 +1447,11 @@ class TestSpyRealWalkForwardRegression:
         assert min(r['n_trades'] for r in records) == 34
 
     def test_oos_scoreboard(self, records) -> None:
-        """WF +143.0% vs fixed +95.8% vs B&H +170.9%; beats B&H in 10/23."""
-        assert _chain([r['oos_return_pct'] for r in records]) == pytest.approx(143.01, abs=0.01)
-        assert _chain([r['fixed_return_pct'] for r in records]) == pytest.approx(95.78, abs=0.01)
-        assert _chain([r['bh_return_pct'] for r in records]) == pytest.approx(170.87, abs=0.01)
-        assert sum(r['oos_return_pct'] > r['fixed_return_pct'] for r in records) == 19
+        """WF +149.5% vs fixed +120.2% vs B&H +190.7%; beats B&H in 10/24."""
+        assert _chain([r['oos_return_pct'] for r in records]) == pytest.approx(149.55, abs=0.05)
+        assert _chain([r['fixed_return_pct'] for r in records]) == pytest.approx(120.25, abs=0.05)
+        assert _chain([r['bh_return_pct'] for r in records]) == pytest.approx(190.67, abs=0.05)
+        assert sum(r['oos_return_pct'] > r['fixed_return_pct'] for r in records) == 16
         assert sum(r['oos_return_pct'] > r['bh_return_pct'] for r in records) == 10
 
 
@@ -1473,29 +1474,30 @@ EXPANDED_PARAM_GRID: dict[str, list[float]] = {
     reason='needs spy_option_dailies.csv or its committed .gz twin',
 )
 class TestSpyExpandedGridRegression:
-    """Pin the SPY walk-forward on the 60-combo expanded grid: nothing changes.
+    """Pin the SPY walk-forward on the 60-combo expanded grid: more menu, worse OOS.
 
     Doubling the search space (27 -> 60 combos, EXPANDED_PARAM_GRID above)
     along every edge the baseline grid was pinned against moves the chained
-    OOS +143.01% -> +143.62% — same 10/23 windows over buy-and-hold's
-    +170.87%, same verdict. The optimizer sprints to the new edges (the new
-    dte=14 is instantly modal at 10/23; the new deltas 0.10/0.30 together
-    take 11/23) while the delta distribution flattens from the baseline's
-    bimodal edge-pinning to near-uniform — so the edge-pinning in the
-    27-grid pin was noise-chasing, not a truncated optimum. Selection, not
-    menu, is the binding constraint: in the experiment's per-combo
-    train/test matrix (measured 2026-06, NOT pinned — re-derive before
-    publishing) mean Spearman(IS Sharpe, OOS return) was +0.13, the IS
-    pick landed at the 59th OOS percentile of its 60-combo field, and the
-    hindsight oracle rose +220% -> +250% chained (20/23 over B&H) while
-    the realizable pick gained 0.6pp — grid expansion widens the ceiling,
-    not the floor you can stand on. close=1.00 stays dominant (18/23), the
-    one stable parameter across both grids. The lever this argues for is
-    Pardo's cut-parameters, not a wider menu.
+    OOS +149.55% -> +143.54% — the wider menu LOSES ~6pp, slipping from
+    10/24 to 9/24 windows over buy-and-hold's +190.67%, same verdict (a
+    loss). The optimizer sprints to the new edges (the new dte=14 is
+    instantly modal at 9/24; the new deltas 0.10/0.30 together take 9/24)
+    while the delta distribution spreads across the menu rather than pinning
+    one extreme — so the edge-pinning in the 27-grid pin was noise-chasing,
+    not a truncated optimum. Selection, not menu, is the binding constraint,
+    and the wider menu makes it worse: in the experiment's per-combo
+    train/test matrix (measured pre-correction, NOT pinned — re-derive on
+    the current span before publishing) the IS->OOS rank correlation was
+    small and positive, the IS pick landed deep in the OOS percentile of its
+    60-combo field, and the hindsight oracle far outran the realizable pick
+    — grid expansion widens the ceiling, not the floor you can stand on.
+    close=1.00 stays dominant (20/24), the one stable parameter across both
+    grids. The lever this argues for is Pardo's cut-parameters, not a wider
+    menu.
 
     Setup is otherwise identical to TestSpyRealWalkForwardRegression:
-    4y train, bid/ask fills, CHAIN_CLEAN_START['SPY'] era clip, 23
-    half-year test windows 2014-12 -> 2026-06. Every grid combo clears
+    4y train, bid/ask fills, CHAIN_CLEAN_START['SPY'] era clip, 24
+    half-year test windows 2014-05 -> 2026-05. Every grid combo clears
     the Pardo 30-trade floor in every window (leanest 32, unchanged from
     the baseline grid).
     """
@@ -1512,41 +1514,41 @@ class TestSpyExpandedGridRegression:
                                  train_years=4)
 
     def test_window_layout(self, records) -> None:
-        """Same 23 windows as the baseline pin — the grid doesn't move them."""
-        assert len(records) == 23
-        assert records[0]['train_start'] == '2010-12-01'
-        assert records[0]['test_start'] == '2014-12-01'
-        assert records[-1]['test_start'] == '2025-12-01'
-        assert records[-1]['test_end'] == '2026-06-01'
+        """Same 24 windows as the baseline pin — the grid doesn't move them."""
+        assert len(records) == 24
+        assert records[0]['train_start'] == '2010-05-17'
+        assert records[0]['test_start'] == '2014-05-17'
+        assert records[-1]['test_start'] == '2025-11-17'
+        assert records[-1]['test_end'] == '2026-05-17'
 
     def test_optimizer_choices(self, records) -> None:
-        """New edges win immediately (dte=14 modal, 0.10/0.30 take 11/23) — for nothing."""
+        """New edges win immediately (dte=14 modal at 9/24, 0.10/0.30 take 9/24) — for nothing."""
         assert Counter(r['best_params']['call_delta'] for r in records) == \
-            {0.10: 5, 0.15: 4, 0.20: 3, 0.25: 5, 0.30: 6}
+            {0.10: 3, 0.15: 8, 0.20: 2, 0.25: 5, 0.30: 6}
         assert Counter(int(r['best_params']['dte']) for r in records) == \
-            {14: 10, 21: 3, 30: 6, 45: 4}
+            {14: 9, 21: 6, 30: 2, 45: 7}
         assert Counter(r['best_params']['close_at_pct'] for r in records) == \
-            {1.00: 18, 0.75: 5}
-        assert records[0]['best_params'] == {'call_delta': 0.20, 'dte': 14,
+            {1.00: 20, 0.75: 3, 0.50: 1}
+        assert records[0]['best_params'] == {'call_delta': 0.10, 'dte': 45,
                                              'close_at_pct': 0.75}
-        assert records[0]['train_sharpe'] == pytest.approx(1.056, abs=5e-4)
-        assert records[-1]['best_params'] == {'call_delta': 0.30, 'dte': 30,
-                                              'close_at_pct': 0.75}
-        assert records[-1]['train_sharpe'] == pytest.approx(0.757, abs=5e-4)
+        assert records[0]['train_sharpe'] == pytest.approx(0.956, abs=5e-4)
+        assert records[-1]['best_params'] == {'call_delta': 0.25, 'dte': 21,
+                                              'close_at_pct': 1.00}
+        assert records[-1]['train_sharpe'] == pytest.approx(0.713, abs=5e-4)
 
     def test_pardo_floor(self, records) -> None:
         """All 60 combos clear 30 IS trades in every window (leanest: 32)."""
         assert all(r['n_below_30'] == 0 for r in records)
         assert min(r['min_grid_trades'] for r in records) == 32
-        assert min(r['n_trades'] for r in records) == 37
+        assert min(r['n_trades'] for r in records) == 32
 
     def test_oos_scoreboard(self, records) -> None:
-        """WF +143.6% vs fixed +95.8% vs B&H +170.9% — 0.6pp for doubling the grid."""
-        assert _chain([r['oos_return_pct'] for r in records]) == pytest.approx(143.62, abs=0.01)
-        assert _chain([r['fixed_return_pct'] for r in records]) == pytest.approx(95.78, abs=0.01)
-        assert _chain([r['bh_return_pct'] for r in records]) == pytest.approx(170.87, abs=0.01)
-        assert sum(r['oos_return_pct'] > r['fixed_return_pct'] for r in records) == 18
-        assert sum(r['oos_return_pct'] > r['bh_return_pct'] for r in records) == 10
+        """WF +143.5% vs fixed +120.2% vs B&H +190.7% — doubling the grid (27->60) LOST ~6pp vs the baseline's +149.5%."""
+        assert _chain([r['oos_return_pct'] for r in records]) == pytest.approx(143.54, abs=0.05)
+        assert _chain([r['fixed_return_pct'] for r in records]) == pytest.approx(120.25, abs=0.05)
+        assert _chain([r['bh_return_pct'] for r in records]) == pytest.approx(190.67, abs=0.05)
+        assert sum(r['oos_return_pct'] > r['fixed_return_pct'] for r in records) == 16
+        assert sum(r['oos_return_pct'] > r['bh_return_pct'] for r in records) == 9
 
 
 @pytest.mark.skipif(

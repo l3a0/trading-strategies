@@ -36,7 +36,7 @@ import numpy as np
 
 from cc_backtest import calc_rolling_volatility, classify_regime
 from real_cc_backtest import (
-    CHAIN_CLEAN_START,
+    REGISTERED_CLEAN_START,
     load_chain_store,
     load_unadjusted_prices,
     run_real_cc_overlay,
@@ -47,7 +47,7 @@ from real_cc_backtest import (
 TICKERS: tuple[str, ...] = ('MSFT', 'SPY', 'QQQ')
 
 # §3.1: canonical + backfill dailies per ticker (merged via load_chain_store;
-# CHAIN_CLEAN_START applies its clip where defined).
+# REGISTERED_CLEAN_START applies its clip where defined).
 CHAIN_FILES: dict[str, tuple[str, tuple[str, ...]]] = {
     'MSFT': ('msft_option_dailies.csv', ('msft_option_dailies_2008_2016.csv',)),
     'SPY': ('spy_option_dailies.csv', ()),
@@ -122,7 +122,7 @@ def load_market(ticker: str) -> dict[str, Any]:
     span, ending at the engine's existing data-clipped end (§3.1).
     """
     canonical, extras = CHAIN_FILES[ticker]
-    store = load_chain_store(canonical, extras, start=CHAIN_CLEAN_START.get(ticker))
+    store = load_chain_store(canonical, extras, start=REGISTERED_CLEAN_START.get(ticker))
     chain_days = sorted(store)
     dates, closes = load_unadjusted_prices(ticker, chain_days[0], '2026-06-06')
     assert dates[0] == PRICE_FILE_STARTS[ticker], (

@@ -339,11 +339,11 @@ over cash (Newey-West t / Sharpe), not the delta-hedged-gain measure.
 
 On SPY (2010–2026, 175 condors, hold-to-expiry) it **loses vs cash**: the
 excess-over-cash is **−$47.6K, NW t −1.08** (Sharpe −0.21) at realistic bid/ask fills,
-and **−0.89 even frictionless** (mid). Its total P&L is positive (+$49.5K) — but that
+and **−0.89 even frictionless** (mid). Its total P&L is positive (+$54.5K) — but that
 is *entirely* risk-free interest on the idle collateral; the condor itself
 underperformed T-bills.
 
-The wings did their job on *risk*: the per-event tail is capped (17.5% max drawdown
+The wings did their job on *risk*: the per-event tail is capped (17.1% max drawdown
 vs the naked single-name call's 74.6%). But on *return* it is the worst of the set —
 below the delta-hedged straddle (+0.72) and every wing — because it stacks three drags
 on an already-thin premium: it gives up premium for the wings, pays four legs of

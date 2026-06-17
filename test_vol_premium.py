@@ -375,7 +375,10 @@ class TestShortPutMechanics:
 class TestSpyShortVolRegression:
     """Pin the delta-neutral short-CALL VRP on real SPY chains — the completed,
     audited headline. 0.25-delta, 30 DTE, hold-to-expiry, full 2010-12 -> 2026-06
-    span (CHAIN_CLEAN_START['SPY']); rf credited on the cash collateral;
+    span (REGISTERED_CLEAN_START['SPY'] — frozen: this +2.54 is the committed
+    benchmark of the registered put-side prereg's mechanism clause, so it stays on
+    the as-registered span even though the live SPY hygiene boundary moved to
+    2010-05-17); rf credited on the cash collateral;
     Schwab-aware hedge cost (commission-free shares, half-spread). Significance is
     the rate-invariant Bakshi-Kapadia delta-hedged-gain measure (rf netted on the
     cash base it was earned on — see short_vol_statistics).
@@ -395,8 +398,8 @@ class TestSpyShortVolRegression:
 
     @pytest.fixture(scope='class')
     def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
-        from real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
-        store = load_chain_store(_SPY_DAILIES, start=CHAIN_CLEAN_START['SPY'])
+        from real_cc_backtest import REGISTERED_CLEAN_START, load_chain_store, load_unadjusted_prices
+        store = load_chain_store(_SPY_DAILIES, start=REGISTERED_CLEAN_START['SPY'])  # registration-frozen benchmark
         days = sorted(store)
         dates, prices = load_unadjusted_prices('SPY', days[0], '2026-06-06')
         pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
@@ -462,8 +465,8 @@ class TestSpyShortPutRegression:
     """Pin the REGISTERED put-side VRP result on real SPY chains (docs/prereg_vol_premium.md,
     registered at PR #23's merge commit; analysis run_registered_vrp.py). A daily
     delta-neutral short PUT at target delta -0.25, 30 DTE, hold-to-expiry, sold at the
-    bid, hedged with SHORT stock; full 2010-12 -> 2026-06 span (CHAIN_CLEAN_START['SPY'])
-    -- the exact mirror of the pinned 0.25-delta CALL wing (TestSpyShortVolRegression,
+    bid, hedged with SHORT stock; full 2010-12 -> 2026-06 span (REGISTERED_CLEAN_START['SPY'],
+    registration-frozen) -- the exact mirror of the pinned 0.25-delta CALL wing (TestSpyShortVolRegression,
     +2.54), only the wing flipped (prereg §2.3).
 
     REGISTERED VERDICT (prereg §5/§6, row 4): NULL. The put-wing delta-hedged gain is
@@ -479,8 +482,8 @@ class TestSpyShortPutRegression:
 
     @pytest.fixture(scope='class')
     def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
-        from real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
-        store = load_chain_store(_SPY_PUTS, start=CHAIN_CLEAN_START['SPY'])
+        from real_cc_backtest import REGISTERED_CLEAN_START, load_chain_store, load_unadjusted_prices
+        store = load_chain_store(_SPY_PUTS, start=REGISTERED_CLEAN_START['SPY'])  # registration-frozen span
         days = sorted(store)
         dates, prices = load_unadjusted_prices('SPY', days[0], '2026-06-06')
         pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
@@ -555,8 +558,8 @@ class TestIwmShortPutRegression:
 
     @pytest.fixture(scope='class')
     def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
-        from real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
-        store = load_chain_store(_IWM_DAILIES, start=CHAIN_CLEAN_START['IWM'])
+        from real_cc_backtest import REGISTERED_CLEAN_START, load_chain_store, load_unadjusted_prices
+        store = load_chain_store(_IWM_DAILIES, start=REGISTERED_CLEAN_START['IWM'])  # registration-frozen span
         days = sorted(store)
         dates, prices = load_unadjusted_prices('IWM', days[0], '2026-06-06')
         pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
@@ -725,8 +728,8 @@ class TestSpyStraddleSecondary:
 
     @pytest.fixture(scope='class')
     def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
-        from real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
-        store = load_chain_store(_SPY_DAILIES, extra_paths=[_SPY_PUTS], start=CHAIN_CLEAN_START['SPY'])
+        from real_cc_backtest import REGISTERED_CLEAN_START, load_chain_store, load_unadjusted_prices
+        store = load_chain_store(_SPY_DAILIES, extra_paths=[_SPY_PUTS], start=REGISTERED_CLEAN_START['SPY'])  # registration-frozen span
         days = sorted(store)
         dates, prices = load_unadjusted_prices('SPY', days[0], '2026-06-06')
         pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
@@ -783,8 +786,8 @@ class TestIwmStraddleSecondary:
 
     @pytest.fixture(scope='class')
     def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
-        from real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
-        store = load_chain_store(_IWM_DAILIES, start=CHAIN_CLEAN_START['IWM'])
+        from real_cc_backtest import REGISTERED_CLEAN_START, load_chain_store, load_unadjusted_prices
+        store = load_chain_store(_IWM_DAILIES, start=REGISTERED_CLEAN_START['IWM'])  # registration-frozen span
         days = sorted(store)
         dates, prices = load_unadjusted_prices('IWM', days[0], '2026-06-06')
         pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
@@ -1074,9 +1077,9 @@ class TestSpyIronCondorExploratory:
 
     Verdict: it LOSES vs cash. At realistic bid/ask fills the excess-over-cash is
     -$47.6K (Newey-West t -1.08, Sharpe -0.21); even frictionless (mid) it is -0.89.
-    Total P&L is +$49.5K, but that is ENTIRELY rf interest on idle collateral -- the
+    Total P&L is +$54.5K, but that is ENTIRELY rf interest on idle collateral -- the
     condor itself underperformed T-bills. The long wings DID cap the per-event tail
-    (17.5% max drawdown vs the naked single name's 74.6%), but the structure still
+    (17.1% max drawdown vs the naked single name's 74.6%), but the structure still
     bled: thin OTM premium minus the wing cost minus four legs of bid/ask minus the
     unhedged directional losses. Worse than the delta-hedged SPY straddle (+0.72) and
     every wing. Rate-invariant. Pinned so the exploration isn't re-derived.
@@ -1104,8 +1107,8 @@ class TestSpyIronCondorExploratory:
         assert s['num_condors_sold'] == 175
         assert s['win_rate'] == pytest.approx(59.8, abs=0.1)
         assert s['alpha_vs_cash'] == pytest.approx(-47_600.01, abs=10.0)  # loses vs cash
-        assert s['net_pnl'] == pytest.approx(49_521.44, abs=10.0)         # positive ONLY via rf
-        assert s['max_drawdown_pct'] == pytest.approx(17.5, abs=0.1)
+        assert s['net_pnl'] == pytest.approx(54_526.88, abs=10.0)         # positive ONLY via rf
+        assert s['max_drawdown_pct'] == pytest.approx(17.07, abs=0.1)
 
     def test_loses_vs_cash(self, market: Any) -> None:
         _, st = self._run(market, 'bid_ask')
