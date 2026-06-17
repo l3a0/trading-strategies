@@ -86,6 +86,35 @@ COOLDOWN_NS: tuple[int, ...] = (7, 30, 60, 90)        # calendar days
 TREND_WINDOWS: tuple[int, ...] = (21, 63, 126, 252)   # trailing-return, days
 
 
+@dataclass(frozen=True)
+class Campaign:
+    """A ticker batch for one campaign run: the names the search SPENDS sample
+    on (`search`), and the names held SEALED (`sealed`) — never loaded, the
+    manual-confirmation / pre-registration substitute. The two sets must be
+    disjoint (a sealed ticker can never be searched), so the seal is enforced
+    here, in config. Point `run_batch` at a different Campaign to sweep the same
+    templates on the next batch of tickers; roll a fresh underlying into
+    `sealed` each round so the held-out vault stays genuinely unseen as the
+    search expands across names."""
+    search: tuple[str, ...]
+    sealed: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        # coerce to tuples so the frozen dataclass stays hashable even if a
+        # caller passes lists, then enforce the seal: no ticker in both sets.
+        object.__setattr__(self, 'search', tuple(self.search))
+        object.__setattr__(self, 'sealed', tuple(self.sealed))
+        overlap = sorted(set(self.search) & set(self.sealed))
+        if overlap:
+            raise ValueError(
+                f'campaign seal violated: {overlap} are both searched and '
+                f'sealed — a sealed ticker must never enter the search set')
+
+
+# The published MVP batch: MSFT + SPY searched, QQQ sealed. `main()` runs this.
+DEFAULT_CAMPAIGN = Campaign(search=SEARCH_TICKERS, sealed=SEALED_TICKERS)
+
+
 # --- the per-cycle data every template tags against (built once) ------------
 
 @dataclass
@@ -367,15 +396,36 @@ def write_ledger(rows: Sequence[dict[str, Any]], path: str = 'edge_ledger.jsonl'
             f.write(json.dumps({**r, 'run_at': stamp}) + '\n')
 
 
-def load_search_runs() -> list[dict[str, Any]]:
-    """Load ONLY the search set — the seal is enforced here, in code:
-    SEALED_TICKERS are never read, so no candidate can train on them."""
-    return [load_naked_run(t) for t in SEARCH_TICKERS]
+def load_search_runs(
+    search_tickers: Sequence[str] = SEARCH_TICKERS,
+) -> list[dict[str, Any]]:
+    """Load ONLY the given search tickers' naked runs. The seal is enforced by
+    OMISSION — a sealed ticker is simply never passed here, so no candidate can
+    train on it. Defaults to SEARCH_TICKERS (the MSFT + SPY, QQQ-sealed batch)."""
+    return [load_naked_run(t) for t in search_tickers]
 
 
-def _format_summary(rows: Sequence[dict[str, Any]]) -> str:
+def run_batch(
+    campaign: Campaign = DEFAULT_CAMPAIGN,
+    seed: int = CAMPAIGN_SEED,
+    n_perm: int = N_PERM,
+    q: float = FDR_Q,
+    iv_loader: Callable[..., dict[tuple[str, str], float]] = load_entry_ivs,
+) -> list[dict[str, Any]]:
+    """Run one campaign against a ticker batch: load ONLY the batch's search
+    tickers (the sealed ones are never touched), build the cycle data, and run
+    the templates through the kill-gate + BY. This is the entry point for
+    sweeping the existing templates on the next batch of tickers — pass a
+    Campaign whose `search` is the new names and whose `sealed` holds out a
+    fresh underlying for confirmation. `iv_loader` is injectable for tests."""
+    cd = build_cycle_data(load_search_runs(campaign.search), iv_loader=iv_loader)
+    return run_campaign(cd, seed=seed, n_perm=n_perm, q=q)
+
+
+def _format_summary(rows: Sequence[dict[str, Any]],
+                    campaign: Campaign = DEFAULT_CAMPAIGN) -> str:
     lines = [
-        f'Campaign: search={list(SEARCH_TICKERS)} sealed={list(SEALED_TICKERS)} '
+        f'Campaign: search={list(campaign.search)} sealed={list(campaign.sealed)} '
         f'q={FDR_Q} n_perm={N_PERM}',
         f'{"template":<10} {"params":<14} {"D_A":>9} {"sign":>4} '
         f'{"p":>7} {"vol_conf":>9} {"BY":>3} {"clean":>5}',
@@ -398,11 +448,9 @@ def _format_summary(rows: Sequence[dict[str, Any]]) -> str:
 def main() -> None:
     print('Loading search runs (sealed set excluded; a few minutes cold) ...',
           flush=True)
-    runs = load_search_runs()
-    cd = build_cycle_data(runs)
-    rows = run_campaign(cd)
+    rows = run_batch(DEFAULT_CAMPAIGN)
     write_ledger(rows)
-    print(_format_summary(rows))
+    print(_format_summary(rows, DEFAULT_CAMPAIGN))
 
 
 if __name__ == '__main__':
