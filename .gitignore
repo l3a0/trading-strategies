@@ -41,3 +41,4 @@ edge_ledger.jsonl
 # Transient fetch-loop progress logs (download_option_dailies.py wrapper output)
 fetch_progress.log
 gld_tlt_fetch.log
+xle_eem_fetch.log
