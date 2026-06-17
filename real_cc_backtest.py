@@ -69,9 +69,23 @@ COMMISSION_PER_SHARE = 0.0065  # $0.65 per 100-share contract, both legs (engine
 # (its store begins 2011-03-23, past the era - see CLAUDE.md's era gotchas).
 # IWM is the same clean-from-row-one case (store begins 2010-12-01, past the
 # era; validation found entry-band raw == defect-free in every month - no
-# placeholder rows) but gets an explicit entry: the put-side VRP run reads
-# CHAIN_CLEAN_START['IWM'], so its boundary is documentary, not load-bearing.
-CHAIN_CLEAN_START: dict[str, str] = {'MSFT': '2010-05-10', 'SPY': '2010-12-01', 'IWM': '2010-12-01'}
+# placeholder rows) but gets an explicit entry: the put-side VRP run reads its
+# boundary, so its boundary is documentary, not load-bearing.
+#
+# SPY's boundary was corrected 2010-12-01 -> 2010-05-17 (validate_dailies.py): its
+# entry band is clean from 2010-05-17, and the later 2010 stragglers are OUT-of-band
+# placeholder rows that never reach a delta-targeted entry, so the old boundary
+# clipped ~6 months of usable data. This is the LIVE hygiene boundary, used by
+# exploratory and future work.
+CHAIN_CLEAN_START: dict[str, str] = {'MSFT': '2010-05-10', 'SPY': '2010-05-17', 'IWM': '2010-12-01'}
+
+# A registered experiment's data span is part of its pre-registration and must NOT
+# move when the live hygiene boundary is later corrected. REGISTERED_CLEAN_START is
+# the frozen registration snapshot — it differs from CHAIN_CLEAN_START only for SPY
+# (frozen at the as-registered 2010-12-01). The registered put-side VRP
+# (run_registered_vrp.py, TestSpyShortPutRegression, TestSpyStraddleSecondary) and
+# the registered trend-gate (trend_gate.py) read THIS, never the live constant.
+REGISTERED_CLEAN_START: dict[str, str] = {'MSFT': '2010-05-10', 'SPY': '2010-12-01', 'IWM': '2010-12-01'}
 
 
 def open_dailies(path: str) -> TextIO:

@@ -3,7 +3,7 @@
 Executes docs/prereg_vol_premium.md exactly. The instrument (§2.1): a daily
 delta-neutral short PUT at target delta -0.25, 30 DTE, hold-to-expiry, sold at the
 bid, hedged with SHORT stock rebalanced daily on the signed vendor delta, on real
-SPY (primary) and IWM (out-of-sample) chains over each ticker's CHAIN_CLEAN_START
+SPY (primary) and IWM (out-of-sample) chains over each ticker's REGISTERED_CLEAN_START
 clean span. The verdict (§4) is the rate-invariant Bakshi-Kapadia delta-hedged-gain
 Newey-West t (short_vol_statistics) at hedge_cost_bps=0.5; the 0/0.2/1.0 bp t's are
 the reported cost curve. Pass rule §5, outcome language §6.
@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
+from real_cc_backtest import REGISTERED_CLEAN_START, load_chain_store, load_unadjusted_prices
 from vol_premium import (
     run_real_short_vol_overlay,
     run_real_straddle_overlay,
@@ -30,7 +30,7 @@ CALL_WING_T = {0.0: 2.54, 0.2: 2.42, 0.5: 2.25, 1.0: 1.97}
 
 
 def run_put(daily_path: str, ticker: str, rf: float = 0.045) -> tuple[list[str], dict[float, tuple[Any, Any]]]:
-    store = load_chain_store(daily_path, start=CHAIN_CLEAN_START[ticker])
+    store = load_chain_store(daily_path, start=REGISTERED_CLEAN_START[ticker])
     days = sorted(store)
     dates, prices = load_unadjusted_prices(ticker, days[0], '2026-06-06')
     pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
@@ -69,7 +69,7 @@ def run_straddle(paths: list[str], ticker: str, rf: float = 0.045) -> tuple[list
     """§7 SECONDARY (reported, never promoted): the ATM short straddle, the canonical
     Coval-Shumway / AQR variance harvester. SPY merges its calls + puts files; IWM is
     one both-wing file."""
-    store = load_chain_store(paths[0], extra_paths=paths[1:], start=CHAIN_CLEAN_START[ticker])
+    store = load_chain_store(paths[0], extra_paths=paths[1:], start=REGISTERED_CLEAN_START[ticker])
     days = sorted(store)
     dates, prices = load_unadjusted_prices(ticker, days[0], '2026-06-06')
     pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]

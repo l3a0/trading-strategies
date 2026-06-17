@@ -143,10 +143,10 @@ class TestCooldownScout:
     """
 
     def test_pool(self, scout) -> None:
-        """694 naked cycles across MSFT/QQQ/SPY, 240 rip triggers."""
+        """705 naked cycles across MSFT/QQQ/SPY, 243 rip triggers."""
         assert scout['tickers'] == list(SCOUT_TICKERS)
-        assert scout['n_cycles'] == 694
-        assert scout['n_rips'] == 240
+        assert scout['n_cycles'] == 705
+        assert scout['n_rips'] == 243
 
     def test_wrong_signed_at_every_horizon(self, scout) -> None:
         """The hypothesis predicts D_A < 0 (post-rip entries do worse). The
@@ -156,11 +156,11 @@ class TestCooldownScout:
         low tail a real effect needs. So no horizon supports the cooldown."""
         g = {row['N_days']: row for row in scout['grid']}
         assert all(row['D_A'] > 0 for row in scout['grid'])
-        assert g[30]['D_A'] == pytest.approx(390.13, abs=1.0)
-        assert g[60]['D_A'] == pytest.approx(661.84, abs=1.0)
-        assert g[90]['D_A'] == pytest.approx(1932.83, abs=1.0)
-        assert g[30]['perm_percentile'] == pytest.approx(0.918, abs=0.02)
-        assert g[60]['perm_percentile'] == pytest.approx(0.942, abs=0.02)
+        assert g[30]['D_A'] == pytest.approx(376.17, abs=1.0)
+        assert g[60]['D_A'] == pytest.approx(623.31, abs=1.0)
+        assert g[90]['D_A'] == pytest.approx(1770.21, abs=1.0)
+        assert g[30]['perm_percentile'] == pytest.approx(0.936, abs=0.02)
+        assert g[60]['perm_percentile'] == pytest.approx(0.954, abs=0.02)
         assert all(row['perm_percentile'] >= 0.5 for row in scout['grid'])
         # the kill condition: NO horizon shows D_A<0 in the low (significant) tail
         assert not any(row['D_A'] < 0 and row['perm_percentile'] <= 0.10
@@ -175,9 +175,9 @@ class TestCooldownScout:
         mem = scout['memory']
         fwd = {row['horizon_days']: row for row in mem['forward']}
         assert all(row['diff_pct'] < 0 for row in mem['forward'])
-        assert fwd[30]['diff_pct'] == pytest.approx(-0.623, abs=0.01)
-        assert fwd[60]['diff_pct'] == pytest.approx(-0.901, abs=0.01)
-        assert mem['daily_return_acf_lag1'] == pytest.approx(-0.128, abs=0.005)
+        assert fwd[30]['diff_pct'] == pytest.approx(-0.628, abs=0.01)
+        assert fwd[60]['diff_pct'] == pytest.approx(-0.879, abs=0.01)
+        assert mem['daily_return_acf_lag1'] == pytest.approx(-0.126, abs=0.005)
         assert mem['daily_return_acf_lag1'] < 0
 
     def test_abstinence_confound_visible(self, scout) -> None:
@@ -206,18 +206,18 @@ class TestIvRichnessScout:
     """
 
     def test_assessed(self, iv) -> None:
-        """685 cycles carry a usable entry IV; 9 dropped by the IV<0.05 guard."""
+        """694 cycles carry a usable entry IV; 11 dropped by the IV<0.05 guard."""
         assert iv['tickers'] == list(SCOUT_TICKERS)
-        assert iv['n_assessed'] == 685
-        assert iv['n_dropped_iv_guard'] == 9
+        assert iv['n_assessed'] == 694
+        assert iv['n_dropped_iv_guard'] == 11
 
     def test_no_premium_to_gate_on(self, iv) -> None:
         """The ex-post VRP at the sold ~25-delta/30-day contract (entry IV
         minus the realized vol over the option's life) is ~0 / negative — the
         options were NOT systematically overpriced vs what actually realized,
         so there is no premium to harvest."""
-        assert iv['vrp_median_pct'] == pytest.approx(-0.362, abs=0.05)
-        assert iv['vrp_mean_pct'] == pytest.approx(-2.374, abs=0.1)
+        assert iv['vrp_median_pct'] == pytest.approx(-0.273, abs=0.05)
+        assert iv['vrp_mean_pct'] == pytest.approx(-2.304, abs=0.1)
         assert iv['vrp_median_pct'] < 0.5  # not richly positive
 
     def test_richness_does_not_predict_pnl(self, iv) -> None:
@@ -228,13 +228,13 @@ class TestIvRichnessScout:
 
     def test_binary_split_is_the_low_vol_confound(self, iv) -> None:
         """The one positive-looking number — a binary IV>RV split separates
-        P&L by +$656/cycle at the 93rd permutation percentile — is NOT a
+        P&L by +$646/cycle at the 95th permutation percentile — is NOT a
         premium. "Rich" entries cluster where trailing vol is low (0.15 vs
         0.23), i.e. calm markets, where covered calls do better regardless.
         With the ex-post VRP ~0 and the rank-correlation ~0, this split is the
         vol-level confound, not a tradable edge."""
-        assert iv['D_A_rich_vs_not'] == pytest.approx(655.69, abs=2.0)
-        assert iv['perm_percentile'] == pytest.approx(0.926, abs=0.02)
-        assert iv['mean_trailing_rv_rich'] == pytest.approx(0.1457, abs=0.002)
-        assert iv['mean_trailing_rv_not'] == pytest.approx(0.2337, abs=0.002)
+        assert iv['D_A_rich_vs_not'] == pytest.approx(646.17, abs=2.0)
+        assert iv['perm_percentile'] == pytest.approx(0.946, abs=0.02)
+        assert iv['mean_trailing_rv_rich'] == pytest.approx(0.1455, abs=0.002)
+        assert iv['mean_trailing_rv_not'] == pytest.approx(0.2333, abs=0.002)
         assert iv['mean_trailing_rv_rich'] < iv['mean_trailing_rv_not']

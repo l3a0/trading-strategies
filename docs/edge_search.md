@@ -146,8 +146,10 @@ parallel phase with its own kill-gate.
 ## Campaign 1 — cheap entry-conditioning class — EMPTY (2026-06-13)
 
 **The batch.** Nine candidates from three mechanism templates, swept on the
-real MSFT + SPY chains (QQQ sealed), campaign seed 20260613, 1,000-draw
-permutation null (cooldown's is the trigger-placement variant), BY at q = 0.10:
+real MSFT + SPY chains (QQQ sealed; SPY clipped at the corrected 2010-05-17
+boundary — figures re-pinned 2026-06-17, verdict unchanged), campaign seed
+20260613, 1,000-draw permutation null (cooldown's is the trigger-placement
+variant), BY at q = 0.10:
 
 - **cooldown(N)** — a cycle entered within N days of a same-ticker rip does
   *worse*. Predicts `D_A < 0`. N ∈ {7, 30, 60, 90}.
@@ -161,15 +163,15 @@ permutation null (cooldown's is the trigger-placement variant), BY at q = 0.10:
 
 | Template | Param | `D_A` | Sign as predicted? | One-sided p | vol-confound |
 | --- | --- | --- | --- | --- | --- |
-| cooldown | N=7 | +362 | no | 0.739 | −0.018 |
-| cooldown | N=30 | +605 | no | 0.879 | −0.037 |
-| cooldown | N=60 | +743 | no | 0.912 | −0.038 |
-| cooldown | N=90 | +1,406 | no | 0.971 | −0.037 |
-| up_trend | window=21 | +353 | no | 0.739 | −0.053 |
-| up_trend | window=63 | −33 | yes | 0.486 | −0.096 |
-| up_trend | window=126 | +245 | no | 0.667 | −0.114 |
-| up_trend | window=252 | +958 | no | 0.880 | −0.102 |
-| iv_rich | — | +748 | yes | 0.080 | −0.083 |
+| cooldown | N=7 | +351 | no | 0.741 | −0.018 |
+| cooldown | N=30 | +581 | no | 0.908 | −0.036 |
+| cooldown | N=60 | +687 | no | 0.895 | −0.039 |
+| cooldown | N=90 | +1,217 | no | 0.969 | −0.038 |
+| up_trend | window=21 | +341 | no | 0.742 | −0.054 |
+| up_trend | window=63 | −18 | yes | 0.492 | −0.097 |
+| up_trend | window=126 | +262 | no | 0.651 | −0.115 |
+| up_trend | window=252 | +965 | no | 0.903 | −0.102 |
+| iv_rich | — | +733 | yes | 0.095 | −0.082 |
 
 **The reading.** Two findings, both consistent with what the repo already
 knew:
@@ -177,15 +179,15 @@ knew:
 1. **Every up-move-conditioning template is wrong-signed.** All four cooldown
    horizons and three of four up_trend windows predict `D_A < 0` and deliver
    `D_A > 0` — entries after a rip or a rally *lose less*, not more. The lone
-   sign-correct window (63 days) has `D_A = −33` (\~zero) at p = 0.49, i.e.
+   sign-correct window (63 days) has `D_A = −18` (\~zero) at p = 0.49, i.e.
    noise. This is the third independent confirmation, now swept as a batch,
    that **conditioning call-selling entry on recent upward price action has the
    sign backwards** on these names (cf. the cooldown and trend-gate kills).
 2. **The one suggestive candidate is the known confound, and it still fails
-   FDR.** `iv_rich` is sign-correct (`D_A = +748`) and individually
-   suggestive (p = 0.080) — but its `vol_confound` is negative (rich-IV
+   FDR.** `iv_rich` is sign-correct (`D_A = +733`) and individually
+   suggestive (p = 0.095) — but its `vol_confound` is negative (rich-IV
    entries sit in lower trailing vol, i.e. calm markets), the same low-vol
-   confound the IV-richness scout pinned. And p = 0.080 is nowhere near the BY
+   confound the IV-richness scout pinned. And p = 0.095 is nowhere near the BY
    rank-1 threshold of \~0.0039 (= 0.10 / (9 × Σ 1/i)). The multiple-testing
    math, not a single p-value, is what empties the class.
 

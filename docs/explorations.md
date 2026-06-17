@@ -34,9 +34,10 @@ loss-making assignment, suspend covered-call selling for N days, then resume.
 The intuition: a rip means the stock is running, so sit out the continuation.
 
 **How it was tested.** A two-part scout on the naked baseline runs
-(`run_real_cc_overlay`, published params) pooled across MSFT / QQQ / SPY — 694
-cycles, 240 rip triggers, on the clean canonical chains (`CHAIN_CLEAN_START`
-era clip applied). Both parts pinned in `TestCooldownScout`.
+(`run_real_cc_overlay`, published params) pooled across MSFT / QQQ / SPY — 705
+cycles, 243 rip triggers, on the clean canonical chains (`CHAIN_CLEAN_START`
+era clip applied; SPY on the corrected 2010-05-17 boundary). Both parts pinned
+in `TestCooldownScout`.
 
 1. **Does the mechanism exist?** For each cooldown horizon N, tag every cycle
    as *post-rip* if it was entered within N days of a prior rip **on its own
@@ -58,15 +59,15 @@ permutation null, never the low tail a real effect needs:
 
 | Cooldown N | D_A (per cycle) | permutation percentile |
 | --- | --- | --- |
-| 7d | +$61 | 0.56 |
-| 30d | +$390 | 0.92 |
-| 60d | +$662 | 0.94 |
-| 90d | +$1,933 | 1.00 |
+| 7d | +$57 | 0.56 |
+| 30d | +$376 | 0.94 |
+| 60d | +$623 | 0.95 |
+| 90d | +$1,770 | 1.00 |
 
 And there is no return memory to anchor a cooldown length to: forward returns
-after a rip are **below** baseline at every horizon (−0.48pp at 21 trading
-days widening to −1.09pp at 120), and the pooled daily-return lag-1
-autocorrelation is **−0.128**. A rip is a weakly *mean-reverting* event, not a
+after a rip are **below** baseline at every horizon (−0.46pp at 21 trading
+days widening to −1.06pp at 120), and the pooled daily-return lag-1
+autocorrelation is **−0.126**. A rip is a weakly *mean-reverting* event, not a
 momentum-igniting one — so the window after it is, if anything, a slightly
 *safer* time to sell, and any nonzero N is pure abstinence.
 
@@ -95,7 +96,7 @@ the premium.
 **How it was tested.** For each naked cycle, read the entry contract's vendor
 implied volatility (the engine's loader discards the IV column as unreliable,
 so the scout reads it directly, with a fail-closed IV < 0.05 floor for the
-lattice/placeholder rows). Pooled across MSFT / QQQ / SPY — 685 cycles carry a
+lattice/placeholder rows). Pooled across MSFT / QQQ / SPY — 694 cycles carry a
 usable entry IV. Three measurements, all pinned in `TestIvRichnessScout`:
 
 1. **Is there premium to harvest?** The ex-post VRP at the sold ~25-delta /
@@ -110,9 +111,9 @@ usable entry IV. Three measurements, all pinned in `TestIvRichnessScout`:
 
 | Measurement | Value | Reading |
 | --- | --- | --- |
-| Ex-post VRP at the sold contract (median / mean) | −0.36% / −2.37% | ~0 — options not systematically overpriced |
-| Spearman(entry richness, cycle P&L) | +0.04 | richness doesn't predict P&L |
-| Binary IV>RV split, `D_A` | +$656/cycle (93rd pct) | looks like signal — but see below |
+| Ex-post VRP at the sold contract (median / mean) | −0.27% / −2.30% | ~0 — options not systematically overpriced |
+| Spearman(entry richness, cycle P&L) | +0.03 | richness doesn't predict P&L |
+| Binary IV>RV split, `D_A` | +$646/cycle (95th pct) | looks like signal — but see below |
 
 The one positive-looking number is a **confound, not a premium.** "Rich"
 entries (IV above trailing realized vol) cluster where trailing vol is *low* —

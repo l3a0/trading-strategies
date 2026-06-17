@@ -382,19 +382,19 @@ class TestEdgeSearchCampaign:
         lose less), the same sign the pooled three-ticker scout found. Its null
         is the structure-preserving trigger-placement permutation (not the
         uniform shuffle), so the wrong-signed arrangement sits deep in the HIGH
-        tail with p rising in N — the pattern cooldown_scout reports."""
+        tail with p high across N — the pattern cooldown_scout reports."""
         _, rows = campaign
         cool = [r for r in rows if r['template'] == 'cooldown']
         assert all(r['D_A'] > 0 for r in cool)
         assert all(r['sign_ok'] is False for r in cool)
         k = self._by_key(rows)
         # D_A is the observed split — unchanged by the choice of null
-        assert k[('cooldown', 30)]['D_A'] == pytest.approx(604.51, abs=1.0)
-        assert k[('cooldown', 90)]['D_A'] == pytest.approx(1405.68, abs=1.0)
-        # p-values under the trigger-placement null: high and rising with N
-        assert k[('cooldown', 30)]['p_value'] == pytest.approx(0.879, abs=0.01)
-        assert k[('cooldown', 60)]['p_value'] == pytest.approx(0.912, abs=0.01)
-        assert k[('cooldown', 90)]['p_value'] == pytest.approx(0.971, abs=0.01)
+        assert k[('cooldown', 30)]['D_A'] == pytest.approx(581.06, abs=1.0)
+        assert k[('cooldown', 90)]['D_A'] == pytest.approx(1217.04, abs=1.0)
+        # p-values under the trigger-placement null: all deep in the high tail
+        assert k[('cooldown', 30)]['p_value'] == pytest.approx(0.908, abs=0.01)
+        assert k[('cooldown', 60)]['p_value'] == pytest.approx(0.895, abs=0.01)
+        assert k[('cooldown', 90)]['p_value'] == pytest.approx(0.969, abs=0.01)
         assert all(r['p_value'] > 0.5 for r in cool)   # all in the high tail
 
     def test_up_trend_mostly_wrong_signed_and_insignificant(self, campaign) -> None:
@@ -412,14 +412,14 @@ class TestEdgeSearchCampaign:
 
     def test_iv_rich_suggestive_but_confounded_and_not_fdr_significant(self, campaign) -> None:
         """The one sign-correct, individually-suggestive candidate (the VRP
-        gate, D_A>0 at p~0.08) is exactly the documented trap: it is the
+        gate, D_A>0 at p~0.09) is exactly the documented trap: it is the
         low-vol confound (rich-IV entries cluster in calm markets, so
         vol_confound<0), and it does NOT survive campaign-wide BY."""
         _, rows = campaign
         iv = next(r for r in rows if r['template'] == 'iv_rich')
         assert iv['sign_ok'] is True
-        assert iv['D_A'] == pytest.approx(747.62, abs=1.0)
-        assert iv['p_value'] == pytest.approx(0.080, abs=0.01)
+        assert iv['D_A'] == pytest.approx(733.15, abs=1.0)
+        assert iv['p_value'] == pytest.approx(0.095, abs=0.01)
         assert iv['by_survivor'] is False
         assert iv['vol_confound'] < 0
 
