@@ -47,9 +47,11 @@ search into a machine that manufactures false positives at speed:
 no engine re-runs. Structure-side ideas (roll rules, stop-loss, spread width)
 change the trades themselves and need a full `run_real_cc_overlay` per
 candidate; those are the expensive verdict phase, deliberately out of scope.
-Two simplifications are named, not silent: the permutation null is the uniform
-same-count shuffle (structure-preserving per-template nulls are a follow-up),
-and BY rather than BH is used because the candidates are dependent.
+The permutation null is per-template: the uniform same-count shuffle by default,
+but a template with temporally-structured treatment supplies its own — cooldown
+uses the structure-preserving trigger-placement permutation (redraw each
+ticker's rips from its own terminals) that `cooldown_scout` uses. BY rather than
+BH is used because the candidates are dependent.
 
 ### What the false-discovery rate controls
 
@@ -108,13 +110,44 @@ only a survivor reaches the one-way gate.*
 enumeration, the shared gate, the FDR ledger — never the judgment that promotes
 a result.
 
+## Engine-re-run phase (designed; builds after the orthogonal chains publish)
+
+The re-tag class above is cheap because it never changes the trades. The
+structure-side ideas — roll rules, stop-loss, spread width, and the
+delta-neutral short-vol / straddle / iron-condor strategies — *do* change the
+trades, so each candidate needs a full `run_real_*_overlay` engine run rather
+than a re-tag. That is the deferred-expensive phase. Its design is fixed even
+though it is not yet built:
+
+- **A second template class.** Each candidate runs an overlay on the target
+  ticker and parameter setting, instead of re-tagging fixed cycles.
+- **A HAC-t kill-gate with a closed-form null.** The score is
+  `short_vol_statistics`'s Newey-West (HAC) t-stat on the daily rate-netted P&L,
+  which has an asymptotic null — so unlike the re-tag phase there is *no*
+  per-candidate permutation. The cost is N engine runs plus one
+  Benjamini-Yekutieli pass over the t-stat p-values: the same ledger, a cheaper
+  gate.
+- **The seal rolls to a non-equity name.** With GLD / TLT / XLE / EEM
+  onboarding, the strong vault is a structurally-different underlying the
+  structure work never used; the plan seals **TLT** (bonds) and searches the
+  equity/gold names. QQQ — the current re-tag seal — already appears in the
+  structure-side cross-section, so it cannot seal this phase.
+- **Graduation stays manual.** A survivor — e.g. the SPY short-vol call wing
+  (+2.54) — earns a pre-registration and a manual sealed-vault confirmation,
+  never an automated verdict. The harness surfaces survivors; it never crowns
+  them.
+
+It builds once the orthogonal chains are published (the seal and the runs both
+need the data live), and it does not bend the cheap re-tag gate — it is a
+parallel phase with its own kill-gate.
+
 ---
 
 ## Campaign 1 — cheap entry-conditioning class — EMPTY (2026-06-13)
 
 **The batch.** Nine candidates from three mechanism templates, swept on the
 real MSFT + SPY chains (QQQ sealed), campaign seed 20260613, 1,000-draw
-permutation null, BY at q = 0.10:
+permutation null (cooldown's is the trigger-placement variant), BY at q = 0.10:
 
 - **cooldown(N)** — a cycle entered within N days of a same-ticker rip does
   *worse*. Predicts `D_A < 0`. N ∈ {7, 30, 60, 90}.
@@ -128,10 +161,10 @@ permutation null, BY at q = 0.10:
 
 | Template | Param | `D_A` | Sign as predicted? | One-sided p | vol-confound |
 | --- | --- | --- | --- | --- | --- |
-| cooldown | N=7 | +362 | no | 0.712 | −0.018 |
-| cooldown | N=30 | +605 | no | 0.867 | −0.037 |
-| cooldown | N=60 | +743 | no | 0.872 | −0.038 |
-| cooldown | N=90 | +1,406 | no | 0.896 | −0.037 |
+| cooldown | N=7 | +362 | no | 0.739 | −0.018 |
+| cooldown | N=30 | +605 | no | 0.879 | −0.037 |
+| cooldown | N=60 | +743 | no | 0.912 | −0.038 |
+| cooldown | N=90 | +1,406 | no | 0.971 | −0.037 |
 | up_trend | window=21 | +353 | no | 0.739 | −0.053 |
 | up_trend | window=63 | −33 | yes | 0.486 | −0.096 |
 | up_trend | window=126 | +245 | no | 0.667 | −0.114 |

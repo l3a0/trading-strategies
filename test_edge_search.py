@@ -32,6 +32,7 @@ from edge_search import (
     Candidate,
     CycleData,
     _add_one_p,
+    _cooldown_null,
     _vol_confound,
     benjamini_yekutieli,
     build_cycle_data,
@@ -211,6 +212,52 @@ class TestKillGate:
         assert _vol_confound(np.array([np.nan, np.nan]), np.array([True, False])) is None
 
 
+# ---- always-run: per-template permutation null ----
+
+class TestPerTemplateNull:
+    """A Candidate can carry its own structure-preserving null (`null_fn`);
+    the default (None) routes to the uniform same-count shuffle."""
+
+    def test_kill_gate_dispatches_to_custom_null_fn(self) -> None:
+        """When a Candidate supplies null_fn, kill_gate uses it for the
+        permutation distribution instead of the uniform shuffle."""
+        cd, treated = _const_cycledata(
+            pnls=[-1000] * 6 + [1000] * 6, treated=[True] * 6 + [False] * 6)
+        called = []
+
+        def sentinel(cd_, cand_, rng_, n_perm_):
+            called.append(n_perm_)
+            return np.full(n_perm_, 999.0)   # a null far above the observed D_A
+
+        cand = Candidate('t', (), -1, lambda: (treated, np.ones(12, bool)),
+                         null_fn=sentinel)
+        row = kill_gate(cd, cand, np.random.default_rng(0), n_perm=50)
+        assert called == [50]                # the custom null was invoked
+        # observed D_A = -2000 (predicted_sign -1); no perm (all 999) ≤ it → 1/51
+        # (kill_gate rounds the p-value to 4 dp)
+        assert row['p_value'] == pytest.approx(1 / 51, abs=1e-4)
+
+    def test_cooldown_null_deterministic_and_count_preserving(self) -> None:
+        """The cooldown trigger-placement null redraws each ticker's rips from
+        its own terminals (count preserved), recomputes D_A; seeded → it is
+        deterministic and (on a healthy pool) never degenerate."""
+        terms = list(range(1, 13, 2))         # 6 terminal ordinals
+        cd = CycleData(
+            pnls=np.array([100, -200, 150, -50, 80, -120], float),
+            entry_ords=list(range(0, 12, 2)), ticker_ids=['X'] * 6,
+            rip_ords_by_ticker={'X': sorted([terms[0], terms[2]])},  # 2 rips
+            trailing_rv=np.full(6, np.nan), trailing_ret={},
+            richness=np.full(6, np.nan), tickers=['X'],
+            term_ords_by_ticker={'X': sorted(terms)})                # 6 terminals
+        cand = Candidate('cooldown', (('N', 3),), -1,
+                         lambda: (np.zeros(6, bool), np.ones(6, bool)),
+                         null_fn=_cooldown_null)
+        a = _cooldown_null(cd, cand, np.random.default_rng(1), 100)
+        b = _cooldown_null(cd, cand, np.random.default_rng(1), 100)
+        assert len(a) == 100 and np.array_equal(a, b)   # deterministic
+        assert np.isfinite(a).all()                      # no degenerate draw
+
+
 # ---- always-run: campaign invariants + the seal ----
 
 class TestCampaignInvariants:
@@ -332,15 +379,23 @@ class TestEdgeSearchCampaign:
     def test_cooldown_wrong_signed_every_horizon(self, campaign) -> None:
         """The cooldown template predicts post-rip cycles do WORSE (D_A<0). On
         MSFT+SPY it is wrong-signed at every horizon (D_A>0 — post-rip cycles
-        lose less), the same sign the pooled three-ticker scout found."""
+        lose less), the same sign the pooled three-ticker scout found. Its null
+        is the structure-preserving trigger-placement permutation (not the
+        uniform shuffle), so the wrong-signed arrangement sits deep in the HIGH
+        tail with p rising in N — the pattern cooldown_scout reports."""
         _, rows = campaign
         cool = [r for r in rows if r['template'] == 'cooldown']
         assert all(r['D_A'] > 0 for r in cool)
         assert all(r['sign_ok'] is False for r in cool)
         k = self._by_key(rows)
+        # D_A is the observed split — unchanged by the choice of null
         assert k[('cooldown', 30)]['D_A'] == pytest.approx(604.51, abs=1.0)
-        assert k[('cooldown', 30)]['p_value'] == pytest.approx(0.867, abs=0.01)
         assert k[('cooldown', 90)]['D_A'] == pytest.approx(1405.68, abs=1.0)
+        # p-values under the trigger-placement null: high and rising with N
+        assert k[('cooldown', 30)]['p_value'] == pytest.approx(0.879, abs=0.01)
+        assert k[('cooldown', 60)]['p_value'] == pytest.approx(0.912, abs=0.01)
+        assert k[('cooldown', 90)]['p_value'] == pytest.approx(0.971, abs=0.01)
+        assert all(r['p_value'] > 0.5 for r in cool)   # all in the high tail
 
     def test_up_trend_mostly_wrong_signed_and_insignificant(self, campaign) -> None:
         """The up-move template predicts entries after a trailing gain do WORSE
