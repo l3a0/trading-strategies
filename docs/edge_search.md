@@ -48,6 +48,63 @@ Two simplifications are named, not silent: the permutation null is the uniform
 same-count shuffle (structure-preserving per-template nulls are a follow-up),
 and BY rather than BH is used because the candidates are dependent.
 
+### What the false-discovery rate controls
+
+FDR — the **false-discovery rate** — is the lever the ledger pulls. It reframes
+significance from "is this candidate real?" to "of everything I flag as a
+discovery, what fraction is noise?" Controlling it at q (here q = 0.10) means
+that across the batch's flagged survivors, no more than \~10% are expected to be
+false. A raw p-value can't ask that question — it only sees the one test in
+front of it, so a batch of nine candidates at p < 0.05 expects roughly one
+false hit even if every idea is dead, and a real campaign tests far more.
+
+FDR is the right knob because of the cost it bounds, and the two obvious
+alternatives miss it. A bare p < 0.05 per candidate is too loose: it ignores
+how many tests were run, so a big enough batch always coughs up "significant"
+noise. Controlling *any* false positive (the family-wise error rate,
+Bonferroni and kin) is too strict: on a batch this correlated it rejects almost
+everything, killing real candidates to avoid a single fluke. FDR sits between
+them, bounding the wild-goose rate among the survivors you'd actually spend
+effort confirming — the cost that matters before a sealed-vault run.
+Benjamini-Yekutieli (the guardrail above) is the dependence-robust procedure
+that enforces it.
+
+## Architecture
+
+The harness is a funnel — spend the sample cheaply on the left, gate expensive
+confirmation on the right:
+
+![Automated edge-search architecture: a hypothesis generator feeds a cheap seeded scout and an FDR ledger that auto-pins most candidates as nulls and regenerates the next batch; a survivor crosses a one-way gate to human registration and confirmation on a sealed, held-out vault, ending in a pinned verdict.](figures/edge_search_architecture.svg)
+
+*The teal stages are the automated, sample-spending loop; the amber stages are
+the human-gated, sealed confirmation a survivor must cross; gray boxes are
+infrastructure. Most candidates die at the ledger and the loop regenerates —
+only a survivor reaches the one-way gate.*
+
+- **Enumerate a mechanism-template batch** (`enumerate_candidates`). Each
+  template is a falsifiable, sign-predicting family — cooldown(N), up-move(k),
+  IV-richness — expanded across its settings into one committed batch. A
+  candidate with no predicted sign is refused, so the batch is structured bets,
+  not a blind grid.
+- **Run each through the one shared kill-gate** (`kill_gate`): the `D_A`
+  treated-minus-other split against a same-count permutation null, plus a
+  generic vol-confound probe.
+- **Record everything; judge the batch, not the candidate** (`run_campaign`,
+  logged to `edge_ledger.jsonl`). Significance is decided across the whole
+  campaign by `benjamini_yekutieli` — automating the search multiplies the
+  multiple-comparisons danger, and the ledger is the only thing that keeps it
+  honest.
+- **Cross the gate by hand.** The loop never promotes a survivor; a survivor
+  earns a pre-registration (a human step) and is confirmed on the **sealed
+  vault** — the held-out tickers (`SEALED_TICKERS`) the search never loads. A
+  loop can't "commit before seeing the number," so it commits the *data it
+  never sees* instead; the sealed vault is the automation-compatible substitute
+  for pre-registration.
+
+**The principle:** automate the bookkeeping that keeps the search honest — the
+enumeration, the shared gate, the FDR ledger — never the judgment that promotes
+a result.
+
 ---
 
 ## Campaign 1 — cheap entry-conditioning class — EMPTY (2026-06-13)
