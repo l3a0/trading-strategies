@@ -106,18 +106,43 @@ def open_dailies(path: str) -> TextIO:
 
 # ---- data loading ----
 
+def _unsplit_factor(date_str: str, splits: Sequence[tuple[str, float]]) -> float:
+    """Product of split ratios dated strictly AFTER `date_str` — the factor that backs
+    out yfinance's split adjustment to recover the as-traded price on that date. A date
+    after every split gets 1.0; a 2:1 split dated later multiplies earlier dates by 2.0."""
+    factor = 1.0
+    for split_date, ratio in splits:
+        if date_str < split_date:
+            factor *= ratio
+    return factor
+
+
 def load_unadjusted_prices(ticker: str, start: str, end: str) -> tuple[list[str], list[float]]:
-    """Unadjusted closes (actual traded prices, matching option strikes)."""
+    """As-traded closes matching the option strikes.
+
+    yfinance split-adjusts the `Close` column even with auto_adjust=False, but the
+    option strikes are in AS-TRADED terms — so a ticker that SPLIT after (or during)
+    its option span has a rescaled price history that no longer matches its strikes,
+    and any delta-hedged overlay run on it blows up. We back the split adjustment out
+    by multiplying each date by the product of split ratios dated strictly AFTER it.
+    A ticker with no in-span split gets factor 1.0 (byte-identical to the old path).
+    XLE's 2025-12-05 2:1 split is the case that surfaced this — it had HALVED every
+    pre-split close, mismatching the ~2x-larger strikes."""
     path = f'{ticker.lower()}_10yr_prices_unadjusted.csv'
     if not os.path.exists(path):
         import yfinance as yf  # lazy: only on first run
         raw = pd.DataFrame(yf.download(ticker, start=start, end=end, auto_adjust=False,
                                        progress=False))
+        try:
+            splits = [(str(ts.date()), float(r)) for ts, r in yf.Ticker(ticker).splits.items()]
+        except Exception:  # noqa: BLE001 — a network/parse hiccup → treat as no splits
+            splits = []
         with open(path, 'w', newline='') as f:
             w = csv.writer(f)
             w.writerow(['date', 'close'])
             for d, v in raw['Close'].itertuples():
-                w.writerow([d.strftime('%Y-%m-%d'), float(v)])
+                ds = d.strftime('%Y-%m-%d')
+                w.writerow([ds, float(v) * _unsplit_factor(ds, splits)])
         print(f'Saved unadjusted closes -> {path}')
     dates: list[str] = []
     closes: list[float] = []

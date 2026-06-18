@@ -73,6 +73,7 @@ import pytest
 from cc_backtest import compute_statistics, run_cc_overlay
 from real_cc_backtest import (
     CHAIN_CLEAN_START,
+    _unsplit_factor,
     load_chain_store,
     load_unadjusted_prices,
     run_real_cc_overlay,
@@ -1623,3 +1624,27 @@ class TestQqqExtendedWalkForwardRegression:
         assert _chain([r['bh_return_pct'] for r in records]) == pytest.approx(417.96, abs=0.01)
         assert sum(r['oos_return_pct'] > r['fixed_return_pct'] for r in records) == 15
         assert sum(r['oos_return_pct'] > r['bh_return_pct'] for r in records) == 5
+
+
+class TestUnsplitFactor:
+    """The split-back-out helper behind load_unadjusted_prices. yfinance split-adjusts
+    Close even with auto_adjust=False, so a ticker that split after its option span has
+    a rescaled price history; this factor (product of split ratios dated strictly after
+    a date) restores the as-traded price the strikes are quoted in."""
+
+    def test_no_splits_is_identity(self) -> None:
+        assert _unsplit_factor('2015-06-15', []) == 1.0
+
+    def test_pre_split_dates_scaled(self) -> None:
+        # XLE's 2:1 split dated 2025-12-05: earlier dates x2, the split date and after x1
+        splits = [('2025-12-05', 2.0)]
+        assert _unsplit_factor('2014-08-29', splits) == 2.0
+        assert _unsplit_factor('2025-12-04', splits) == 2.0
+        assert _unsplit_factor('2025-12-05', splits) == 1.0   # strictly after
+        assert _unsplit_factor('2026-06-05', splits) == 1.0
+
+    def test_multiple_splits_compound(self) -> None:
+        splits = [('2018-01-01', 2.0), ('2022-01-01', 3.0)]
+        assert _unsplit_factor('2017-06-01', splits) == 6.0   # both still ahead
+        assert _unsplit_factor('2020-06-01', splits) == 3.0   # only the 2022 split ahead
+        assert _unsplit_factor('2023-06-01', splits) == 1.0   # none ahead

@@ -110,36 +110,41 @@ only a survivor reaches the one-way gate.*
 enumeration, the shared gate, the FDR ledger — never the judgment that promotes
 a result.
 
-## Engine-re-run phase (designed; builds after the orthogonal chains publish)
+## Engine-re-run phase — the structure class
 
 The re-tag class above is cheap because it never changes the trades. The
-structure-side ideas — roll rules, stop-loss, spread width, and the
-delta-neutral short-vol / straddle / iron-condor strategies — *do* change the
-trades, so each candidate needs a full `run_real_*_overlay` engine run rather
-than a re-tag. That is the deferred-expensive phase. Its design is fixed even
-though it is not yet built:
+structure-side strategies — the delta-neutral short-vol / straddle / iron-condor
+overlays — *do* change the trades, so each candidate is a `(template, ticker)`
+cell that runs a full `run_real_*_overlay` engine pass rather than re-tagging
+fixed cycles. It is **built** (`run_structure_campaign`), a parallel phase that
+does not bend the cheap re-tag gate:
 
-- **A second template class.** Each candidate runs an overlay on the target
-  ticker and parameter setting, instead of re-tagging fixed cycles.
+- **A second template class.** `STRUCTURE_TEMPLATES` — the short call at 0.25Δ
+  and ATM, the two-leg ATM straddle, and the defined-risk iron condor — crossed
+  with the search tickers (`enumerate_structure_candidates`). Each cell runs its
+  overlay on the live chains.
 - **A HAC-t kill-gate with a closed-form null.** The score is
   `short_vol_statistics`'s Newey-West (HAC) t-stat on the daily rate-netted P&L,
-  which has an asymptotic null — so unlike the re-tag phase there is *no*
-  per-candidate permutation. The cost is N engine runs plus one
+  whose asymptotic null is standard normal — so the p-value is closed-form
+  (`erfc(t/√2)/2`, one-sided for the predicted positive premium) and there is
+  *no* per-candidate permutation. The cost is N engine runs plus one
   Benjamini-Yekutieli pass over the t-stat p-values: the same ledger, a cheaper
-  gate.
-- **The seal rolls to a non-equity name.** With GLD / TLT / XLE / EEM
-  onboarding, the strong vault is a structurally-different underlying the
-  structure work never used; the plan seals **TLT** (bonds) and searches the
-  equity/gold names. QQQ — the current re-tag seal — already appears in the
-  structure-side cross-section, so it cannot seal this phase.
-- **Graduation stays manual.** A survivor — e.g. the SPY short-vol call wing
-  (+2.54) — earns a pre-registration and a manual sealed-vault confirmation,
-  never an automated verdict. The harness surfaces survivors; it never crowns
-  them.
+  gate. The campaign is deterministic — no seed.
+- **The seal is a non-equity name.** TLT (long bonds) is held SEALED by
+  omission — `STRUCTURE_SEARCH` is MSFT/SPY/QQQ/GLD/XLE/EEM and never loads TLT.
+  QQQ — the re-tag seal — appears in the structure cross-section, so it cannot
+  seal this phase.
+- **A price-vs-chain scale guard.** Before scoring, each ticker's price file is
+  checked against the chain's as-traded strikes (`validate_dailies.scale_ratio`):
+  a ticker off-scale (a split mismatch — see Campaign 2) is flagged
+  `measurement_invalid` and EXCLUDED from the BY batch, so it never inflates n
+  or masquerades as a survivor.
+- **Graduation stays manual.** A survivor earns a pre-registration and a manual
+  sealed-vault confirmation, never an automated verdict. The harness surfaces
+  survivors; it never crowns them.
 
-It builds once the orthogonal chains are published (the seal and the runs both
-need the data live), and it does not bend the cheap re-tag gate — it is a
-parallel phase with its own kill-gate.
+The roll / stop-loss / spread-width structure *variants* — which need their own
+engine parameters per candidate — are the natural next expansion of this class.
 
 ---
 
@@ -196,3 +201,42 @@ once under honest FDR control, contains no survivor. The productive search
 moves to the structure side (roll/stop/spread templates that need engine
 re-runs) and to structurally different underlyings (the sealed vault upgrade) —
 both out of this MVP's scope, both the natural next phase.
+
+---
+
+## Campaign 2 — structure class — EMPTY (2026-06-17)
+
+**The batch.** Twenty-four `(template, ticker)` cells — four structure templates
+(short call 0.25Δ, short call ATM, ATM straddle, 25Δ/10Δ iron condor) crossed
+with the six search tickers (MSFT, SPY, QQQ, GLD, XLE, EEM; **TLT sealed**) —
+each a full `run_real_*_overlay` engine pass scored by the Newey-West HAC t-stat
+against its asymptotic normal null (closed-form p, no permutation), BY at
+q = 0.10. The chains are era-clipped at the live `CHAIN_CLEAN_START` (exploratory
+sees the corrected SPY boundary).
+
+**The result.** No cell survives campaign-wide BY (`0 / 24`). The strongest is
+SPY short-call 0.25Δ at t = +2.17 (the exploratory cousin of the frozen +2.54
+short-vol headline, now on the wider corrected SPY span): individually
+suggestive at p \~0.015, but clearing the BY rank-1 bar (\~0.0014 for 24
+dependent tests) by an order of magnitude. Every other cell is t < +1.2.
+
+**A data-hygiene catch that mattered.** The first run flagged two XLE "survivors"
+(short call t = +4.16 / +6.86) — entirely an artifact. XLE did a **2:1 split on
+2025-12-05**, and yfinance split-adjusts its `Close` even with
+`auto_adjust=False`, so the unadjusted price file had every pre-split close
+*halved* while the option strikes stayed as-traded. The delta-hedge ran on a
+price at half the real scale and the straddle equity ran to −$23M; the
+short-call wing's residual mis-hedge in a falling sector fabricated the positive
+t. The chain data was clean all along (the entry-band validator was right) — the
+**price file** was wrong. The fix backs the split out at the source
+(`load_unadjusted_prices`, with `_unsplit_factor`), and a price-vs-chain **scale
+guard** (`validate_dailies.scale_ratio`, wired into the campaign) now precludes
+the class. Repaired, XLE shows no edge (short-call t \~−1.7) and the batch is
+empty.
+
+**What this campaign settles.** The delta-neutral short-vol structure class on
+six underlyings contains no survivor under honest FDR control — the variance
+premium that survives a single HAC-t (SPY's call wing) does not survive the
+cross-section's multiple-testing math. The next moves are a stronger sealed
+vault and the roll/stop/spread structure variants that carry their own engine
+parameters.
