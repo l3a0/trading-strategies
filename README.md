@@ -138,6 +138,7 @@ CI runs `ruff`, `pyright`, all three test suites (fetching the checksum-verified
 | [fetch_batch.sh](fetch_batch.sh) | Generic sequential both-wing fetcher (`./fetch_batch.sh GLD TLT XLE EEM`) — the parameterized replacement for the per-batch `fetch_*.sh` wrappers; ensures a price calendar, then retry-wraps `download_option_dailies.py` |
 | [publish_dailies.sh](publish_dailies.sh) | Publishes a validated store to the release: gzip → sha256 → `gh release upload` → round-trip verify; prints the ci.yml/cold-storage follow-up (`DRY_RUN=1` rehearses) |
 | [onboard_ticker.sh](onboard_ticker.sh) | End-to-end onboarding orchestrator — fetch → validate → **sign-off gate** → publish → single-ticker structure-campaign smoke test (`./onboard_ticker.sh NVDA [--publish]`) |
+| [.claude/workflows/onboard.js](.claude/workflows/onboard.js) | The agentic version of that pipeline as a Claude-Code Workflow — clean-gate agent per ticker → structure campaign → triage (kill / adversarially-vetted survivor flag). SAFE (read-only) by default; `args.live=true` adds fetch + auto-apply of **known** repairs (proposed clip, split back-out) + publish. Novel pathologies and survivors always flag to a human |
 | [make_figures.py](make_figures.py#L888) | Regenerates the tutorial and blog figures (`fig1`–`fig13`) into `docs/figures/` |
 | [make_notebook.py](make_notebook.py#L1) | Regenerates the runnable notebook from the tutorial markdown + figure script |
 | [msft_10yr_prices.csv](msft_10yr_prices.csv) | Sample MSFT price data, 2016-04 to 2026-04 |
