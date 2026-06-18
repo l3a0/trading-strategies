@@ -438,6 +438,58 @@ def validate(ticker: str, path: str) -> tuple[Verdict, list[DayMetrics]]:
 
 
 # --------------------------------------------------------------------------- #
+# Price-vs-chain scale guard — a second hygiene axis. The entry-band check above
+# validates the CHAIN; this checks that the unadjusted PRICE FILE is on the same
+# (as-traded) scale as the strikes. A clean chain with a rescaled price file still
+# blows up the delta-hedged overlays: yfinance split-adjusts Close even with
+# auto_adjust=False, so a ticker that split (XLE, 2:1 on 2025-12-05) has a halved
+# price history that mismatches its ~2x strikes, and the hedge runs on the wrong scale.
+# --------------------------------------------------------------------------- #
+SCALE_TOL = 0.12   # |median ATM-strike / price - 1| above this flags a split/scale mismatch
+
+
+def scale_ratio(atm_by_day: dict, prices: dict, sample: int = 8) -> float | None:
+    """Median (ATM call strike / underlying price) over `sample` days spread across the
+    overlap. ~1.0 means the price file matches the as-traded strikes; ~2.0 is the
+    signature of a 2:1 split mismatch. None if uncheckable. Keys may be date objects or
+    'YYYY-MM-DD' strings as long as both dicts agree."""
+    common = sorted(set(atm_by_day) & set(prices))
+    if not common:
+        return None
+    n = min(sample, len(common))
+    idxs = sorted({round(i * (len(common) - 1) / max(n - 1, 1)) for i in range(n)})
+    ratios = [atm_by_day[common[i]] / prices[common[i]] for i in idxs if prices[common[i]] > 0]
+    if not ratios:
+        return None
+    return sorted(ratios)[len(ratios) // 2]
+
+
+def check_price_chain_scale(ticker: str, dailies_path: str | None = None,
+                            tol: float = SCALE_TOL) -> dict:
+    """Cross-check the unadjusted price file against the chain's strikes. Streams the
+    chain for the ATM call strike (delta nearest 0.5) per day and compares to the price
+    file; a median ratio off 1.0 by more than `tol` flags a split/adjustment mismatch —
+    the scale the delta-hedged overlays would silently run the hedge on the wrong side
+    of. Necessary alongside the entry-band check, which never looks at the price file."""
+    path = dailies_path or _find_dailies(ticker)
+    prices = load_prices(ticker)
+    if not path or not prices:
+        return {"ticker": ticker, "ok": True, "median_ratio": None,
+                "detail": "no chain or unadjusted price file to cross-check"}
+    atm_by_day: dict = {}
+    for day, rows in iter_day_chains(path):
+        calls = [r for r in rows if 0.0 < r["delta"] < 1.0]
+        if calls:
+            atm_by_day[day] = min(calls, key=lambda r: abs(r["delta"] - 0.5))["strike"]
+    r = scale_ratio(atm_by_day, prices)
+    ok = r is None or abs(r - 1.0) <= tol
+    detail = ("scale matches the chain" if ok else
+              f"price file is {r:.2f}x the as-traded strikes — likely a split/adjustment "
+              f"mismatch; the overlays would run the hedge on the wrong price scale")
+    return {"ticker": ticker, "ok": ok, "median_ratio": r, "detail": detail}
+
+
+# --------------------------------------------------------------------------- #
 # Reporting
 # --------------------------------------------------------------------------- #
 def format_report(v: Verdict, days: list[DayMetrics]) -> str:
@@ -512,6 +564,12 @@ def main(argv: list[str] | None = None) -> int:
             continue
         verdict, days = validate(ticker, path)
         print(format_report(verdict, days))
+        scale = check_price_chain_scale(ticker, path)
+        if scale["median_ratio"] is not None:
+            tag = "OK" if scale["ok"] else "SCALE MISMATCH"
+            print(f"  price-vs-chain scale: ratio {scale['median_ratio']:.3f}  [{tag}] — {scale['detail']}")
+            if not scale["ok"]:
+                rc = max(rc, 1)
         if verdict.status == "UNVERIFIED":
             rc = max(rc, 1)
     return rc

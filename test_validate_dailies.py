@@ -236,3 +236,47 @@ class TestNewChainsClean:
         assert v.status == "CLEAN", f"{ticker}: {v.reason}"
         assert v.boundary == v.span[0]                # usable from the first day
         assert v.post_defect_frac < vd.STRAY_MAX_FRAC
+
+
+# --------------------------------------------------------------------------- #
+# price-vs-chain scale guard
+# --------------------------------------------------------------------------- #
+class TestScaleGuard:
+    """The second hygiene axis: does the unadjusted price file match the chain's
+    as-traded strike scale? (A clean chain with a rescaled price file still blows up
+    the delta-hedged overlays — the XLE split case.)"""
+
+    def test_scale_ratio_matched(self):
+        atm = {f"d{i}": 100.0 for i in range(10)}
+        px = {f"d{i}": 100.0 for i in range(10)}
+        assert vd.scale_ratio(atm, px) == pytest.approx(1.0)
+
+    def test_scale_ratio_flags_split_mismatch(self):
+        # strikes 2x the price file = the XLE halved-price signature
+        atm = {f"d{i}": 100.0 for i in range(10)}
+        px = {f"d{i}": 50.0 for i in range(10)}
+        r = vd.scale_ratio(atm, px)
+        assert r == pytest.approx(2.0)
+        assert abs(r - 1.0) > vd.SCALE_TOL            # would be flagged
+
+    def test_scale_ratio_uncheckable(self):
+        assert vd.scale_ratio({}, {}) is None
+        assert vd.scale_ratio({"a": 1.0}, {"b": 1.0}) is None   # no overlapping days
+
+
+_XLE_STORE = _resolve("xle_option_dailies.csv")
+_HAVE_XLE_SCALE = _XLE_STORE is not None and bool(
+    __import__("glob").glob("xle_*_unadjusted.csv"))
+
+
+@pytest.mark.skipif(not _HAVE_XLE_SCALE, reason="needs XLE store + unadjusted price file")
+class TestXleScaleRepaired:
+    """Regression on the load_unadjusted_prices split fix: XLE's 2:1 split (2025-12-05)
+    had halved its price file (ratio ~2.0); after backing the split out, the price file
+    matches the chain to ~1.0 and the guard reads OK."""
+
+    def test_price_matches_chain_after_split_fix(self):
+        res = vd.check_price_chain_scale("XLE", _XLE_STORE)
+        assert res["median_ratio"] is not None
+        assert res["median_ratio"] == pytest.approx(1.0, abs=vd.SCALE_TOL)
+        assert res["ok"] is True

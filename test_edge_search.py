@@ -19,6 +19,8 @@ swept class is not re-derived. See docs/edge_search.md.
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import pytest
 
@@ -27,24 +29,42 @@ from edge_search import (
     DEFAULT_CAMPAIGN,
     SEALED_TICKERS,
     SEARCH_TICKERS,
+    STRUCTURE_CAMPAIGN,
+    STRUCTURE_SEALED,
+    STRUCTURE_SEARCH,
+    STRUCTURE_TEMPLATES,
     TREND_WINDOWS,
     Campaign,
     Candidate,
     CycleData,
+    StructureCandidate,
     _add_one_p,
+    _asymptotic_p,
     _cooldown_null,
     _vol_confound,
     benjamini_yekutieli,
     build_cycle_data,
     enumerate_candidates,
+    enumerate_structure_candidates,
     kill_gate,
     load_search_runs,
     run_batch,
     run_campaign,
+    run_structure_campaign,
 )
 from test_real_cc_backtest import _HAVE_MSFT_DAILIES, _HAVE_SPY_DAILIES
 
 _HAVE_SEARCH = _HAVE_MSFT_DAILIES and _HAVE_SPY_DAILIES
+
+
+def _have_dailies(ticker: str) -> bool:
+    base = os.path.join(os.path.dirname(__file__), f'{ticker.lower()}_option_dailies.csv')
+    return os.path.exists(base) or os.path.exists(base + '.gz')
+
+
+# the structure campaign needs all of its search tickers' chains (the sealed TLT is
+# never loaded); the unadjusted price files are committed, so they are always present.
+_HAVE_STRUCTURE = all(_have_dailies(t) for t in STRUCTURE_SEARCH)
 
 
 def _synthetic_runs(seed: int = 0):
@@ -432,3 +452,115 @@ class TestEdgeSearchCampaign:
         n = len(rows)
         c = float(sum(1.0 / i for i in range(1, n + 1)))
         assert min(ps) > (1 / (n * c)) * 0.10
+
+
+# --------------------------------------------------------------------------- #
+# Engine-re-run (structure) phase
+# --------------------------------------------------------------------------- #
+class TestStructurePhase:
+    """Always-run synthetic layer for the structure phase — the HAC-t asymptotic p,
+    the template x ticker enumerator + seal, and the FDR / scale-guard / flagging
+    logic via an injected scorer (no engine, no data)."""
+
+    def test_asymptotic_p_one_sided_upper_tail(self) -> None:
+        # predicted_sign=+1 tests P(Z >= t): t=0 -> 0.5, t=+2.326 -> ~0.01, t<0 -> >0.5
+        assert _asymptotic_p(0.0, +1) == pytest.approx(0.5, abs=1e-9)
+        assert _asymptotic_p(2.326, +1) == pytest.approx(0.01, abs=1e-3)
+        assert _asymptotic_p(-2.0, +1) == pytest.approx(0.9772, abs=1e-3)
+        # a negative-sign prediction flips the tail
+        assert _asymptotic_p(-2.326, -1) == pytest.approx(0.01, abs=1e-3)
+
+    def test_enumerate_cross_product_and_seal(self) -> None:
+        cands = enumerate_structure_candidates(STRUCTURE_CAMPAIGN)
+        assert len(cands) == len(STRUCTURE_TEMPLATES) * len(STRUCTURE_SEARCH)
+        assert {c.ticker for c in cands} == set(STRUCTURE_SEARCH)
+        # the seal is by OMISSION — no sealed ticker (TLT) is ever a candidate
+        assert STRUCTURE_SEALED == ('TLT',)
+        assert all(c.ticker not in STRUCTURE_SEALED for c in cands)
+        for tk in STRUCTURE_SEARCH:
+            assert {c.template for c in cands if c.ticker == tk} == {t.name for t in STRUCTURE_TEMPLATES}
+
+    def test_every_template_predicts_positive_premium(self) -> None:
+        assert all(t.predicted_sign == +1 for t in STRUCTURE_TEMPLATES)
+
+    def test_campaign_fdr_and_scale_exclusion_via_injected_scorer(self) -> None:
+        """run_structure_campaign over an injected scorer: a scale-INVALID ticker is
+        excluded from the BY batch (never inflates n, never a survivor), and a genuinely
+        tiny p among the scored cells survives BY."""
+        def scorer(cand: StructureCandidate) -> dict:
+            base = dict(phase='structure', template=cand.template, ticker=cand.ticker,
+                        params=cand.params_dict(), predicted_sign=1)
+            if cand.ticker == 'BBB':   # a scale-broken ticker → measurement-invalid
+                return {**base, 'measurement_invalid': True, 'scale_ratio': 2.0,
+                        't_stat_newey_west': None, 'sign_ok': False, 'p_value': None}
+            p = 0.0001 if cand.template == 'short_call_25' else 0.5
+            return {**base, 't_stat_newey_west': 3.0, 'sign_ok': True, 'p_value': p}
+
+        rows = run_structure_campaign(Campaign(search=('AAA', 'BBB')), scorer=scorer)
+        invalid = [r for r in rows if r.get('measurement_invalid')]
+        scored = [r for r in rows if not r.get('measurement_invalid')]
+        assert len(invalid) == len(STRUCTURE_TEMPLATES)   # every BBB cell excluded
+        assert len(scored) == len(STRUCTURE_TEMPLATES)    # every AAA cell scored
+        assert all(not r['by_survivor'] for r in invalid)
+        # BY over [0.0001, 0.5, 0.5, 0.5] at q=0.10 -> only the tiny p survives
+        survivors = [r for r in scored if r['clean_survivor']]
+        assert len(survivors) == 1
+        assert survivors[0]['ticker'] == 'AAA' and survivors[0]['template'] == 'short_call_25'
+
+
+@pytest.fixture(scope='module')
+def structure_campaign():
+    if not _HAVE_STRUCTURE:
+        pytest.skip("needs the structure search tickers' option dailies (or .gz twins)")
+    return run_structure_campaign()
+
+
+@pytest.mark.skipif(
+    not _HAVE_STRUCTURE,
+    reason='needs MSFT/SPY/QQQ/GLD/XLE/EEM option dailies (or their committed .gz twins)',
+)
+class TestStructureCampaign:
+    """Pin the engine-re-run campaign on the real chains — short-vol / straddle /
+    iron-condor across MSFT/SPY/QQQ/GLD/XLE/EEM, TLT sealed, scored by the HAC-t
+    asymptotic null and judged by BY. EXPLORATORY, not a registered verdict.
+    Deterministic (overlays + closed-form p, no RNG); cells use the LIVE
+    CHAIN_CLEAN_START (exploratory sees the corrected boundary)."""
+
+    @staticmethod
+    def _cell(rows, template, ticker):
+        return next(r for r in rows if r['template'] == template and r['ticker'] == ticker)
+
+    def test_batch_all_scored_none_invalid(self, structure_campaign) -> None:
+        rows = structure_campaign
+        assert len(rows) == len(STRUCTURE_TEMPLATES) * len(STRUCTURE_SEARCH)  # 24
+        # after the split fix every search ticker is scale-valid -> nothing excluded
+        assert sum(r.get('measurement_invalid', False) for r in rows) == 0
+
+    def test_no_survivor(self, structure_campaign) -> None:
+        """The decisive output: no structure candidate survives campaign-wide BY."""
+        rows = structure_campaign
+        assert sum(r['clean_survivor'] for r in rows) == 0
+        assert sum(r['by_survivor'] for r in rows) == 0
+
+    def test_spy_short_call_strongest_but_misses_by(self, structure_campaign) -> None:
+        """SPY short-call (the exploratory cousin of the frozen +2.54 headline) is the
+        strongest cell, yet its p clears the BY rank-1 bar by a wide margin."""
+        rows = structure_campaign
+        spy = self._cell(rows, 'short_call_25', 'SPY')
+        assert spy['t_stat_newey_west'] == pytest.approx(2.17, abs=0.06)
+        ps = [r['p_value'] for r in rows if r['p_value'] is not None]
+        assert spy['p_value'] == pytest.approx(min(ps), abs=1e-6)
+        n = len(ps)
+        c = float(sum(1.0 / i for i in range(1, n + 1)))
+        assert min(ps) > (1 / (n * c)) * 0.10
+
+    def test_xle_repaired_not_a_survivor(self, structure_campaign) -> None:
+        """Regression on the split fix: XLE short-call is t~-1.7 (no edge), NOT the
+        t=+4.16 the halved split-adjusted price file fabricated, and the scale guard
+        leaves it SCORED (ratio ~1.0 after the fix), not excluded."""
+        rows = structure_campaign
+        xle = self._cell(rows, 'short_call_25', 'XLE')
+        assert xle['t_stat_newey_west'] == pytest.approx(-1.72, abs=0.10)
+        assert xle['t_stat_newey_west'] < 0           # the fabricated +4.16 is gone
+        assert not xle.get('measurement_invalid')     # scale-valid after the fix
+        assert xle['by_survivor'] is False

@@ -34,24 +34,32 @@ verdict. A survivor earns a pre-registration (docs/prereg_trend_gate.md is the
 template), not a headline. The ledger pins the campaign so a swept dead end
 stays dead instead of being re-derived next session.
 
-SCOPE (MVP). Templates that RE-TAG existing naked cycles only — cheap, no
-engine re-runs. Structure-side ideas (roll rules, stop-loss, spread width)
-change the trades themselves and need a full run_real_cc_overlay per
-candidate; those are the expensive verdict phase, deliberately out of scope.
-The permutation null is per-template: the default is the uniform same-count
-shuffle (what iv_richness_scout uses), and a template whose treatment has
-temporal structure supplies its own — cooldown uses the structure-preserving
+TWO PHASES, one ledger. (1) The cheap RE-TAG class — templates that re-tag the
+existing naked cycles (no engine re-runs), scored by the D_A split against a
+permutation null. (2) The ENGINE-RE-RUN class (lower in this file) — structure
+strategies (short-vol / straddle / iron-condor) that CHANGE the trades, so each
+(template, ticker) candidate runs a full run_real_*_overlay and is scored by
+short_vol_statistics' Newey-West HAC t-stat against its asymptotic normal null
+(a closed-form p, no per-candidate permutation). Both phases share the
+Benjamini-Yekutieli ledger and the sealed-vault discipline; they are parallel
+kill-gates and neither bends the other.
+
+The re-tag null is per-template: the default is the uniform same-count shuffle
+(what iv_richness_scout uses), and a template whose treatment has temporal
+structure supplies its own — cooldown uses the structure-preserving
 trigger-placement permutation cooldown_scout uses (redraw each ticker's rips
 from its own terminals). BY (not BH) is the FDR procedure because the candidates
 are dependent.
 
 Usage:
-    python edge_search.py        # run the campaign, write edge_ledger.jsonl
+    python edge_search.py            # the re-tag campaign (MSFT+SPY, QQQ sealed)
+    python edge_search.py structure  # the engine-re-run campaign (TLT sealed)
 """
 
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Sequence
@@ -494,7 +502,247 @@ def _format_summary(rows: Sequence[dict[str, Any]],
     return '\n'.join(lines)
 
 
+# ============================================================================
+# Engine-re-run phase — the structure-side template class.
+#
+# The re-tag class above is cheap because it never changes the trades. The
+# structure-side ideas — the delta-neutral short-vol / straddle / iron-condor
+# strategies — DO change the trades, so each candidate is (template, ticker)
+# and runs a full run_real_*_overlay engine pass rather than re-tagging fixed
+# cycles. It is scored by short_vol_statistics' Newey-West HAC t-stat against
+# its ASYMPTOTIC normal null: no per-candidate permutation — the closed-form p
+# is the only mechanical difference from the re-tag gate. The batch is the
+# template x ticker cross-section, judged whole by the same Benjamini-Yekutieli
+# pass, with a non-equity name (TLT) sealed by omission. A PARALLEL phase: it
+# imports the engine lazily and never touches the re-tag gate above.
+#
+# Same epistemic object: EXPLORATORY, sample-spending, kill-or-justify. A
+# survivor earns a pre-registration and a manual sealed-vault confirmation,
+# never an automated verdict.
+# ============================================================================
+
+# Seal a structurally-different underlying the structure work never used. TLT
+# (long bonds) is the strong vault here; QQQ — the re-tag seal — appears in the
+# structure cross-section, so it cannot seal this phase.
+STRUCTURE_SEARCH: tuple[str, ...] = ('MSFT', 'SPY', 'QQQ', 'GLD', 'XLE', 'EEM')
+STRUCTURE_SEALED: tuple[str, ...] = ('TLT',)
+STRUCTURE_CAMPAIGN = Campaign(search=STRUCTURE_SEARCH, sealed=STRUCTURE_SEALED)
+
+STRUCTURE_CAPITAL = 100_000
+
+
+@dataclass(frozen=True)
+class StructureTemplate:
+    """One structure strategy + its parameter setting. `overlay` names the
+    vol_premium engine to run (resolved lazily). Every template predicts a
+    POSITIVE delta-hedged premium (+1): the short-vol seller is paid for
+    bearing variance risk."""
+    name: str
+    overlay: str            # 'short_vol' | 'straddle' | 'iron_condor'
+    params: tuple[tuple[str, Any], ...]
+    predicted_sign: int = +1
+
+
+# The committed structure batch: the short call at two deltas (0.25 = the
+# variance-premium wing of the +2.54 headline, 0.50 = ATM, max gamma/vega), the
+# two-leg ATM straddle, and the defined-risk iron condor — every existing
+# vol_premium overlay, one row each.
+STRUCTURE_TEMPLATES: tuple[StructureTemplate, ...] = (
+    StructureTemplate('short_call_25', 'short_vol', (('target_delta', 0.25), ('dte', 30))),
+    StructureTemplate('short_call_atm', 'short_vol', (('target_delta', 0.50), ('dte', 30))),
+    StructureTemplate('straddle', 'straddle', (('dte', 30),)),
+    StructureTemplate('iron_condor', 'iron_condor',
+                      (('dte', 30), ('short_delta', 0.25), ('wing_delta', 0.10))),
+)
+
+
+@dataclass(frozen=True)
+class StructureCandidate:
+    """One (template, ticker) cell — a single engine overlay to run and score."""
+    template: str
+    ticker: str
+    overlay: str
+    params: tuple[tuple[str, Any], ...]
+    predicted_sign: int
+
+    def params_dict(self) -> dict[str, Any]:
+        return dict(self.params)
+
+
+def enumerate_structure_candidates(
+    campaign: Campaign = STRUCTURE_CAMPAIGN,
+) -> list[StructureCandidate]:
+    """The template x ticker cross-section. The seal is enforced by OMISSION: a
+    sealed ticker (TLT) is never enumerated, so no candidate can run on it."""
+    return [
+        StructureCandidate(t.name, tk, t.overlay, t.params, t.predicted_sign)
+        for tk in campaign.search
+        for t in STRUCTURE_TEMPLATES
+    ]
+
+
+def _asymptotic_p(t_nw: float, predicted_sign: int) -> float:
+    """One-sided p-value from the HAC t-stat's asymptotic N(0,1) null. The
+    structure phase's whole point: short_vol_statistics' Newey-West t is
+    asymptotically standard normal under H0 (zero premium), so the p is
+    CLOSED-FORM — no per-candidate permutation. predicted_sign=+1 tests the
+    upper tail: p = P(Z >= t) = erfc(t / sqrt 2) / 2."""
+    z = t_nw if predicted_sign >= 0 else -t_nw
+    return 0.5 * math.erfc(z / math.sqrt(2.0))
+
+
+def _load_ticker_data(ticker: str, end: str = '2026-06-06') -> tuple[Any, list[str], list[float]]:
+    """Load one ticker's era-clipped chain store + matching unadjusted prices ONCE,
+    reused across all that ticker's templates in a campaign — the store parse, not
+    the overlay, is the per-cell cost, so caching it cuts the campaign from one load
+    per (template, ticker) cell to one per ticker. LIVE CHAIN_CLEAN_START (exploratory
+    sees the corrected boundary). Engine deps imported lazily so re-tag-only use of
+    this module stays light."""
+    from real_cc_backtest import (CHAIN_CLEAN_START, load_chain_store,
+                                   load_unadjusted_prices)
+    store = load_chain_store(f'{ticker.lower()}_option_dailies.csv',
+                             start=CHAIN_CLEAN_START.get(ticker))
+    days = sorted(store)
+    dates, prices = load_unadjusted_prices(ticker, days[0], end)
+    pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
+    return store, [d for d, _ in pairs], [p for _, p in pairs]
+
+
+def structure_kill_gate(cand: StructureCandidate,
+                        loaded: tuple[Any, list[str], list[float]],
+                        capital: float = STRUCTURE_CAPITAL) -> dict[str, Any]:
+    """One structure candidate → its ledger row, given the ticker's pre-loaded
+    (store, dates, prices). Runs the overlay and scores the daily vol-P&L by the
+    HAC t-stat's asymptotic null — no RNG, closed-form p (the only mechanical
+    difference from the re-tag gate)."""
+    from vol_premium import (run_real_iron_condor_overlay,
+                             run_real_short_vol_overlay,
+                             run_real_straddle_overlay, short_vol_statistics)
+    overlays = {'short_vol': run_real_short_vol_overlay,
+                'straddle': run_real_straddle_overlay,
+                'iron_condor': run_real_iron_condor_overlay}
+    store, dates, prices = loaded
+    summary, _, eq = overlays[cand.overlay](dates, prices, store,
+                                            {**cand.params_dict(), 'capital': capital})
+    st = short_vol_statistics(eq, summary['capital'], rf=summary['risk_free_rate'])
+    t_nw = float(st['t_stat_newey_west'])
+    return {
+        'phase': 'structure',
+        'template': cand.template,
+        'ticker': cand.ticker,
+        'params': cand.params_dict(),
+        'predicted_sign': cand.predicted_sign,
+        'n_days': st['n_days'],
+        't_stat_newey_west': t_nw,
+        'nw_lag': st['nw_lag'],
+        'sharpe': st['sharpe'],
+        'ann_excess_return_pct': st['ann_excess_return_pct'],
+        'sign_ok': bool(np.sign(t_nw) == cand.predicted_sign),
+        'p_value': round(_asymptotic_p(t_nw, cand.predicted_sign), 4),
+    }
+
+
+def _ticker_scale_ratio(loaded: tuple[Any, list[str], list[float]]) -> float | None:
+    """The price-vs-chain scale guard (validate_dailies.scale_ratio) on a loaded ticker:
+    median ATM-strike / price. ~1.0 is healthy; far from 1.0 means the price file is off
+    the chain's as-traded scale (a split mismatch like XLE pre-fix), so the overlay's
+    delta-hedge would run on the wrong price scale and the measurement is invalid."""
+    from validate_dailies import scale_ratio
+    store, dates, prices = loaded
+    pxd = dict(zip(dates, prices))
+    atm: dict[str, float] = {}
+    for day in store:
+        calls = [c for c in store[day]['candidates'] if 0.0 < c[1] < 1.0]  # c = (dte,delta,...,strike,cid)
+        if calls:
+            atm[day] = min(calls, key=lambda c: abs(c[1] - 0.5))[6]
+    return scale_ratio(atm, pxd)
+
+
+def run_structure_campaign(campaign: Campaign = STRUCTURE_CAMPAIGN,
+                           q: float = FDR_Q,
+                           capital: float = STRUCTURE_CAPITAL,
+                           scorer: Callable[[StructureCandidate], dict[str, Any]] | None = None,
+                           ) -> list[dict[str, Any]]:
+    """Enumerate the template x ticker structure batch, run each engine overlay,
+    score by the HAC t-stat's asymptotic p, and judge the whole batch by BY.
+    DETERMINISTIC — overlays + closed-form p, no RNG, so it reproduces without a seed.
+    Each ticker's store loads ONCE (cached across its templates). A price-vs-chain SCALE
+    GUARD runs first: a ticker whose price file is off the chain's as-traded scale (a
+    split mismatch like XLE pre-fix) is flagged measurement_invalid and EXCLUDED from the
+    BY batch — it never inflates n or masquerades as a survivor. `scorer` is injectable so
+    the synthetic test layer can exercise the FDR/flagging path without the engine."""
+    from validate_dailies import SCALE_TOL
+    cands = enumerate_structure_candidates(campaign)
+    if scorer is None:
+        cache: dict[str, tuple[Any, list[str], list[float]]] = {}
+        invalid: dict[str, float] = {}
+
+        def _default_score(cand: StructureCandidate) -> dict[str, Any]:
+            if cand.ticker not in cache:
+                cache[cand.ticker] = _load_ticker_data(cand.ticker)
+                ratio = _ticker_scale_ratio(cache[cand.ticker])
+                if ratio is not None and abs(ratio - 1.0) > SCALE_TOL:
+                    invalid[cand.ticker] = ratio
+            if cand.ticker in invalid:
+                return {'phase': 'structure', 'template': cand.template, 'ticker': cand.ticker,
+                        'params': cand.params_dict(), 'predicted_sign': cand.predicted_sign,
+                        'measurement_invalid': True, 'scale_ratio': round(invalid[cand.ticker], 3),
+                        't_stat_newey_west': None, 'sign_ok': False, 'p_value': None}
+            return structure_kill_gate(cand, cache[cand.ticker], capital)
+
+        scorer = _default_score
+
+    rows = [scorer(c) for c in cands]
+    scored = [r for r in rows if not r.get('measurement_invalid')]
+    survivors = benjamini_yekutieli([r['p_value'] for r in scored], q=q)
+    for r, surv in zip(scored, survivors):
+        r['fdr_q'] = q
+        r['by_survivor'] = bool(surv)
+        r['clean_survivor'] = bool(surv and r['sign_ok'])
+    for r in rows:
+        if r.get('measurement_invalid'):
+            r['fdr_q'] = q
+            r['by_survivor'] = False
+            r['clean_survivor'] = False
+    return rows
+
+
+def _format_structure_summary(rows: Sequence[dict[str, Any]],
+                              campaign: Campaign = STRUCTURE_CAMPAIGN) -> str:
+    lines = [
+        f'Structure campaign: search={list(campaign.search)} '
+        f'sealed={list(campaign.sealed)} q={FDR_Q} (HAC-t asymptotic null)',
+        f'{"template":<15} {"ticker":<6} {"t_NW":>6} {"p":>7} '
+        f'{"exc%":>6} {"shrp":>6} {"BY":>3} {"clean":>5}',
+    ]
+    for r in rows:
+        if r.get('measurement_invalid'):
+            lines.append(f'{r["template"]:<15} {r["ticker"]:<6} '
+                         f'{"INVALID":>6} {"":>7} {"scale " + str(r.get("scale_ratio")):>13}'
+                         f'   .     .   (excluded from BY)')
+            continue
+        lines.append(
+            f'{r["template"]:<15} {r["ticker"]:<6} '
+            f'{r["t_stat_newey_west"]:>+6.2f} {r["p_value"]:>7.4f} '
+            f'{r["ann_excess_return_pct"]:>6.1f} {r["sharpe"]:>6.2f} '
+            f'{"Y" if r["by_survivor"] else ".":>3} '
+            f'{"Y" if r["clean_survivor"] else ".":>5}')
+    n_clean = sum(r['clean_survivor'] for r in rows)
+    n_scored = sum(not r.get('measurement_invalid') for r in rows)
+    lines.append(f'\nclean survivors after BY: {n_clean} / {n_scored} scored '
+                 f'({len(rows) - n_scored} measurement-invalid, excluded)')
+    return '\n'.join(lines)
+
+
 def main() -> None:
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == 'structure':
+        print('Running the structure (engine-re-run) campaign — TLT sealed '
+              '(a few minutes cold) ...', flush=True)
+        rows = run_structure_campaign()
+        write_ledger(rows)
+        print(_format_structure_summary(rows))
+        return
     print('Loading search runs (sealed set excluded; a few minutes cold) ...',
           flush=True)
     rows = run_batch(DEFAULT_CAMPAIGN)
