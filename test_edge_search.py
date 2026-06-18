@@ -485,7 +485,7 @@ class TestStructurePhase:
 
     def test_campaign_fdr_and_scale_exclusion_via_injected_scorer(self) -> None:
         """run_structure_campaign over an injected scorer: a scale-INVALID ticker is
-        excluded from the BY batch (never inflates n, never a survivor), and a genuinely
+        carried into BY as p=None (counts toward n, never a survivor), and a genuinely
         tiny p among the scored cells survives BY."""
         def scorer(cand: StructureCandidate) -> dict:
             base = dict(phase='structure', template=cand.template, ticker=cand.ticker,
@@ -499,13 +499,63 @@ class TestStructurePhase:
         rows = run_structure_campaign(Campaign(search=('AAA', 'BBB')), scorer=scorer)
         invalid = [r for r in rows if r.get('measurement_invalid')]
         scored = [r for r in rows if not r.get('measurement_invalid')]
-        assert len(invalid) == len(STRUCTURE_TEMPLATES)   # every BBB cell excluded
+        assert len(invalid) == len(STRUCTURE_TEMPLATES)   # every BBB cell flagged invalid
         assert len(scored) == len(STRUCTURE_TEMPLATES)    # every AAA cell scored
+        # invalid cells go INTO BY (p=None) but can never be rejected
+        assert all(r['p_value'] is None for r in invalid)
         assert all(not r['by_survivor'] for r in invalid)
-        # BY over [0.0001, 0.5, 0.5, 0.5] at q=0.10 -> only the tiny p survives
+        # BY over [0.0001, 0.5, 0.5, 0.5, None, None, None, None] at q=0.10 ->
+        # only the tiny p survives (the four Nones still count toward n=8)
         survivors = [r for r in scored if r['clean_survivor']]
         assert len(survivors) == 1
         assert survivors[0]['ticker'] == 'AAA' and survivors[0]['template'] == 'short_call_25'
+
+    def test_measurement_invalid_does_not_shrink_by_denominator(self) -> None:
+        """A cell flagged measurement_invalid must still consume a BY comparison
+        (p=None counts toward n), so flagging it can never loosen the rejection bar
+        for the other cells — a data-dependent N-shrink lever the pre-fix code had.
+
+        Construct a borderline cell (p=0.005) that survives BY's rank-1 threshold at
+        n=7 but NOT at n=8, then toggle one OTHER cell between scored-valid and
+        measurement-invalid. With n preserved (the fix), the borderline cell's verdict
+        is identical either way. On the pre-fix code, flagging dropped the cell before
+        BY (n: 8 -> 7), loosening the bar enough to rescue the borderline cell."""
+        BORDERLINE, LARGE = 0.005, 0.9     # 0.005 survives BY at n=7, fails at n=8
+        FLAGGED = ('BBB', 'iron_condor')   # the single cell toggled valid <-> invalid
+        BORDER_CELL = ('AAA', 'short_call_25')
+
+        def make_scorer(flag_invalid: bool):
+            def scorer(cand: StructureCandidate) -> dict:
+                base = dict(phase='structure', template=cand.template, ticker=cand.ticker,
+                            params=cand.params_dict(), predicted_sign=1)
+                if flag_invalid and (cand.ticker, cand.template) == FLAGGED:
+                    return {**base, 'measurement_invalid': True, 'scale_ratio': 2.0,
+                            't_stat_newey_west': None, 'sign_ok': False, 'p_value': None}
+                p = BORDERLINE if (cand.ticker, cand.template) == BORDER_CELL else LARGE
+                return {**base, 't_stat_newey_west': 3.0, 'sign_ok': True, 'p_value': p}
+            return scorer
+
+        camp = Campaign(search=('AAA', 'BBB'))
+        valid_rows = run_structure_campaign(camp, scorer=make_scorer(False))
+        flagged_rows = run_structure_campaign(camp, scorer=make_scorer(True))
+
+        # both runs enumerate the same 8 cells; BY's effective n is 8 in BOTH
+        assert len(valid_rows) == len(flagged_rows) == 2 * len(STRUCTURE_TEMPLATES)
+
+        def remaining_survivors(rows):
+            return {(r['ticker'], r['template']) for r in rows
+                    if r['by_survivor'] and (r['ticker'], r['template']) != FLAGGED}
+
+        # the remaining cells' BY verdicts are identical whether or not FLAGGED is
+        # invalid — flagging preserved n, so the threshold did not move.
+        assert remaining_survivors(valid_rows) == remaining_survivors(flagged_rows)
+        # concretely: the borderline cell does NOT survive in either run (it would,
+        # had flagging shrunk n to 7).
+        def border(rows):
+            return next(r for r in rows
+                        if (r['ticker'], r['template']) == BORDER_CELL)
+        assert border(valid_rows)['by_survivor'] is False
+        assert border(flagged_rows)['by_survivor'] is False
 
 
 @pytest.fixture(scope='module')

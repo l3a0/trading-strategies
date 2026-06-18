@@ -668,9 +668,11 @@ def run_structure_campaign(campaign: Campaign = STRUCTURE_CAMPAIGN,
     DETERMINISTIC — overlays + closed-form p, no RNG, so it reproduces without a seed.
     Each ticker's store loads ONCE (cached across its templates). A price-vs-chain SCALE
     GUARD runs first: a ticker whose price file is off the chain's as-traded scale (a
-    split mismatch like XLE pre-fix) is flagged measurement_invalid and EXCLUDED from the
-    BY batch — it never inflates n or masquerades as a survivor. `scorer` is injectable so
-    the synthetic test layer can exercise the FDR/flagging path without the engine."""
+    split mismatch like XLE pre-fix) is flagged measurement_invalid and scored p=None — it
+    still COUNTS toward BY's n (a comparison you ran) but can never be rejected, so it
+    never masquerades as a survivor and never shrinks the denominator to loosen the bar for
+    the other cells. `scorer` is injectable so the synthetic test layer can exercise the
+    FDR/flagging path without the engine."""
     from validate_dailies import SCALE_TOL
     cands = enumerate_structure_candidates(campaign)
     if scorer is None:
@@ -693,17 +695,17 @@ def run_structure_campaign(campaign: Campaign = STRUCTURE_CAMPAIGN,
         scorer = _default_score
 
     rows = [scorer(c) for c in cands]
-    scored = [r for r in rows if not r.get('measurement_invalid')]
-    survivors = benjamini_yekutieli([r['p_value'] for r in scored], q=q)
-    for r, surv in zip(scored, survivors):
+    # measurement-invalid cells carry p_value=None (set by the scorer). They go
+    # INTO the BY call, not around it: benjamini_yekutieli counts a None toward n
+    # (a comparison you ran) but can never reject it. Dropping them before the
+    # call would shrink n and loosen the rejection bar for every other cell — a
+    # data-dependent N-shrink lever. This matches the re-tag phase, which passes
+    # null-D_A candidates as p=None for the same reason.
+    survivors = benjamini_yekutieli([r['p_value'] for r in rows], q=q)
+    for r, surv in zip(rows, survivors):
         r['fdr_q'] = q
         r['by_survivor'] = bool(surv)
-        r['clean_survivor'] = bool(surv and r['sign_ok'])
-    for r in rows:
-        if r.get('measurement_invalid'):
-            r['fdr_q'] = q
-            r['by_survivor'] = False
-            r['clean_survivor'] = False
+        r['clean_survivor'] = bool(surv and r.get('sign_ok'))
     return rows
 
 
@@ -719,7 +721,7 @@ def _format_structure_summary(rows: Sequence[dict[str, Any]],
         if r.get('measurement_invalid'):
             lines.append(f'{r["template"]:<15} {r["ticker"]:<6} '
                          f'{"INVALID":>6} {"":>7} {"scale " + str(r.get("scale_ratio")):>13}'
-                         f'   .     .   (excluded from BY)')
+                         f'   .     .   (p=None: counts toward BY n, never rejectable)')
             continue
         lines.append(
             f'{r["template"]:<15} {r["ticker"]:<6} '
@@ -730,7 +732,8 @@ def _format_structure_summary(rows: Sequence[dict[str, Any]],
     n_clean = sum(r['clean_survivor'] for r in rows)
     n_scored = sum(not r.get('measurement_invalid') for r in rows)
     lines.append(f'\nclean survivors after BY: {n_clean} / {n_scored} scored '
-                 f'({len(rows) - n_scored} measurement-invalid, excluded)')
+                 f'({len(rows) - n_scored} measurement-invalid: p=None, count toward '
+                 f'BY n={len(rows)} but never rejectable)')
     return '\n'.join(lines)
 
 

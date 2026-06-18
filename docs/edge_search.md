@@ -137,8 +137,11 @@ does not bend the cheap re-tag gate:
 - **A price-vs-chain scale guard.** Before scoring, each ticker's price file is
   checked against the chain's as-traded strikes (`validate_dailies.scale_ratio`):
   a ticker off-scale (a split mismatch — see Campaign 2) is flagged
-  `measurement_invalid` and EXCLUDED from the BY batch, so it never inflates n
-  or masquerades as a survivor.
+  `measurement_invalid` and scored `p = None`. It still COUNTS toward BY's n — a
+  comparison the loop ran — but can never be rejected, so it cannot masquerade as
+  a survivor and cannot shrink the denominator to loosen the bar for the other
+  cells. (Dropping it before BY, as an earlier cut did, was a data-dependent
+  N-shrink: fewer comparisons mechanically lowers the rejection threshold.)
 - **Graduation stays manual.** A survivor earns a pre-registration and a manual
   sealed-vault confirmation, never an automated verdict. The harness surfaces
   survivors; it never crowns them.
