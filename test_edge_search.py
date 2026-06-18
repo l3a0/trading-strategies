@@ -564,3 +564,73 @@ class TestStructureCampaign:
         assert xle['t_stat_newey_west'] < 0           # the fabricated +4.16 is gone
         assert not xle.get('measurement_invalid')     # scale-valid after the fix
         assert xle['by_survivor'] is False
+
+
+# --------------------------------------------------------------------------- #
+# Per-onboarded-ticker single-ticker structure campaigns
+# --------------------------------------------------------------------------- #
+# As each new ticker is onboarded and its store published, its single-ticker
+# structure campaign (the onboarding smoke test) gets a CI-reproducible pin here
+# — same engine-re-run phase, run on its own chain alone (BY over its 4 template
+# cells). EXPLORATORY, not a registered verdict: pinned so the onboarding sweep
+# is not re-derived. Every onboarded ticker so far reads 0/4 survivors with
+# every cell wrong-signed (t_NW < 0), the recurring lesson that a bare
+# short-vol / straddle / iron-condor structure carries no edge on these chains.
+
+
+@pytest.fixture(scope='module')
+def nvda_structure_campaign():
+    if not _have_dailies('NVDA'):
+        pytest.skip('needs NVDA option dailies (or its committed .gz twin)')
+    return run_structure_campaign(Campaign(search=('NVDA',)))
+
+
+@pytest.mark.skipif(
+    not _have_dailies('NVDA'),
+    reason='needs NVDA option dailies (or its committed .gz twin)',
+)
+class TestNvdaStructureCampaign:
+    """Pin NVDA's single-ticker structure campaign (its onboarding smoke test) on
+    the published chain — short-vol / straddle / iron-condor run on NVDA alone,
+    scored by the HAC-t asymptotic null and judged by BY over the 4 template
+    cells. EXPLORATORY, not a registered verdict. Deterministic (overlays +
+    closed-form p, no RNG); the LIVE CHAIN_CLEAN_START applies."""
+
+    @staticmethod
+    def _cell(rows, template):
+        return next(r for r in rows if r['template'] == template and r['ticker'] == 'NVDA')
+
+    def test_batch_all_scored_none_invalid(self, nvda_structure_campaign) -> None:
+        rows = nvda_structure_campaign
+        assert len(rows) == len(STRUCTURE_TEMPLATES)   # 4 cells: NVDA x every template
+        assert all(r['ticker'] == 'NVDA' for r in rows)
+        assert sum(r.get('measurement_invalid', False) for r in rows) == 0
+
+    def test_no_survivor(self, nvda_structure_campaign) -> None:
+        """The decisive output: no NVDA structure candidate survives BY."""
+        rows = nvda_structure_campaign
+        assert sum(r['clean_survivor'] for r in rows) == 0
+        assert sum(r['by_survivor'] for r in rows) == 0
+
+    def test_every_cell_wrong_signed(self, nvda_structure_campaign) -> None:
+        """Every template predicts positive premium (t_NW>0); on NVDA every cell
+        is wrong-signed (t_NW<0) — no short-vol/straddle/iron-condor edge."""
+        rows = nvda_structure_campaign
+        assert all(r['t_stat_newey_west'] < 0 for r in rows)
+        assert all(r['sign_ok'] is False for r in rows)
+
+    def test_cell_t_nw_and_p_values(self, nvda_structure_campaign) -> None:
+        """Pin each cell's HAC-t and its asymptotic (one-sided upper-tail) p."""
+        rows = nvda_structure_campaign
+        sc25 = self._cell(rows, 'short_call_25')
+        assert sc25['t_stat_newey_west'] == pytest.approx(-0.96, abs=0.05)
+        assert sc25['p_value'] == pytest.approx(0.8315, abs=0.01)
+        scatm = self._cell(rows, 'short_call_atm')
+        assert scatm['t_stat_newey_west'] == pytest.approx(-0.96, abs=0.05)
+        assert scatm['p_value'] == pytest.approx(0.8315, abs=0.01)
+        strad = self._cell(rows, 'straddle')
+        assert strad['t_stat_newey_west'] == pytest.approx(-1.22, abs=0.05)
+        assert strad['p_value'] == pytest.approx(0.8888, abs=0.01)
+        ic = self._cell(rows, 'iron_condor')
+        assert ic['t_stat_newey_west'] == pytest.approx(-1.47, abs=0.05)
+        assert ic['p_value'] == pytest.approx(0.9292, abs=0.01)
