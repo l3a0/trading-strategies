@@ -240,3 +240,39 @@ premium that survives a single HAC-t (SPY's call wing) does not survive the
 cross-section's multiple-testing math. The next moves are a stronger sealed
 vault and the roll/stop/spread structure variants that carry their own engine
 parameters.
+
+### Campaign 2 addendum — NVDA (live-onboarded) — EMPTY
+
+NVDA was onboarded after the campaign ran and swept through the same structure
+class as a single live-staged ticker. The four `(template, NVDA)` cells extend
+the cross-section by one underlying; the verdict is unchanged.
+
+**The result.** No NVDA cell survives — every t-stat is negative, so each one is
+on the wrong side of the predicted positive premium before BY even applies:
+
+| Template | t (NW) | One-sided p | BY survivor? | Measurement valid? |
+| --- | --- | --- | --- | --- |
+| short_call_25 | −0.96 | 0.8315 | no | yes |
+| short_call_atm | −0.96 | 0.8315 | no | yes |
+| straddle | −1.22 | 0.8888 | no | yes |
+| iron_condor | −1.47 | 0.9292 | no | yes |
+
+**A clean data-hygiene read — for once.** Where XLE needed a split repair, NVDA
+passed every clean-gate check on the first try. `validate_dailies.py` streamed
+NVDA over 2010-12-01 → 2026-06-05 (3,895 trading days) and returned
+**VERDICT: CLEAN** — no clip needed, no defective in-band days, the store clean
+from its first day (100% usable, 0.00% defective, BS-disagree 0.15%). The
+price-vs-chain **scale ratio is 1.006 [OK]** — NVDA's unadjusted price file sits
+on the chain's as-traded scale, so the split guard finds no mismatch and the
+ticker enters the BY batch with `measurement_invalid = false`. No repairs
+applied, nothing flagged for human review, and **no `CHAIN_CLEAN_START` entry is
+warranted**. The one wrinkle — zero-bid rates run elevated in the early years
+(10–28% across 2010–2013) — does not change the call: the validator still
+classifies every day usable with no defective in-band days, so the elevated
+zero-bid tail is a liquidity feature of NVDA's early options, not a defect that
+clips the span.
+
+**What this addendum settles.** Adding a seventh underlying to the structure
+cross-section produces no survivor and no hygiene exception — NVDA's chains are
+CLEAN from the first day, its price file is on-scale, and all four templates land
+wrong-signed. The short-vol structure class stays empty.

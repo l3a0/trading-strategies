@@ -42,3 +42,4 @@ edge_ledger.jsonl
 fetch_progress.log
 gld_tlt_fetch.log
 xle_eem_fetch.log
+batch_fetch.log

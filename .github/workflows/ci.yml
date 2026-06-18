@@ -132,6 +132,7 @@ jobs:
             tlt_option_dailies.csv.gz
             xle_option_dailies.csv.gz
             eem_option_dailies.csv.gz
+            nvda_option_dailies.csv.gz
           key: chain-data-${{ hashFiles('data_checksums.sha256') }}
       - name: Fetch chain data from the data release
         if: steps.chain-cache.outputs.cache-hit != 'true'
@@ -182,6 +183,7 @@ jobs:
             tlt_option_dailies.csv.gz
             xle_option_dailies.csv.gz
             eem_option_dailies.csv.gz
+            nvda_option_dailies.csv.gz
           key: chain-data-${{ hashFiles('data_checksums.sha256') }}
       - name: Fetch chain data from the data release
         if: steps.chain-cache.outputs.cache-hit != 'true'
