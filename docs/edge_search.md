@@ -119,10 +119,13 @@ cell that runs a full `run_real_*_overlay` engine pass rather than re-tagging
 fixed cycles. It is **built** (`run_structure_campaign`), a parallel phase that
 does not bend the cheap re-tag gate:
 
-- **A second template class.** `STRUCTURE_TEMPLATES` — the short call at 0.25Δ
-  and ATM, the two-leg ATM straddle, and the defined-risk iron condor — crossed
-  with the search tickers (`enumerate_structure_candidates`). Each cell runs its
-  overlay on the live chains.
+- **A second template class, on a closed grammar.** `STRUCTURE_TEMPLATES` — the
+  short call at 0.25Δ and ATM, the two-leg ATM straddle, and the defined-risk
+  iron condor — crossed with the search tickers (`enumerate_structure_candidates`).
+  Each cell runs its overlay on the live chains. Every template draws its params
+  from a fixed menu (`ALLOWED_GRID`) enforced at construction: an off-menu value
+  raises rather than running, so the reachable hypothesis space stays finite and
+  countable (`grid_universe_size`) — the countability the FDR ledger rests on.
 - **A HAC-t kill-gate with a closed-form null.** The score is
   `short_vol_statistics`'s Newey-West (HAC) t-stat on the daily rate-netted P&L,
   whose asymptotic null is standard normal — so the p-value is closed-form
