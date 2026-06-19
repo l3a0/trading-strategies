@@ -48,15 +48,19 @@ from edge_search import (
     _vol_confound,
     benjamini_yekutieli,
     build_cycle_data,
+    build_proposer_corpus,
     enumerate_candidates,
     enumerate_structure_candidates,
     kill_gate,
     load_idea_ledger,
+    load_proposer_corpus,
     load_search_runs,
     record_trials,
+    render_proposer_corpus,
     run_batch,
     run_campaign,
     run_structure_campaign,
+    scrub_ledger_row,
     structure_ledger_rows,
 )
 from test_real_cc_backtest import _HAVE_MSFT_DAILIES, _HAVE_SPY_DAILIES
@@ -629,6 +633,75 @@ class TestIdeaLedger:
 
     def test_load_missing_ledger_is_empty(self, tmp_path) -> None:
         assert load_idea_ledger(str(tmp_path / 'nope.jsonl')) == []
+
+
+class TestProposerCorpus:
+    """Interlock #2: the number-free scoreboard — an allow-list projection of the
+    lifetime ledger. A proposer may read this; it must never read the ledger itself.
+    The airtight guarantee is structural (scrub copies only SAFE_FIELDS), not a
+    regex over the rendered text — template names carry digits and grid values
+    collide with result values, so only field-selection is leak-proof."""
+
+    @staticmethod
+    def _ledger_row(template='short_call_25', ticker='MSFT', surv=False, invalid=False):
+        # a row as it lives in idea_ledger.jsonl — carries the answer key
+        return {'phase': 'structure', 'template': template, 'ticker': ticker,
+                'params': {'target_delta': 0.25, 'dte': 30}, 'predicted_sign': 1,
+                'statistic_kind': 't_nw', 'statistic': 7.654321, 'p_value': 0.0123456,
+                'by_survivor': surv, 'measurement_invalid': invalid, 'fdr_q': 0.10,
+                'end': '2026-06-06', 'data_lineage_hash': 'abcd1234'}
+
+    def test_scrub_is_allow_list_only_safe_keys_survive(self) -> None:
+        s = scrub_ledger_row(self._ledger_row())
+        assert set(s) == {'phase', 'template', 'ticker', 'params', 'predicted_sign', 'verdict'}
+        # every result-bearing field is dropped by construction, not redaction
+        for forbidden in ('statistic', 'statistic_kind', 'p_value', 'fdr_q', 'data_lineage_hash'):
+            assert forbidden not in s
+
+    def test_verdict_is_one_bit(self) -> None:
+        assert scrub_ledger_row(self._ledger_row(surv=False))['verdict'] == 'KILLED'
+        assert scrub_ledger_row(self._ledger_row(surv=True))['verdict'] == 'SURVIVED'
+        assert scrub_ledger_row(self._ledger_row(invalid=True))['verdict'] == 'INVALID'
+
+    def test_render_omits_the_answer_key(self) -> None:
+        corpus = render_proposer_corpus(build_proposer_corpus([self._ledger_row()]))
+        # the distinctive result magnitudes must NOT appear in what the proposer reads
+        assert '7.654321' not in corpus and '0.0123456' not in corpus
+        # but the hypothesis coordinates + the one-bit verdict do
+        assert 'short_call_25' in corpus and 'target_delta=0.25' in corpus and 'KILLED' in corpus
+
+    def test_empty_corpus_renders_safely(self) -> None:
+        assert render_proposer_corpus([]) == '(no comparisons recorded yet)'
+
+    def test_survivor_is_excluded_from_corpus(self) -> None:
+        # SURVIVED is the one "fish here" coordinate — it must not feed the automated
+        # proposer (it escalates to manual pre-registration out-of-band). KILLED and
+        # INVALID stay (duds to avoid / broken tickers); SURVIVED is dropped.
+        rows = [self._ledger_row(template='killed_one'),
+                self._ledger_row(template='winner', surv=True),
+                self._ledger_row(template='broken', invalid=True)]
+        corpus = build_proposer_corpus(rows)
+        verdicts = {r['template']: r['verdict'] for r in corpus}
+        assert verdicts == {'killed_one': 'KILLED', 'broken': 'INVALID'}  # no 'winner'
+
+    def test_params_defensively_copied(self) -> None:
+        # the corpus is a safe boundary — mutating it must not reach the source row
+        row = self._ledger_row()
+        s = scrub_ledger_row(row)
+        s['params']['target_delta'] = 0.99
+        assert row['params']['target_delta'] == 0.25   # source untouched
+
+    def test_load_proposer_corpus_is_scrubbed(self, tmp_path) -> None:
+        # full path: a real KILLED ledger row (with p_value/statistic) -> record -> view
+        p = str(tmp_path / 'idea_ledger.jsonl')
+        row = {'phase': 'structure', 'template': 'straddle', 'ticker': 'SPY',
+               'params': {'dte': 30}, 'predicted_sign': 1, 't_stat_newey_west': 0.4,
+               'p_value': 0.34, 'by_survivor': False, 'fdr_q': 0.10}
+        record_trials(structure_ledger_rows([row]), p)
+        corpus = load_proposer_corpus(p)
+        assert len(corpus) == 1
+        assert 'p_value' not in corpus[0] and 'statistic' not in corpus[0]
+        assert corpus[0]['verdict'] == 'KILLED' and corpus[0]['template'] == 'straddle'
 
 
 class TestStructurePhase:

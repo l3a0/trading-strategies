@@ -947,6 +947,78 @@ def record_trials(ledger_rows: Sequence[dict[str, Any]],
     return len(fresh)
 
 
+# --- the number-free scoreboard (interlock #2: what the proposer may read) ---
+# An ALLOW-LIST projection of the lifetime ledger: the hypothesis coordinates a
+# proposer needs to avoid re-suggesting duds (template / ticker / params /
+# predicted_sign) plus a ONE-BIT verdict — and nothing else. Every result
+# statistic (p-value, t-stat, fdr_q, the lineage hash) is dropped BY CONSTRUCTION,
+# not redacted after the fact: scrub_ledger_row copies only SAFE_FIELDS, so a
+# result column added to the ledger later cannot leak (it is simply never copied).
+# The magnitude is the dangerous channel — a near-miss t-stat tells a proposer
+# WHERE to fish; the one-bit KILLED/SURVIVED does not. This is the redacted view an
+# LLM proposer is allowed to read; it must NEVER read idea_ledger.jsonl (the answer
+# key). Allow-list beats deny-list/regex-redaction precisely because template names
+# carry digits (short_call_25) and grid values collide with results (fdr_q 0.10 ==
+# wing_delta 0.10) — only structural field-selection is airtight.
+SAFE_FIELDS: tuple[str, ...] = ('phase', 'template', 'ticker', 'params', 'predicted_sign')
+
+
+def scrub_ledger_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Project one lifetime-ledger row to the proposer-safe fields + a one-bit
+    verdict. Allow-list: only SAFE_FIELDS survive, so no result statistic can leak
+    through a forgotten field. `params` is defensively copied so a consumer mutating
+    the corpus cannot reach back into the source row. measurement_invalid surfaces as
+    INVALID — a per-TICKER data-quality state (the scale mismatch), not a per-
+    hypothesis result; it tells a proposer which ticker's price file needs a human
+    fix, nothing about where an edge lives."""
+    out = {f: (dict(row[f]) if f == 'params' else row[f]) for f in SAFE_FIELDS}
+    out['verdict'] = ('INVALID' if row.get('measurement_invalid')
+                      else 'SURVIVED' if row.get('by_survivor') else 'KILLED')
+    return out
+
+
+def build_proposer_corpus(ledger_rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The scrubbed view of the lifetime ledger an automated proposer may read —
+    names + verdict, no numbers beyond the hypothesis coordinates. SURVIVED rows are
+    EXCLUDED: a survivor is the one genuine "fish here" coordinate (it is a BY-
+    thresholded function of the batch magnitudes, announcing the cell that cleared
+    the bar), and per the manual-graduation discipline it escalates to human pre-
+    registration out-of-band — it must never feed back into automated proposal. So
+    the corpus is the duds to avoid (KILLED) plus unmeasurable tickers (INVALID).
+    Re-proposing an excluded survivor cell is harmless: record_trials dedupes it."""
+    return [s for r in ledger_rows
+            if (s := scrub_ledger_row(r))['verdict'] != 'SURVIVED']
+
+
+def load_proposer_corpus(path: str = IDEA_LEDGER_PATH) -> list[dict[str, Any]]:
+    """Load the committed lifetime ledger and return ONLY its scrubbed projection —
+    the single function a proposer-facing surface should call (never load_idea_ledger,
+    which carries the answer key).
+
+    CONTINGENCY (not yet an interlock): this projection is leak-proof only for a
+    proposer that reads THROUGH it. idea_ledger.jsonl is committed to git and carries
+    the full answer key, and nothing yet DENIES a repo-aware agent from reading it
+    directly — "the proposer must never read the ledger" is an honor-system
+    convention today, not a mechanized control. The access boundary (a vault dir + a
+    scoped Read-deny, or committing only the scrubbed projection to the proposer-
+    visible path) is the unbuilt interlock that makes this scoreboard meaningful."""
+    return build_proposer_corpus(load_idea_ledger(path))
+
+
+def render_proposer_corpus(scrubbed: Sequence[dict[str, Any]]) -> str:
+    """A markdown table of the scrubbed corpus — what's been tried and whether it
+    survived, with every result statistic absent. Safe to hand to a proposer."""
+    if not scrubbed:
+        return '(no comparisons recorded yet)'
+    lines = ['| template | ticker | params | predicted | verdict |',
+             '| --- | --- | --- | --- | --- |']
+    for r in scrubbed:
+        params = ', '.join(f'{k}={v}' for k, v in r['params'].items()) or '-'
+        sign = '+1' if r['predicted_sign'] > 0 else '-1'
+        lines.append(f'| {r["template"]} | {r["ticker"]} | {params} | {sign} | {r["verdict"]} |')
+    return '\n'.join(lines)
+
+
 def main() -> None:
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == 'structure':
