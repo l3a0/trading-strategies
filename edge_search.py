@@ -58,6 +58,7 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from dataclasses import dataclass, field
@@ -529,6 +530,14 @@ STRUCTURE_SEALED: tuple[str, ...] = ('TLT',)
 STRUCTURE_CAMPAIGN = Campaign(search=STRUCTURE_SEARCH, sealed=STRUCTURE_SEALED)
 
 STRUCTURE_CAPITAL = 100_000
+STRUCTURE_END = '2026-06-06'   # as-of date the chains are loaded through (single source)
+# Engine-version tag folded into the data-lineage hash (#3a). The recorded
+# statistic is pinned to (data + capital + this version), NOT inferred live from
+# engine code — so a change to the overlay / short_vol_statistics mechanics or the
+# frozen engine config (rf=0.045, hedge_cost_bps=1.0 in vol_premium) that re-computes
+# a different t-stat for the SAME data must BUMP this, which re-lineages and
+# re-records rather than silently keeping a stale answer-key row.
+STRUCTURE_ENGINE_VERSION = 'v1'
 
 
 # --- the closed grammar: the menu the search builds templates from -----------
@@ -662,7 +671,7 @@ def _asymptotic_p(t_nw: float, predicted_sign: int) -> float:
     return 0.5 * math.erfc(z / math.sqrt(2.0))
 
 
-def _load_ticker_data(ticker: str, end: str = '2026-06-06') -> tuple[Any, list[str], list[float]]:
+def _load_ticker_data(ticker: str, end: str = STRUCTURE_END) -> tuple[Any, list[str], list[float]]:
     """Load one ticker's era-clipped chain store + matching unadjusted prices ONCE,
     reused across all that ticker's templates in a campaign — the store parse, not
     the overlay, is the per-cell cost, so caching it cuts the campaign from one load
@@ -808,6 +817,136 @@ def _format_structure_summary(rows: Sequence[dict[str, Any]],
     return '\n'.join(lines)
 
 
+# --- the lifetime idea ledger (interlock #3a: the guess-counter) -------------
+# A COMMITTED, append-only record of every distinct structure comparison ever run
+# against a data lineage — distinct from the .gitignore'd edge_ledger.jsonl (the
+# regenerable per-run results). It is the foundation the cumulative-n BY threshold
+# (#3b) and the scrubbed proposer scoreboard (#2) will read: it makes "how many
+# comparisons has the program ever spent" a countable, on-the-record number rather
+# than a per-session reset. Deduped + timestamp-free, so it is DETERMINISTIC —
+# re-running a campaign on the same data lineage adds no rows (it is the same
+# comparison), and the git history is the timeline. Structure-phase for now; the
+# re-tag phase records into the same file once it carries a per-row lineage.
+#
+# NOTE: this ledger CARRIES the result statistics (p-value, t-stat) — it is the
+# answer key, committed deliberately. An LLM proposer must NEVER read it; #2's
+# scrubbed scoreboard is the redacted view it is allowed to see.
+IDEA_LEDGER_PATH = 'idea_ledger.jsonl'
+
+
+def _read_data_checksums(path: str = 'data_checksums.sha256') -> dict[str, str]:
+    """filename -> sha256, parsed from the committed checksum manifest. Missing
+    file -> empty map (a fresh checkout without published data still records a
+    well-formed lineage, just with 'MISSING' store checksums)."""
+    out: dict[str, str] = {}
+    try:
+        with open(path, encoding='utf-8') as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) == 2:
+                    out[parts[1]] = parts[0]
+    except FileNotFoundError:
+        pass
+    return out
+
+
+def _data_lineage_hash(ticker: str, end: str, capital: float = STRUCTURE_CAPITAL,
+                       checksums: dict[str, str] | None = None) -> str:
+    """A short, deterministic id for the (data + engine) a comparison's RESULT ran
+    against: this ticker's chain-store checksum + its era-clip boundary + the end
+    date + the deployed capital + the engine-version tag. The rule is exactly the
+    inputs that move the t-stat, nothing more, nothing less — so two comparisons
+    share a lineage iff they would produce the SAME result. That is what lets #3b
+    count cumulative-n WITHIN a lineage and refuse to mix comparisons run against
+    different data.
+
+    Deliberately NOT folded in: the closed grammar (ALLOWED_GRID). The menu never
+    enters the engine, so the same (template, params) gives a byte-identical t-stat
+    no matter what else the grid can express — folding it in would re-lineage every
+    comparison on a menu edit and silently RESET the lifetime counter (a fresh
+    false-discovery budget on every grid widening). The grammar's countability role
+    lives where it belongs: grid_universe_size and the pinned 24-cell batch (the BY
+    denominator of a single batch), not the per-comparison identity. `checksums` is
+    injectable for tests."""
+    from real_cc_backtest import CHAIN_CLEAN_START
+    checks = _read_data_checksums() if checksums is None else checksums
+    sha = checks.get(f'{ticker.lower()}_option_dailies.csv.gz', 'MISSING')
+    canon = json.dumps({'ticker': ticker, 'store_sha': sha,
+                        'clean_start': CHAIN_CLEAN_START.get(ticker, ''),
+                        'end': end, 'capital': capital,
+                        'engine': STRUCTURE_ENGINE_VERSION}, sort_keys=True)
+    return hashlib.sha256(canon.encode()).hexdigest()[:16]
+
+
+def _ledger_key(row: dict[str, Any]) -> tuple[str, str, str, str, str]:
+    """Identity of a comparison: (lineage, phase, template, ticker, params). Two
+    rows with the same key ARE the same comparison — re-running it is not a new
+    look, so record_trials dedupes on this."""
+    return (row['data_lineage_hash'], row['phase'], row['template'],
+            row['ticker'], json.dumps(row['params'], sort_keys=True))
+
+
+def structure_ledger_rows(campaign_rows: Sequence[dict[str, Any]],
+                          end: str = STRUCTURE_END,
+                          capital: float = STRUCTURE_CAPITAL) -> list[dict[str, Any]]:
+    """Project run_structure_campaign rows into lean lifetime-ledger rows: the
+    hypothesis (template/ticker/params/sign), the decisive statistic + verdict,
+    and a per-ticker data-lineage hash. Carries the result — it is the answer key,
+    not the scrubbed view (#2). `end` / `capital` default to the phase constants the
+    campaign runs with, so the recorded lineage is provably the span + size the
+    comparison ran on (pass the same values you ran run_structure_campaign with)."""
+    return [{
+        'phase': 'structure',
+        'template': r['template'],
+        'ticker': r['ticker'],
+        'params': r['params'],
+        'predicted_sign': r['predicted_sign'],
+        'statistic_kind': 't_nw',
+        'statistic': r.get('t_stat_newey_west'),
+        'p_value': r.get('p_value'),
+        'by_survivor': bool(r.get('by_survivor', False)),
+        'measurement_invalid': bool(r.get('measurement_invalid', False)),
+        'fdr_q': r.get('fdr_q'),
+        'end': end,
+        'data_lineage_hash': _data_lineage_hash(r['ticker'], end, capital),
+    } for r in campaign_rows]
+
+
+def load_idea_ledger(path: str = IDEA_LEDGER_PATH) -> list[dict[str, Any]]:
+    """Read the committed lifetime ledger (missing file -> empty). A malformed line
+    is intentionally FATAL (json.loads raises): for a machine-written, never-hand-
+    edited, append-only record, refusing to extend on top of corruption beats
+    silently losing comparisons from the lifetime count. Do not add a skip-bad-lines
+    clause."""
+    try:
+        with open(path, encoding='utf-8') as f:
+            return [json.loads(line) for line in f if line.strip()]
+    except FileNotFoundError:
+        return []
+
+
+def record_trials(ledger_rows: Sequence[dict[str, Any]],
+                  path: str = IDEA_LEDGER_PATH) -> int:
+    """Append only the comparisons NOT already in the ledger (dedup by
+    _ledger_key), preserving existing lines. Returns the count newly added.
+    Append-only + deduped = deterministic: recording the same campaign twice is a
+    no-op, so the committed file changes only when a genuinely new comparison is
+    run. THIS is the counter that never silently resets."""
+    seen = {_ledger_key(r) for r in load_idea_ledger(path)}
+    fresh: list[dict[str, Any]] = []
+    for r in ledger_rows:
+        k = _ledger_key(r)
+        if k not in seen:
+            seen.add(k)
+            fresh.append(r)
+    fresh.sort(key=_ledger_key)   # canonical file order, independent of caller's row order
+    if fresh:
+        with open(path, 'a', encoding='utf-8') as f:
+            for r in fresh:
+                f.write(json.dumps(r, sort_keys=True) + '\n')
+    return len(fresh)
+
+
 def main() -> None:
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == 'structure':
@@ -816,6 +955,10 @@ def main() -> None:
         rows = run_structure_campaign()
         write_ledger(rows)
         print(_format_structure_summary(rows))
+        if '--record' in sys.argv:
+            n = record_trials(structure_ledger_rows(rows))
+            print(f'\nidea_ledger: +{n} new comparison(s) recorded to '
+                  f'{IDEA_LEDGER_PATH} (deduped against the lifetime record)')
         return
     print('Loading search runs (sealed set excluded; a few minutes cold) ...',
           flush=True)

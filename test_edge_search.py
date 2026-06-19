@@ -44,16 +44,20 @@ from edge_search import (
     _add_one_p,
     _asymptotic_p,
     _cooldown_null,
+    _data_lineage_hash,
     _vol_confound,
     benjamini_yekutieli,
     build_cycle_data,
     enumerate_candidates,
     enumerate_structure_candidates,
     kill_gate,
+    load_idea_ledger,
     load_search_runs,
+    record_trials,
     run_batch,
     run_campaign,
     run_structure_campaign,
+    structure_ledger_rows,
 )
 from test_real_cc_backtest import _HAVE_MSFT_DAILIES, _HAVE_SPY_DAILIES
 
@@ -557,6 +561,74 @@ class TestClosedGrammar:
             StructureTemplate('x', 'straddle', (('dte', 30.0),), +1)
         with pytest.raises(ValueError, match='off-menu'):
             StructureCandidate('x', 'MSFT', 'straddle', (('dte', 30.0),), +1)
+
+
+class TestIdeaLedger:
+    """Interlock #3a: the committed, append-only lifetime trial ledger. Deterministic
+    (deduped, timestamp-free), so it is the guess-counter that never silently resets.
+    Always-run — uses synthetic campaign rows + the committed data_checksums."""
+
+    @staticmethod
+    def _row(template='short_call_25', ticker='MSFT', params=None,
+             p=0.5, t=1.0, surv=False):
+        return {'phase': 'structure', 'template': template, 'ticker': ticker,
+                'params': params or {'target_delta': 0.25, 'dte': 30},
+                'predicted_sign': 1, 't_stat_newey_west': t, 'p_value': p,
+                'by_survivor': surv, 'fdr_q': 0.10}
+
+    def test_lineage_hash_deterministic_and_sensitive(self) -> None:
+        h1 = _data_lineage_hash('MSFT', '2026-06-06')
+        assert h1 == _data_lineage_hash('MSFT', '2026-06-06')   # deterministic
+        assert h1 != _data_lineage_hash('MSFT', '2025-01-01')   # end date matters
+        assert h1 != _data_lineage_hash('SPY', '2026-06-06')    # ticker matters
+        assert h1 != _data_lineage_hash('MSFT', '2026-06-06', 200_000)  # capital matters
+        assert len(h1) == 16
+        # a different store checksum is a different lineage (the data changed)
+        assert h1 != _data_lineage_hash('MSFT', '2026-06-06',
+                                        checksums={'msft_option_dailies.csv.gz': 'deadbeef'})
+
+    def test_lineage_ignores_grammar_no_reset_loophole(self) -> None:
+        # Widening the menu must NOT change a comparison's lineage. The engine result
+        # for a fixed (template, params, ticker, data) is invariant to what else the
+        # grid can express, so folding ALLOWED_GRID into the lineage would re-record
+        # every prior look as "new" on a grid edit and hand #3b a fresh false-discovery
+        # budget — the exact reset the lifetime counter exists to prevent. The menu's
+        # countability lives in grid_universe_size + the pinned 24-cell batch, not here.
+        before = _data_lineage_hash('MSFT', '2026-06-06')
+        orig = ALLOWED_GRID['short_vol']['target_delta']
+        ALLOWED_GRID['short_vol']['target_delta'] = orig + (0.70,)   # widen the menu
+        try:
+            after = _data_lineage_hash('MSFT', '2026-06-06')
+        finally:
+            ALLOWED_GRID['short_vol']['target_delta'] = orig          # restore
+        assert before == after
+
+    def test_structure_ledger_rows_schema(self) -> None:
+        rows = structure_ledger_rows([self._row(p=0.83, t=-0.96)])
+        r = rows[0]
+        assert r['phase'] == 'structure' and r['template'] == 'short_call_25'
+        assert r['statistic_kind'] == 't_nw' and r['statistic'] == -0.96
+        assert r['p_value'] == 0.83 and r['by_survivor'] is False
+        assert len(r['data_lineage_hash']) == 16
+
+    def test_record_dedupes_reruns(self, tmp_path) -> None:
+        p = str(tmp_path / 'idea_ledger.jsonl')
+        rows = structure_ledger_rows([self._row(), self._row(ticker='SPY')])
+        assert record_trials(rows, p) == 2
+        # re-recording THE SAME comparisons adds nothing — same lineage + candidate
+        assert record_trials(rows, p) == 0
+        assert len(load_idea_ledger(p)) == 2
+
+    def test_record_appends_new_comparison(self, tmp_path) -> None:
+        p = str(tmp_path / 'idea_ledger.jsonl')
+        record_trials(structure_ledger_rows([self._row()]), p)
+        added = record_trials(structure_ledger_rows(
+            [self._row(template='straddle', params={'dte': 30})]), p)
+        assert added == 1                      # a different template is a new comparison
+        assert len(load_idea_ledger(p)) == 2
+
+    def test_load_missing_ledger_is_empty(self, tmp_path) -> None:
+        assert load_idea_ledger(str(tmp_path / 'nope.jsonl')) == []
 
 
 class TestStructurePhase:
