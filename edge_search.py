@@ -531,39 +531,110 @@ STRUCTURE_CAMPAIGN = Campaign(search=STRUCTURE_SEARCH, sealed=STRUCTURE_SEALED)
 STRUCTURE_CAPITAL = 100_000
 
 
+# --- the closed grammar: the menu the search builds templates from -----------
+# Interlock #1 of the LLM-ideation protocol. The same grammar is enforced in
+# BOTH StructureTemplate.__post_init__ (the authoring object) AND
+# StructureCandidate.__post_init__ (the object that actually reaches the
+# kill-gate and the BY pool), via _validate_grammar below — so an off-menu value
+# cannot sneak in one layer down. A closed grammar makes the template menu FINITE
+# and on the record: every comparison the FDR ledger counts is provably one of
+# grid_universe_size() templates, and widening the menu is a deliberate, reviewed
+# edit that bumps the pinned size. That is the countability the FDR accounting
+# rests on — a continuous knob like target_delta=0.241 is a hard error at
+# construction, not an infinite fishing ground. The grid is a SUPERSET of the
+# committed STRUCTURE_TEMPLATES below (standard option deltas / DTEs), so it
+# leaves room to enumerate without re-running the published campaign.
+ALLOWED_GRID: dict[str, dict[str, tuple[Any, ...]]] = {
+    'short_vol':   {'target_delta': (0.15, 0.25, 0.50), 'dte': (21, 30, 45)},
+    'straddle':    {'dte': (21, 30, 45)},
+    'iron_condor': {'dte': (21, 30, 45), 'short_delta': (0.20, 0.25, 0.30),
+                    'wing_delta': (0.05, 0.10)},
+}
+
+
+def grid_universe_size() -> int:
+    """The count of distinct templates ALLOWED_GRID can express — the size of
+    the reachable hypothesis universe (sum over overlays of the product of each
+    knob's DISTINCT option count). Pinned by test_edge_search: bump the grid,
+    bump the pin, on the record."""
+    return sum(math.prod(len(set(v)) for v in grid.values())
+               for grid in ALLOWED_GRID.values())
+
+
+def _validate_grammar(label: str, overlay: str,
+                      params: tuple[tuple[str, Any], ...], predicted_sign: int) -> None:
+    """Enforce the closed grammar on an (overlay, params, sign) triple. Raises
+    ValueError on an off-menu overlay/param value, a missing/extra/duplicate knob,
+    or a predicted_sign that is not exactly the int -1 or +1. Membership is
+    TYPE-STRICT (30.0 does not match int 30; True does not match +1): a proposer
+    must pass the exact grid literal, which is the countability contract. Shared
+    by StructureTemplate and StructureCandidate so the constraint sits on both the
+    authoring object and the object that enters the BY pool."""
+    if overlay not in ALLOWED_GRID:
+        raise ValueError(f'{label}: overlay {overlay!r} off-menu; '
+                         f'known overlays = {sorted(ALLOWED_GRID)}')
+    grid = ALLOWED_GRID[overlay]
+    keys = dict(params)
+    if len(keys) != len(params):
+        raise ValueError(f'{label}: duplicate param key in {params}')
+    if set(keys) != set(grid):
+        raise ValueError(f'{label}: params {sorted(keys)} must match the {overlay!r} '
+                         f'knobs {sorted(grid)} exactly (none missing, none extra)')
+    for k, v in keys.items():
+        if not any(v == g and type(v) is type(g) for g in grid[k]):
+            raise ValueError(f'{label}: {k}={v!r} off-menu; allowed {grid[k]}')
+    if type(predicted_sign) is not int or predicted_sign not in (-1, +1):
+        raise ValueError(f'{label}: predicted_sign must be the int -1 or +1, '
+                         f'got {predicted_sign!r}')
+
+
 @dataclass(frozen=True)
 class StructureTemplate:
-    """One structure strategy + its parameter setting. `overlay` names the
-    vol_premium engine to run (resolved lazily). Every template predicts a
-    POSITIVE delta-hedged premium (+1): the short-vol seller is paid for
-    bearing variance risk."""
+    """One structure strategy + its parameter setting, drawn from ALLOWED_GRID.
+    `overlay` names the vol_premium engine to run (resolved lazily). Every
+    committed template predicts a POSITIVE delta-hedged premium (+1): the
+    short-vol seller is paid for bearing variance risk. `__post_init__` REFUSES
+    to build a template whose overlay/params/sign are off-menu — so an off-grid
+    value (a continuous-knob fish like target_delta=0.241) is a hard error at
+    construction, never a silent extra comparison."""
     name: str
     overlay: str            # 'short_vol' | 'straddle' | 'iron_condor'
     params: tuple[tuple[str, Any], ...]
-    predicted_sign: int = +1
+    predicted_sign: int     # mandatory: -1 or +1, a falsifiable direction (no default)
+
+    def __post_init__(self) -> None:
+        _validate_grammar(self.name, self.overlay, self.params, self.predicted_sign)
 
 
 # The committed structure batch: the short call at two deltas (0.25 = the
 # variance-premium wing of the +2.54 headline, 0.50 = ATM, max gamma/vega), the
 # two-leg ATM straddle, and the defined-risk iron condor — every existing
-# vol_premium overlay, one row each.
+# vol_premium overlay, one row each. Each states its +1 sign explicitly (no
+# default), and every value is a member of ALLOWED_GRID above.
 STRUCTURE_TEMPLATES: tuple[StructureTemplate, ...] = (
-    StructureTemplate('short_call_25', 'short_vol', (('target_delta', 0.25), ('dte', 30))),
-    StructureTemplate('short_call_atm', 'short_vol', (('target_delta', 0.50), ('dte', 30))),
-    StructureTemplate('straddle', 'straddle', (('dte', 30),)),
+    StructureTemplate('short_call_25', 'short_vol', (('target_delta', 0.25), ('dte', 30)), +1),
+    StructureTemplate('short_call_atm', 'short_vol', (('target_delta', 0.50), ('dte', 30)), +1),
+    StructureTemplate('straddle', 'straddle', (('dte', 30),), +1),
     StructureTemplate('iron_condor', 'iron_condor',
-                      (('dte', 30), ('short_delta', 0.25), ('wing_delta', 0.10))),
+                      (('dte', 30), ('short_delta', 0.25), ('wing_delta', 0.10)), +1),
 )
 
 
 @dataclass(frozen=True)
 class StructureCandidate:
-    """One (template, ticker) cell — a single engine overlay to run and score."""
+    """One (template, ticker) cell — a single engine overlay to run and score.
+    Grammar-validated at construction (the same `_validate_grammar` as
+    StructureTemplate), because THIS is the object that reaches the kill-gate and
+    the BY pool — so no off-grid params can sneak in below the template layer."""
     template: str
     ticker: str
     overlay: str
     params: tuple[tuple[str, Any], ...]
     predicted_sign: int
+
+    def __post_init__(self) -> None:
+        _validate_grammar(f'{self.template}@{self.ticker}', self.overlay,
+                          self.params, self.predicted_sign)
 
     def params_dict(self) -> dict[str, Any]:
         return dict(self.params)

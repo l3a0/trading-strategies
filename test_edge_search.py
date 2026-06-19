@@ -25,6 +25,7 @@ import numpy as np
 import pytest
 
 from edge_search import (
+    ALLOWED_GRID,
     COOLDOWN_NS,
     DEFAULT_CAMPAIGN,
     SEALED_TICKERS,
@@ -38,6 +39,8 @@ from edge_search import (
     Candidate,
     CycleData,
     StructureCandidate,
+    StructureTemplate,
+    grid_universe_size,
     _add_one_p,
     _asymptotic_p,
     _cooldown_null,
@@ -457,6 +460,105 @@ class TestEdgeSearchCampaign:
 # --------------------------------------------------------------------------- #
 # Engine-re-run (structure) phase
 # --------------------------------------------------------------------------- #
+class TestClosedGrammar:
+    """Interlock #1: the closed grammar (ALLOWED_GRID + _validate_grammar). The same
+    check runs on StructureTemplate (authoring) AND StructureCandidate (the object
+    that enters the BY pool), so the hypothesis universe is finite and countable —
+    the precondition the FDR accounting rests on."""
+
+    def test_grid_universe_size_pinned(self) -> None:
+        # short_vol 3x3=9, straddle 3, iron_condor 3x3x2=18 -> 30. Bump the grid,
+        # bump this pin — the universe size is on the record by design.
+        assert grid_universe_size() == 30
+        by_hand = sum(
+            len(grid['target_delta']) * len(grid['dte']) if ov == 'short_vol'
+            else len(grid['dte']) if ov == 'straddle'
+            else len(grid['dte']) * len(grid['short_delta']) * len(grid['wing_delta'])
+            for ov, grid in ALLOWED_GRID.items())
+        assert by_hand == grid_universe_size()
+
+    def test_committed_templates_are_on_menu(self) -> None:
+        # Importing edge_search already constructed STRUCTURE_TEMPLATES; if any cell
+        # were off-menu, __post_init__ would have raised at import. Re-affirm here:
+        # every committed template's params match its overlay grid exactly, value-wise.
+        assert len(STRUCTURE_TEMPLATES) == 4
+        for t in STRUCTURE_TEMPLATES:
+            grid = ALLOWED_GRID[t.overlay]
+            params = dict(t.params)
+            assert set(params) == set(grid)
+            for k, v in params.items():
+                assert v in grid[k]
+            assert t.predicted_sign in (-1, +1)
+
+    def test_offmenu_value_raises(self) -> None:
+        # the continuous-knob fish: 0.241 is not on the delta menu
+        with pytest.raises(ValueError, match='off-menu'):
+            StructureTemplate('x', 'short_vol', (('target_delta', 0.241), ('dte', 30)), +1)
+
+    def test_unknown_overlay_raises(self) -> None:
+        with pytest.raises(ValueError, match='overlay'):
+            StructureTemplate('x', 'butterfly', (('dte', 30),), +1)
+
+    def test_param_keys_must_match_grid_exactly(self) -> None:
+        # an extra knob the overlay doesn't define
+        with pytest.raises(ValueError, match='must match'):
+            StructureTemplate('x', 'straddle', (('dte', 30), ('target_delta', 0.25)), +1)
+        # a missing required knob (short_vol needs both target_delta and dte)
+        with pytest.raises(ValueError, match='must match'):
+            StructureTemplate('x', 'short_vol', (('dte', 30),), +1)
+
+    def test_duplicate_param_key_raises(self) -> None:
+        with pytest.raises(ValueError, match='duplicate'):
+            StructureTemplate('x', 'straddle', (('dte', 30), ('dte', 45)), +1)
+
+    def test_predicted_sign_mandatory_and_validated(self) -> None:
+        # no default: omitting predicted_sign is a TypeError (missing positional arg)
+        with pytest.raises(TypeError):
+            StructureTemplate('x', 'straddle', (('dte', 30),))  # type: ignore[call-arg]
+        # only -1 / +1 are valid directions
+        for bad in (0, 2, -2):
+            with pytest.raises(ValueError, match='predicted_sign'):
+                StructureTemplate('x', 'straddle', (('dte', 30),), bad)
+
+    def test_candidate_is_also_grammar_validated(self) -> None:
+        # The honesty-relevant object is StructureCandidate — it reaches the kill-gate
+        # and the BY pool. An off-grid candidate must be a hard error too, or the
+        # continuous-knob fish just swims around the template gate one layer down.
+        with pytest.raises(ValueError, match='off-menu'):
+            StructureCandidate('fish', 'MSFT', 'short_vol',
+                               (('target_delta', 0.241), ('dte', 30)), +1)
+        # the on-menu candidate the enumerator actually builds constructs fine
+        StructureCandidate('short_call_25', 'MSFT', 'short_vol',
+                           (('target_delta', 0.25), ('dte', 30)), +1)
+
+    def test_committed_batch_is_the_by_denominator(self) -> None:
+        # The number BY divides by is the run count, not the universe — so pin it.
+        # 4 committed templates x 6 search tickers = 24 cells (the n in benjamini_yekutieli).
+        cands = enumerate_structure_candidates(STRUCTURE_CAMPAIGN)
+        assert len(cands) == 24
+        assert len(cands) == len(STRUCTURE_TEMPLATES) * len(STRUCTURE_SEARCH)
+        # and the committed menu is a subset of the reachable universe (4 <= 30),
+        # so widening either the templates or the grid is a deliberate, pinned edit.
+        assert len(STRUCTURE_TEMPLATES) <= grid_universe_size()
+
+    def test_grid_menus_have_no_duplicate_values(self) -> None:
+        # a fat-fingered duplicate (e.g. dte:(21,30,30,45)) would silently inflate
+        # the universe count; the menu must be a true set of options per knob.
+        for overlay, grid in ALLOWED_GRID.items():
+            for knob, values in grid.items():
+                assert len(set(values)) == len(values), f'{overlay}.{knob} has a duplicate'
+
+    def test_membership_is_type_strict(self) -> None:
+        # bool is an int subclass (True == 1), and 30.0 == 30 — a guard whose job is
+        # rejecting off-spec input must not let either through where an int is meant.
+        with pytest.raises(ValueError, match='predicted_sign'):
+            StructureTemplate('x', 'straddle', (('dte', 30),), True)  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match='off-menu'):
+            StructureTemplate('x', 'straddle', (('dte', 30.0),), +1)
+        with pytest.raises(ValueError, match='off-menu'):
+            StructureCandidate('x', 'MSFT', 'straddle', (('dte', 30.0),), +1)
+
+
 class TestStructurePhase:
     """Always-run synthetic layer for the structure phase — the HAC-t asymptotic p,
     the template x ticker enumerator + seal, and the FDR / scale-guard / flagging
