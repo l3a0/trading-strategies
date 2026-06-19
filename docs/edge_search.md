@@ -160,6 +160,24 @@ does not bend the cheap re-tag gate:
   BY threshold reads so the comparison count is the program's lifetime total, not
   one session's. It carries the result statistics (the answer key), so an automated
   proposer must never read it.
+- **A number-free scoreboard for proposers.** `build_proposer_corpus` projects the
+  lifetime ledger to an allow-list view — the hypothesis coordinates (template /
+  ticker / params / predicted sign) plus a one-bit verdict — and
+  `render_proposer_corpus` formats it as a table. Every result statistic is dropped
+  *by construction* (`scrub_ledger_row` copies only `SAFE_FIELDS`, so a result column
+  added to the ledger later cannot leak); the magnitude is the dangerous channel — a
+  near-miss t-stat tells a proposer where to fish. **SURVIVED rows are excluded:** a
+  survivor is itself a BY-thresholded result — the one genuine "fish here" coordinate
+  — so it escalates to manual pre-registration out-of-band and never feeds back into
+  automated proposal; the corpus is the duds to avoid (KILLED) plus unmeasurable
+  tickers (INVALID, a per-ticker data-quality state). **Contingency, not yet an
+  interlock:** this is leak-proof only for a proposer that reads *through* it —
+  `idea_ledger.jsonl` is committed and carries the answer key, and nothing yet denies
+  a repo-aware agent from reading it directly, so "the proposer must never read the
+  ledger" is an honor-system convention today. The access boundary (a vault dir + a
+  scoped read-deny, or committing only the scrubbed projection to the proposer-visible
+  path) is the unbuilt interlock that makes the scoreboard meaningful; the tried-set
+  neutrality additionally rests on the grammar staying closed and fully enumerated.
 - **Graduation stays manual.** A survivor earns a pre-registration and a manual
   sealed-vault confirmation, never an automated verdict. The harness surfaces
   survivors; it never crowns them.
