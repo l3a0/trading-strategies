@@ -145,6 +145,21 @@ does not bend the cheap re-tag gate:
   a survivor and cannot shrink the denominator to loosen the bar for the other
   cells. (Dropping it before BY, as an earlier cut did, was a data-dependent
   N-shrink: fewer comparisons mechanically lowers the rejection threshold.)
+- **Every comparison is recorded to a committed lifetime ledger.** `record_trials`
+  appends each distinct structure comparison (template / ticker / params, its
+  result, and a per-ticker `_data_lineage_hash`) to a committed, append-only
+  `idea_ledger.jsonl` — distinct from the regenerable, `.gitignore`d
+  `edge_ledger.jsonl`. The lineage hash folds exactly the inputs that move the
+  result — store checksum, era-clip, end date, capital, engine version — and
+  deliberately **not** the menu (`ALLOWED_GRID`): the same comparison gives the
+  same t-stat regardless of what else the grid can express, so folding the grammar
+  in would re-lineage every prior look on a grid edit and reset the counter. Deduped
+  and timestamp-free, so re-running a campaign on the same data lineage adds nothing:
+  it is the *same* comparison, and the git history is the timeline. This is the
+  guess-counter that never silently resets — the foundation a future cumulative-`n`
+  BY threshold reads so the comparison count is the program's lifetime total, not
+  one session's. It carries the result statistics (the answer key), so an automated
+  proposer must never read it.
 - **Graduation stays manual.** A survivor earns a pre-registration and a manual
   sealed-vault confirmation, never an automated verdict. The harness surfaces
   survivors; it never crowns them.
