@@ -775,45 +775,55 @@ def run_structure_campaign(campaign: Campaign = STRUCTURE_CAMPAIGN,
         scorer = _default_score
 
     rows = [scorer(c) for c in cands]
-    # measurement-invalid cells carry p_value=None (set by the scorer). They go
-    # INTO the BY call, not around it: benjamini_yekutieli counts a None toward n
-    # (a comparison you ran) but can never reject it. Dropping them before the
-    # call would shrink n and loosen the rejection bar for every other cell — a
-    # data-dependent N-shrink lever. This matches the re-tag phase, which passes
-    # null-D_A candidates as p=None for the same reason.
-    survivors = benjamini_yekutieli([r['p_value'] for r in rows], q=q)
-    for r, surv in zip(rows, survivors):
+    # e-LOND is the FDR CONTROL OF RECORD (#3b, docs/prereg_fdr_budget.md): the
+    # campaign's cells form the stream in enumeration order; a cell is FLAGGED (a
+    # survivor) iff its calibrated e-value clears the e-LOND level. A
+    # measurement_invalid cell calibrates to e=0 (p=None) and can never be flagged.
+    # This SUPERSEDES the per-batch BY gate, retained below only as a diagnostic.
+    # (Note the sign is already baked in: p_value is one-sided in the predicted
+    # direction, so a wrong-signed cell gets a large p -> small e -> never flagged.)
+    from evalue_fdr import online_fdr_survivors
+    rows = online_fdr_survivors(rows)   # adds e_value, elond_level, elond_survivor
+    # BY, RETIRED from the gate, kept as a within-campaign DIAGNOSTIC. The #46
+    # N-shrink defense still holds for it: measurement_invalid cells carry
+    # p_value=None, go INTO the BY call, count toward n, and can never be rejected
+    # (dropping them would shrink n and loosen the bar for the other cells).
+    by = benjamini_yekutieli([r['p_value'] for r in rows], q=q)
+    for r, surv in zip(rows, by):
         r['fdr_q'] = q
-        r['by_survivor'] = bool(surv)
-        r['clean_survivor'] = bool(surv and r.get('sign_ok'))
+        r['by_survivor'] = bool(surv)                          # diagnostic
+        r['clean_survivor'] = bool(surv and r.get('sign_ok'))  # BY diagnostic
     return rows
 
 
 def _format_structure_summary(rows: Sequence[dict[str, Any]],
                               campaign: Campaign = STRUCTURE_CAMPAIGN) -> str:
+    from evalue_fdr import ONLINE_FDR_ALPHA
     lines = [
         f'Structure campaign: search={list(campaign.search)} '
-        f'sealed={list(campaign.sealed)} q={FDR_Q} (HAC-t asymptotic null)',
+        f'sealed={list(campaign.sealed)} alpha={ONLINE_FDR_ALPHA} '
+        f'(e-LOND control; BY q={FDR_Q} diagnostic)',
         f'{"template":<15} {"ticker":<6} {"t_NW":>6} {"p":>7} '
-        f'{"exc%":>6} {"shrp":>6} {"BY":>3} {"clean":>5}',
+        f'{"exc%":>6} {"shrp":>6} {"eL":>3} {"BY":>3}',
     ]
     for r in rows:
         if r.get('measurement_invalid'):
             lines.append(f'{r["template"]:<15} {r["ticker"]:<6} '
                          f'{"INVALID":>6} {"":>7} {"scale " + str(r.get("scale_ratio")):>13}'
-                         f'   .     .   (p=None: counts toward BY n, never rejectable)')
+                         f'   .   .   (e=0 / p=None: counts toward the stream, never flagged)')
             continue
         lines.append(
             f'{r["template"]:<15} {r["ticker"]:<6} '
             f'{r["t_stat_newey_west"]:>+6.2f} {r["p_value"]:>7.4f} '
             f'{r["ann_excess_return_pct"]:>6.1f} {r["sharpe"]:>6.2f} '
-            f'{"Y" if r["by_survivor"] else ".":>3} '
-            f'{"Y" if r["clean_survivor"] else ".":>5}')
-    n_clean = sum(r['clean_survivor'] for r in rows)
+            f'{"Y" if r["elond_survivor"] else ".":>3} '
+            f'{"Y" if r["by_survivor"] else ".":>3}')
+    n_elond = sum(r['elond_survivor'] for r in rows)
+    n_by = sum(r['by_survivor'] for r in rows)
     n_scored = sum(not r.get('measurement_invalid') for r in rows)
-    lines.append(f'\nclean survivors after BY: {n_clean} / {n_scored} scored '
-                 f'({len(rows) - n_scored} measurement-invalid: p=None, count toward '
-                 f'BY n={len(rows)} but never rejectable)')
+    lines.append(f'\ne-LOND survivors (control): {n_elond} / {len(rows)} cells  '
+                 f'(BY diagnostic: {n_by}; {len(rows) - n_scored} measurement-invalid '
+                 f'-> e=0, count toward the stream but never flagged)')
     return '\n'.join(lines)
 
 
