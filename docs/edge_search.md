@@ -126,8 +126,11 @@ does not bend the cheap re-tag gate:
   iron condor — crossed with the search tickers (`enumerate_structure_candidates`).
   Each cell runs its overlay on the live chains. Every template draws its params
   from a fixed menu (`ALLOWED_GRID`) enforced at construction: an off-menu value
-  raises rather than running, so the reachable hypothesis space stays finite and
-  countable (`grid_universe_size`) — the countability the FDR ledger rests on.
+  raises rather than running, so the reachable hypothesis space stays finite,
+  enumerable, and pre-specified (`grid_universe_size`) — a pre-specification and
+  power precondition, not an FDR-validity one (e-LOND, the control, needs no fixed
+  comparison count; the `Σγ_t ≤ 1` budget replaces the offline denominator — only
+  the BY diagnostic still needs a count).
 - **A HAC-t kill-gate with a closed-form null.** The score is
   `short_vol_statistics`'s Newey-West (HAC) t-stat on the daily rate-netted P&L,
   whose asymptotic null is standard normal — so the p-value is closed-form
