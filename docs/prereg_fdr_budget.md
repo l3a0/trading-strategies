@@ -1,11 +1,16 @@
 # Pre-registration: e-value false-discovery control for the edge-search loop
 
-**Status:** REGISTERED — effective at this file's merge to `main` (#50). The
-machinery (§2) and constants (§3) are implemented in `evalue_fdr.py` and pinned by
-`test_evalue_fdr.py` (oracle-validated against the `online-fdr` package / the
-papers). No governed number exists yet — the e-LOND control has judged nothing (the
-lifetime ledger is empty and not yet wired into the live campaign), so the rule
-still predates every number it governs.
+**Status:** REGISTERED — effective at this file's merge to `main` (#50) — and now
+ACTIVATED. The machinery (§2) and constants (§3) are implemented in `evalue_fdr.py`
+and pinned by `test_evalue_fdr.py` (oracle-validated against the `online-fdr` package
+/ the papers). e-LOND is now the live FDR control in `run_structure_campaign` (BY
+retained as a reported diagnostic): its first governed verdict — **0 / 24 cells
+flagged** in the structure campaign — is pinned by `TestStructureCampaign`. The rule
+still predates every number it governs: it was registered at #50 before the e-LOND
+control judged anything. (The live campaign judges its 24-cell batch as the *head* of
+the e-LOND stream — R = 0, t = 1, which is why the `1/(α·γ₁)` bar applies — because the
+committed lifetime ledger remains empty until `--record`; §6 is the pre-registration
+snapshot.)
 
 **Date drafted:** 2026-06-19.
 

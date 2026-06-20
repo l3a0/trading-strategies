@@ -756,6 +756,13 @@ class TestStructurePhase:
         survivors = [r for r in scored if r['clean_survivor']]
         assert len(survivors) == 1
         assert survivors[0]['ticker'] == 'AAA' and survivors[0]['template'] == 'short_call_25'
+        # e-LOND is the CONTROL of record: the same tiny-p cell clears the e-LOND bar at
+        # the head of the stream (e=1/(2*sqrt 0.0001)=50 >= 1/(alpha*gamma_1)); invalid
+        # cells calibrate to e=0 and are never flagged.
+        elond = [r for r in rows if r['elond_survivor']]
+        assert len(elond) == 1
+        assert elond[0]['ticker'] == 'AAA' and elond[0]['template'] == 'short_call_25'
+        assert all(r['e_value'] == 0.0 for r in invalid)
 
     def test_measurement_invalid_does_not_shrink_by_denominator(self) -> None:
         """A cell flagged measurement_invalid must still consume a BY comparison
@@ -834,9 +841,12 @@ class TestStructureCampaign:
         assert sum(r.get('measurement_invalid', False) for r in rows) == 0
 
     def test_no_survivor(self, structure_campaign) -> None:
-        """The decisive output: no structure candidate survives campaign-wide BY."""
+        """The decisive output: no structure candidate is flagged by e-LOND (the FDR
+        control of record, #3b), and none survives the BY diagnostic either."""
         rows = structure_campaign
-        assert sum(r['clean_survivor'] for r in rows) == 0
+        assert sum(r['elond_survivor'] for r in rows) == 0   # e-LOND: the control flag
+        assert all('e_value' in r for r in rows)             # every cell calibrated p->e
+        assert sum(r['clean_survivor'] for r in rows) == 0   # BY diagnostic
         assert sum(r['by_survivor'] for r in rows) == 0
 
     def test_spy_short_call_strongest_but_misses_by(self, structure_campaign) -> None:
@@ -904,9 +914,11 @@ class TestNvdaStructureCampaign:
         assert sum(r.get('measurement_invalid', False) for r in rows) == 0
 
     def test_no_survivor(self, nvda_structure_campaign) -> None:
-        """The decisive output: no NVDA structure candidate survives BY."""
+        """The decisive output: no NVDA structure candidate is flagged by e-LOND (the
+        control), nor survives the BY diagnostic."""
         rows = nvda_structure_campaign
-        assert sum(r['clean_survivor'] for r in rows) == 0
+        assert sum(r['elond_survivor'] for r in rows) == 0   # e-LOND control
+        assert sum(r['clean_survivor'] for r in rows) == 0   # BY diagnostic
         assert sum(r['by_survivor'] for r in rows) == 0
 
     def test_every_cell_wrong_signed(self, nvda_structure_campaign) -> None:

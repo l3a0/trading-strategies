@@ -31,7 +31,9 @@ search into a machine that manufactures false positives at speed:
   alone hands you false positives; significance is judged across the **whole
   batch** with Benjamini-Yekutieli — the FDR procedure that stays valid under
   dependence (the candidates share tickers, overlap in time, and nest by
-  window), at the cost of a harmonic penalty over plain Benjamini-Hochberg.
+  window), at the cost of a harmonic penalty over plain Benjamini-Hochberg. (The
+  structure phase upgrades this control to **e-LOND**, #3b — an e-value online-FDR
+  procedure valid under *arbitrary* dependence; see Campaign 2.)
 - **A sealed vault.** A loop that generates and tests can never "commit before
   seeing the number," so the harness commits the *data it never sees* instead:
   the search loads only MSFT + SPY; **QQQ is held out**. A survivor is
@@ -124,8 +126,11 @@ does not bend the cheap re-tag gate:
   iron condor — crossed with the search tickers (`enumerate_structure_candidates`).
   Each cell runs its overlay on the live chains. Every template draws its params
   from a fixed menu (`ALLOWED_GRID`) enforced at construction: an off-menu value
-  raises rather than running, so the reachable hypothesis space stays finite and
-  countable (`grid_universe_size`) — the countability the FDR ledger rests on.
+  raises rather than running, so the reachable hypothesis space stays finite,
+  enumerable, and pre-specified (`grid_universe_size`) — a pre-specification and
+  power precondition, not an FDR-validity one (e-LOND, the control, needs no fixed
+  comparison count; the `Σγ_t ≤ 1` budget replaces the offline denominator — only
+  the BY diagnostic still needs a count).
 - **A HAC-t kill-gate with a closed-form null.** The score is
   `short_vol_statistics`'s Newey-West (HAC) t-stat on the daily rate-netted P&L,
   whose asymptotic null is standard normal — so the p-value is closed-form
@@ -178,17 +183,21 @@ does not bend the cheap re-tag gate:
   scoped read-deny, or committing only the scrubbed projection to the proposer-visible
   path) is the unbuilt interlock that makes the scoreboard meaningful; the tried-set
   neutrality additionally rests on the grammar staying closed and fully enumerated.
-- **The FDR control of record is registered as e-LOND (#3b) — implemented, not yet
-  activated.** The per-batch Benjamini-Yekutieli gate is registered to be replaced by
-  an e-value procedure (`evalue_fdr.py`, pre-registered in
+- **The FDR control of record is e-LOND (#3b) — registered AND now ACTIVATED.** The
+  per-batch Benjamini-Yekutieli gate has been replaced as the control by the e-value
+  procedure (`evalue_fdr.py`, pre-registered in
   [docs/prereg_fdr_budget.md](prereg_fdr_budget.md)): each cell's HAC-t p-value is
-  calibrated to an e-value (Vovk-Wang), and the lifetime ledger stream *will be* judged
+  calibrated to an e-value (Vovk-Wang), and the campaign's cells are judged as a stream
   by e-LOND (Xu & Ramdas 2024) — proven online FDR under *arbitrary* dependence,
-  peek-whenever, with no across-batch independence assumption. The honest price: it is
-  *less* powerful than BY (calibration is lossy), buying dependence-robustness + online
-  validity rather than power. The machinery is implemented and oracle-tested against
-  the `online-fdr` package; the live campaign still flags via `by_survivor` (BY), and
-  wiring e-LOND into that flag (re-pinning `TestStructureCampaign`) is the activation step.
+  peek-whenever, with no across-batch independence assumption. `run_structure_campaign`
+  now sets `elond_survivor` (the control flag); BY is retained as a reported *diagnostic*
+  (`by_survivor`). The honest price: e-LOND is *less* powerful than BY (calibration is
+  lossy), buying dependence-robustness + online validity rather than power — and it is
+  *stricter* here, so the verdict is unchanged: **0 / 24 cells flagged.** The strongest
+  cell (SPY short-call-25, t_NW ≈ +2.17) calibrates to e ≈ 4.1, far below the
+  head-of-stream bar 1/(α·γ₁) ≈ 16.3. The machinery is oracle-tested against the
+  `online-fdr` package; `TestStructureCampaign` now pins the e-LOND verdict on real
+  chains and `TestStructurePhase` the synthetic flagging path.
 - **Graduation stays manual.** A survivor earns a pre-registration and a manual
   sealed-vault confirmation, never an automated verdict. The harness surfaces
   survivors; it never crowns them.
@@ -260,15 +269,18 @@ both out of this MVP's scope, both the natural next phase.
 (short call 0.25Δ, short call ATM, ATM straddle, 25Δ/10Δ iron condor) crossed
 with the six search tickers (MSFT, SPY, QQQ, GLD, XLE, EEM; **TLT sealed**) —
 each a full `run_real_*_overlay` engine pass scored by the Newey-West HAC t-stat
-against its asymptotic normal null (closed-form p, no permutation), BY at
-q = 0.10. The chains are era-clipped at the live `CHAIN_CLEAN_START` (exploratory
-sees the corrected SPY boundary).
+against its asymptotic normal null (closed-form p, no permutation), then judged as a
+stream by **e-LOND** (the FDR control of record, #3b) — with Benjamini-Yekutieli at
+q = 0.10 retained as a diagnostic. The chains are era-clipped at the live
+`CHAIN_CLEAN_START` (exploratory sees the corrected SPY boundary).
 
-**The result.** No cell survives campaign-wide BY (`0 / 24`). The strongest is
-SPY short-call 0.25Δ at t = +2.17 (the exploratory cousin of the frozen +2.54
-short-vol headline, now on the wider corrected SPY span): individually
-suggestive at p \~0.015, but clearing the BY rank-1 bar (\~0.0014 for 24
-dependent tests) by an order of magnitude. Every other cell is t < +1.2.
+**The result.** No cell is flagged by e-LOND, the control (`0 / 24`); none survives
+the BY diagnostic either. The strongest is SPY short-call 0.25Δ at t = +2.17 (the
+exploratory cousin of the frozen +2.54 short-vol headline, now on the wider corrected
+SPY span): individually suggestive at p \~0.015, but it calibrates to an e-value of
+\~4.1 — far short of the e-LOND head-of-stream bar 1/(α·γ₁) \~16.3, and missing the BY
+diagnostic's rank-1 bar (\~0.0011 for 24 dependent tests) by an order of magnitude.
+Every other cell is t < +1.2.
 
 **A data-hygiene catch that mattered.** The first run flagged two XLE "survivors"
 (short call t = +4.16 / +6.86) — entirely an artifact. XLE did a **2:1 split on
@@ -285,9 +297,9 @@ the class. Repaired, XLE shows no edge (short-call t \~−1.7) and the batch is
 empty.
 
 **What this campaign settles.** The delta-neutral short-vol structure class on
-six underlyings contains no survivor under honest FDR control — the variance
-premium that survives a single HAC-t (SPY's call wing) does not survive the
-cross-section's multiple-testing math. The next moves are a stronger sealed
+six underlyings contains no cell flagged by e-LOND, its honest FDR control — the
+variance premium that survives a single HAC-t (SPY's call wing) does not clear the
+cross-section's online-FDR bar. The next moves are a stronger sealed
 vault and the roll/stop/spread structure variants that carry their own engine
 parameters.
 
@@ -297,10 +309,11 @@ NVDA was onboarded after the campaign ran and swept through the same structure
 class as a single live-staged ticker. The four `(template, NVDA)` cells extend
 the cross-section by one underlying; the verdict is unchanged.
 
-**The result.** No NVDA cell survives — every t-stat is negative, so each one is
-on the wrong side of the predicted positive premium before BY even applies:
+**The result.** No NVDA cell is flagged — every t-stat is negative, so each one is
+on the wrong side of the predicted positive premium before any FDR bar (e-LOND or the
+BY diagnostic) even applies:
 
-| Template | t (NW) | One-sided p | BY survivor? | Measurement valid? |
+| Template | t (NW) | One-sided p | Flagged? | Measurement valid? |
 | --- | --- | --- | --- | --- |
 | short_call_25 | −0.96 | 0.8315 | no | yes |
 | short_call_atm | −0.96 | 0.8315 | no | yes |
@@ -314,7 +327,7 @@ NVDA over 2010-12-01 → 2026-06-05 (3,895 trading days) and returned
 from its first day (100% usable, 0.00% defective, BS-disagree 0.15%). The
 price-vs-chain **scale ratio is 1.006 [OK]** — NVDA's unadjusted price file sits
 on the chain's as-traded scale, so the split guard finds no mismatch and the
-ticker enters the BY batch with `measurement_invalid = false`. No repairs
+ticker enters the FDR cross-section with `measurement_invalid = false`. No repairs
 applied, nothing flagged for human review, and **no `CHAIN_CLEAN_START` entry is
 warranted**. The one wrinkle — zero-bid rates run elevated in the early years
 (10–28% across 2010–2013) — does not change the call: the validator still
