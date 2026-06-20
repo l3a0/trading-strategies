@@ -61,9 +61,10 @@ jobs:
         run: pip install -r requirements.txt
       # The engine suite against in-memory price fixtures (pricing, the overlay
       # state machine, the statistics helper, walk-forward, Monte Carlo), plus
-      # the option-dailies fetcher's pure chain-filter logic (put support).
+      # the option-dailies fetcher's pure chain-filter logic (put support), plus
+      # the e-value FDR control (no data — calibrator / e-LOND / e-BH, oracle-pinned).
       - name: Engine tests
-        run: pytest test_cc_backtest.py test_download_option_dailies.py --cov=. --cov-branch -v
+        run: pytest test_cc_backtest.py test_download_option_dailies.py test_evalue_fdr.py --cov=. --cov-branch -v
       # Smoke test: run the actual backtest against the committed MSFT CSV to
       # catch breakage in the main entry point the unit tests might miss
       # (CSV parsing, __main__ wiring, print formatting).

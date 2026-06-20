@@ -1,10 +1,11 @@
 # Pre-registration: e-value false-discovery control for the edge-search loop
 
-**Status:** DRAFT — not yet registered. Registration becomes effective at the
-merge commit of this file to `main`. The e-value machinery (§2) and the constants
-(§3) must be committed and pinned by a test — validated against the cited
-reference implementations — at that commit, so the rule predates every number it
-governs.
+**Status:** REGISTERED — effective at this file's merge to `main` (#50). The
+machinery (§2) and constants (§3) are implemented in `evalue_fdr.py` and pinned by
+`test_evalue_fdr.py` (oracle-validated against the `online-fdr` package / the
+papers). No governed number exists yet — the e-LOND control has judged nothing (the
+lifetime ledger is empty and not yet wired into the live campaign), so the rule
+still predates every number it governs.
 
 **Date drafted:** 2026-06-19.
 
@@ -57,7 +58,7 @@ not detection. Calibrating an asymptotic p into an e-value is lossy (a calibrate
 e-value is conservative under a genuinely uniform null), so on the same data
 calibrated-e-LOND rejects **no more than BY did, and typically fewer**. With the
 registered `κ = 0.5`, a single top-ranked cell is rejectable only at e ≳ `n/α` —
-i.e. `p ≲ 4×10⁻⁶`, far stricter than BY's ≈ `0.0014` rank-1 bar at `n=24`. **The
+i.e. `p ≲ 4×10⁻⁶`, far stricter than BY's ≈ `0.0011` rank-1 bar at `n=24`. **The
 price for e-LOND's arbitrary-dependence, peek-whenever guarantee is a stricter
 per-cell bar.** For a loop that has been 0/24 every campaign — where the binding
 goal is *never to falsely promote*, not to squeeze out marginal discoveries — that

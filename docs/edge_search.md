@@ -156,9 +156,9 @@ does not bend the cheap re-tag gate:
   in would re-lineage every prior look on a grid edit and reset the counter. Deduped
   and timestamp-free, so re-running a campaign on the same data lineage adds nothing:
   it is the *same* comparison, and the git history is the timeline. This is the
-  guess-counter that never silently resets — the foundation a future cumulative-`n`
-  BY threshold reads so the comparison count is the program's lifetime total, not
-  one session's. It carries the result statistics (the answer key), so an automated
+  guess-counter that never silently resets — the foundation the e-value FDR control
+  (#3b, `evalue_fdr.py`) reads so the comparison count is the program's lifetime
+  total, not one session's. It carries the result statistics (the answer key), so an automated
   proposer must never read it.
 - **A number-free scoreboard for proposers.** `build_proposer_corpus` projects the
   lifetime ledger to an allow-list view — the hypothesis coordinates (template /
@@ -178,6 +178,17 @@ does not bend the cheap re-tag gate:
   scoped read-deny, or committing only the scrubbed projection to the proposer-visible
   path) is the unbuilt interlock that makes the scoreboard meaningful; the tried-set
   neutrality additionally rests on the grammar staying closed and fully enumerated.
+- **The FDR control of record is registered as e-LOND (#3b) — implemented, not yet
+  activated.** The per-batch Benjamini-Yekutieli gate is registered to be replaced by
+  an e-value procedure (`evalue_fdr.py`, pre-registered in
+  [docs/prereg_fdr_budget.md](prereg_fdr_budget.md)): each cell's HAC-t p-value is
+  calibrated to an e-value (Vovk-Wang), and the lifetime ledger stream *will be* judged
+  by e-LOND (Xu & Ramdas 2024) — proven online FDR under *arbitrary* dependence,
+  peek-whenever, with no across-batch independence assumption. The honest price: it is
+  *less* powerful than BY (calibration is lossy), buying dependence-robustness + online
+  validity rather than power. The machinery is implemented and oracle-tested against
+  the `online-fdr` package; the live campaign still flags via `by_survivor` (BY), and
+  wiring e-LOND into that flag (re-pinning `TestStructureCampaign`) is the activation step.
 - **Graduation stays manual.** A survivor earns a pre-registration and a manual
   sealed-vault confirmation, never an automated verdict. The harness surfaces
   survivors; it never crowns them.
