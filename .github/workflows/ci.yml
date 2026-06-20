@@ -24,8 +24,11 @@ on:
 # Each job is its own ~7GB runner, so the per-job memory footprint is one
 # chain store at a time — well within budget (a single shared process holding
 # every store at once does NOT fit, which is why there is no session cache).
-# Coverage is now reported per test-job (it is informational here — not gated
-# or uploaded); a combine step could restore a single number if ever needed.
+# Coverage runs on the UNIT-test job (engine) only — informational (not gated/
+# uploaded), and not worth its per-line tracing overhead on the slow data jobs
+# (real-chain, scouts), which drop it. scouts is a runtime-balanced 3-bucket
+# matrix (parallel runners) so its wall-clock is the slowest bucket, not the
+# serial sum of all five files.
 
 jobs:
   lint:
@@ -143,9 +146,14 @@ jobs:
       - name: Verify chain-data checksum
         run: sha256sum -c data_checksums.sha256
       - name: Real-chain regression tests
-        run: pytest test_real_cc_backtest.py --cov=. --cov-branch -v
+        run: pytest test_real_cc_backtest.py -v
 
-  scouts:
+  # The matrix job is named scout-buckets (NOT scouts), so its per-bucket checks are
+  # "scout-buckets (vol-premium)" etc. The thin `scouts` gate job below re-exposes a
+  # single required check named "scouts" (the `main` ruleset requires it) that is green
+  # iff every bucket passed — giving the parallelism without renaming the required
+  # check or editing the ruleset.
+  scout-buckets:
     # The registered trend-gate experiment's analysis machinery
     # (docs/prereg_trend_gate.md — dataset-gated layer pins treatment-side
     # quantities only), the killed exploratory scouts (test_explorations.py,
@@ -156,8 +164,21 @@ jobs:
     # validator (test_validate_dailies.py — the classifier + boundary scan run
     # synthetically; the MSFT-backfill calibration to 2010-05-10 is dataset-gated).
     # Their dataset-gated pins need the same option dailies as the real-chain job;
-    # their always-run layers run without the datasets.
+    # their always-run layers run without the datasets. Split into a runtime-
+    # balanced 3-bucket matrix (parallel runners) so wall-clock is the slowest
+    # bucket (~test_vol_premium) plus per-job overhead, not the serial sum of all
+    # five files. Buckets balanced by measured runtime, NOT one-file-per-runner:
+    # the files are ~5x unbalanced, so isolating the tiny ones onto their own
+    # runners would pay the fixed pip-install + chain-cache-restore overhead for
+    # no wall-clock gain (the floor is the biggest file either way).
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {bucket: vol-premium,   files: "test_vol_premium.py"}
+          - {bucket: edge-search,   files: "test_edge_search.py test_validate_dailies.py"}
+          - {bucket: trend-explore, files: "test_trend_gate.py test_explorations.py"}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -193,5 +214,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
       - name: Verify chain-data checksum
         run: sha256sum -c data_checksums.sha256
-      - name: Experiment, scout & edge-search tests
-        run: pytest test_trend_gate.py test_explorations.py test_edge_search.py test_vol_premium.py test_validate_dailies.py --cov=. --cov-branch -v
+      - name: Experiment, scout & edge-search tests (${{ matrix.bucket }})
+        run: pytest ${{ matrix.files }} -v
+
+  # Required-check gate: the `main` ruleset requires a status check literally named
+  # "scouts". This thin job re-exposes it — it runs ALWAYS (so it still reports when a
+  # bucket fails) and is green iff every scout-buckets matrix leg succeeded. No
+  # checkout/setup; it only inspects the matrix's aggregate result.
+  scouts:
+    needs: [scout-buckets]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: All scout buckets passed
+        run: |
+          if [ "${{ needs.scout-buckets.result }}" != "success" ]; then
+            echo "::error::a scout bucket did not pass (scout-buckets result: ${{ needs.scout-buckets.result }})"
+            exit 1
+          fi
+          echo "all scout buckets passed"
