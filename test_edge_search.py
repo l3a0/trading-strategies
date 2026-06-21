@@ -575,11 +575,13 @@ class TestIdeaLedger:
 
     @staticmethod
     def _row(template='short_call_25', ticker='MSFT', params=None,
-             p=0.5, t=1.0, surv=False):
+             p=0.5, t=1.0, surv=False, elond=False):
+        # a run_structure_campaign row: carries BOTH the e-LOND control flag and the
+        # retained BY diagnostic (online_fdr_survivors + benjamini_yekutieli).
         return {'phase': 'structure', 'template': template, 'ticker': ticker,
                 'params': params or {'target_delta': 0.25, 'dte': 30},
                 'predicted_sign': 1, 't_stat_newey_west': t, 'p_value': p,
-                'by_survivor': surv, 'fdr_q': 0.10}
+                'elond_survivor': elond, 'by_survivor': surv, 'fdr_q': 0.10}
 
     def test_lineage_hash_deterministic_and_sensitive(self) -> None:
         h1 = _data_lineage_hash('MSFT', '2026-06-06')
@@ -613,8 +615,18 @@ class TestIdeaLedger:
         r = rows[0]
         assert r['phase'] == 'structure' and r['template'] == 'short_call_25'
         assert r['statistic_kind'] == 't_nw' and r['statistic'] == -0.96
-        assert r['p_value'] == 0.83 and r['by_survivor'] is False
+        assert r['p_value'] == 0.83
+        # the answer key carries the verdict of record (elond_survivor, #3b) AND the
+        # retained BY diagnostic — both projected from the campaign row.
+        assert r['elond_survivor'] is False and r['by_survivor'] is False
         assert len(r['data_lineage_hash']) == 16
+
+    def test_ledger_records_elond_verdict_of_record(self) -> None:
+        """The committed answer key records elond_survivor — the FDR control of record
+        (#3b) — not just the BY diagnostic. A campaign cell e-LOND flagged round-trips
+        into the ledger as elond_survivor=True, independent of its by_survivor bit."""
+        flagged = structure_ledger_rows([self._row(elond=True, surv=False)])[0]
+        assert flagged['elond_survivor'] is True and flagged['by_survivor'] is False
 
     def test_record_dedupes_reruns(self, tmp_path) -> None:
         p = str(tmp_path / 'idea_ledger.jsonl')
@@ -644,25 +656,43 @@ class TestProposerCorpus:
     collide with result values, so only field-selection is leak-proof."""
 
     @staticmethod
-    def _ledger_row(template='short_call_25', ticker='MSFT', surv=False, invalid=False):
-        # a row as it lives in idea_ledger.jsonl — carries the answer key
+    def _ledger_row(template='short_call_25', ticker='MSFT',
+                    elond=False, by=False, invalid=False):
+        # a row as it lives in idea_ledger.jsonl — carries the answer key (both the
+        # e-LOND control flag and the retained BY diagnostic).
         return {'phase': 'structure', 'template': template, 'ticker': ticker,
                 'params': {'target_delta': 0.25, 'dte': 30}, 'predicted_sign': 1,
                 'statistic_kind': 't_nw', 'statistic': 7.654321, 'p_value': 0.0123456,
-                'by_survivor': surv, 'measurement_invalid': invalid, 'fdr_q': 0.10,
+                'elond_survivor': elond, 'by_survivor': by,
+                'measurement_invalid': invalid, 'fdr_q': 0.10,
                 'end': '2026-06-06', 'data_lineage_hash': 'abcd1234'}
 
     def test_scrub_is_allow_list_only_safe_keys_survive(self) -> None:
         s = scrub_ledger_row(self._ledger_row())
         assert set(s) == {'phase', 'template', 'ticker', 'params', 'predicted_sign', 'verdict'}
-        # every result-bearing field is dropped by construction, not redaction
-        for forbidden in ('statistic', 'statistic_kind', 'p_value', 'fdr_q', 'data_lineage_hash'):
+        # every result-bearing field is dropped by construction, not redaction —
+        # including the raw FDR flags (only the one-bit verdict survives, never the
+        # control/diagnostic bits that would tell a proposer which gate fired).
+        for forbidden in ('statistic', 'statistic_kind', 'p_value', 'fdr_q',
+                          'data_lineage_hash', 'elond_survivor', 'by_survivor'):
             assert forbidden not in s
 
     def test_verdict_is_one_bit(self) -> None:
-        assert scrub_ledger_row(self._ledger_row(surv=False))['verdict'] == 'KILLED'
-        assert scrub_ledger_row(self._ledger_row(surv=True))['verdict'] == 'SURVIVED'
+        assert scrub_ledger_row(self._ledger_row())['verdict'] == 'KILLED'
+        assert scrub_ledger_row(self._ledger_row(elond=True))['verdict'] == 'SURVIVED'
         assert scrub_ledger_row(self._ledger_row(invalid=True))['verdict'] == 'INVALID'
+
+    def test_verdict_keys_off_elond_control_not_by_diagnostic(self) -> None:
+        """The SURVIVED verdict (hence the corpus exclusion) tracks elond_survivor —
+        the FDR control of record (#3b) — NOT by_survivor, the retained diagnostic.
+        e-LOND and BY are not guaranteed to coincide (e-LOND's (R+1) reward can flag a
+        cell BY does not), so the two cross cases are the decisive regression:"""
+        # control flags, diagnostic does not -> SURVIVED (the leak the fix prevents:
+        # an e-LOND survivor must never be mislabeled KILLED and re-proposed).
+        assert scrub_ledger_row(self._ledger_row(elond=True, by=False))['verdict'] == 'SURVIVED'
+        # diagnostic flags, control does not -> KILLED (BY does not promote anything;
+        # the prereg is explicit that "only e-LOND flags").
+        assert scrub_ledger_row(self._ledger_row(elond=False, by=True))['verdict'] == 'KILLED'
 
     def test_render_omits_the_answer_key(self) -> None:
         corpus = render_proposer_corpus(build_proposer_corpus([self._ledger_row()]))
@@ -675,15 +705,19 @@ class TestProposerCorpus:
         assert render_proposer_corpus([]) == '(no comparisons recorded yet)'
 
     def test_survivor_is_excluded_from_corpus(self) -> None:
-        # SURVIVED is the one "fish here" coordinate — it must not feed the automated
-        # proposer (it escalates to manual pre-registration out-of-band). KILLED and
-        # INVALID stay (duds to avoid / broken tickers); SURVIVED is dropped.
+        # SURVIVED — an e-LOND-flagged cell (the control of record) — is the one "fish
+        # here" coordinate; it must not feed the automated proposer (it escalates to
+        # manual pre-registration out-of-band). KILLED and INVALID stay (duds to avoid
+        # / broken tickers); only the e-LOND winner is dropped. A BY-only flag is a
+        # diagnostic, not the control, so that cell is KILLED and STAYS in the corpus.
         rows = [self._ledger_row(template='killed_one'),
-                self._ledger_row(template='winner', surv=True),
+                self._ledger_row(template='winner', elond=True),
+                self._ledger_row(template='by_only', by=True),
                 self._ledger_row(template='broken', invalid=True)]
         corpus = build_proposer_corpus(rows)
         verdicts = {r['template']: r['verdict'] for r in corpus}
-        assert verdicts == {'killed_one': 'KILLED', 'broken': 'INVALID'}  # no 'winner'
+        # no 'winner'; 'by_only' is retained as KILLED (the diagnostic does not exclude)
+        assert verdicts == {'killed_one': 'KILLED', 'by_only': 'KILLED', 'broken': 'INVALID'}
 
     def test_params_defensively_copied(self) -> None:
         # the corpus is a safe boundary — mutating it must not reach the source row
@@ -697,7 +731,8 @@ class TestProposerCorpus:
         p = str(tmp_path / 'idea_ledger.jsonl')
         row = {'phase': 'structure', 'template': 'straddle', 'ticker': 'SPY',
                'params': {'dte': 30}, 'predicted_sign': 1, 't_stat_newey_west': 0.4,
-               'p_value': 0.34, 'by_survivor': False, 'fdr_q': 0.10}
+               'p_value': 0.34, 'elond_survivor': False, 'by_survivor': False,
+               'fdr_q': 0.10}
         record_trials(structure_ledger_rows([row]), p)
         corpus = load_proposer_corpus(p)
         assert len(corpus) == 1
