@@ -116,6 +116,18 @@ examples).
    look-timing and no independence assumption. This is the *only* FDR guarantee;
    there is no separate across/within composition to specify.
 
+   **Implementation (committed arrival order over the lifetime stream).**
+   `edge_search.judge_against_lifetime_stream` delivers this: at record time it places the
+   committed prior `idea_ledger.jsonl` rows (file/arrival order) ahead of the new batch,
+   ordered to match the order `record_trials` commits them, and runs ONE e-LOND pass over the
+   whole concatenation — so an appended batch consumes the next `γ_t` increment rather than
+   restarting at `t = 1`. (`run_structure_campaign` runs e-LOND over a single batch in
+   isolation; that is the *head-of-stream* view — correct for the published one-shot, where
+   the batch is the whole stream, but a per-session budget reset if a second batch were judged
+   the same way, which is exactly the §0 multiple-looks leak.) Because e-LOND is online (`α_t`
+   depends only on `R_{t−1}`, the cells *before* `t`), each recorded verdict is fixed on
+   arrival and never moves under later appends. Pinned by `TestLifetimeStreamJudge`.
+
    **e-BH is a within-campaign diagnostic only, not the control.** The campaign
    summary may report the e-BH (Wang & Ramdas 2022) rejection set over the current
    batch's `n` cells (`reject top k* = largest k with e_(k) ≥ n/(k·α)`) as an

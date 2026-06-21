@@ -203,6 +203,19 @@ does not bend the cheap re-tag gate:
   head-of-stream bar 1/(α·γ₁) ≈ 16.3. The machinery is oracle-tested against the
   `online-fdr` package; `TestStructureCampaign` now pins the e-LOND verdict on real
   chains and `TestStructurePhase` the synthetic flagging path.
+- **The control is judged over the *lifetime* stream at record time, not per batch.**
+  `run_structure_campaign` runs e-LOND over a single batch — correct for the published
+  one-shot, where that batch IS the head of the stream, but a second batch judged the same
+  way would restart the discount sequence at `t = 1` and re-face the loosest
+  `1/(α·γ₁)` bar: a silent per-session budget reset, the multiple-looks leak the
+  registration exists to prevent. The `--record` path closes this with
+  `judge_against_lifetime_stream`: it places the committed prior ledger ahead of the new
+  rows and runs ONE e-LOND pass over the whole concatenation, recording each new row's
+  lifetime-stream verdict. Because e-LOND is online (a cell's bar depends only on the cells
+  before it), that verdict is fixed on arrival and never moves under later appends, so the
+  published 28-row ledger is unchanged (empty prior ⇒ lifetime == per-batch). This is the
+  cumulative-n control the future LLM proposer's judging path will reuse. Pinned by the
+  always-run `TestLifetimeStreamJudge`.
 - **Graduation stays manual.** A survivor earns a pre-registration and a manual
   sealed-vault confirmation, never an automated verdict. The harness surfaces
   survivors; it never crowns them.
