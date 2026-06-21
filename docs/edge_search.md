@@ -219,6 +219,22 @@ does not bend the cheap re-tag gate:
 - **Graduation stays manual.** A survivor earns a pre-registration and a manual
   sealed-vault confirmation, never an automated verdict. The harness surfaces
   survivors; it never crowns them.
+- **The deterministic menu-walker proposer (Phase 1, no LLM).** `run_proposer_round`
+  is the first consumer of the scrubbed scoreboard — and the smallest end-to-end slice
+  of the loop a future LLM proposer plugs into, with a *dumb enumerator* standing in for
+  the author. It **reads** only the scrubbed corpus, **proposes** every grammar template
+  (`enumerate_grammar_templates` — all `grid_universe_size()` of them, the committed four
+  keeping their names so a coincident cell dedups against the published ledger instead of
+  re-counting under a new name) crossed with the **onboarded** search tickers minus what's
+  already tried, **grammar-gates** each at `StructureCandidate` construction, **runs** the
+  engine, **judges** over the lifetime e-LOND stream (`judge_against_lifetime_stream`), and
+  **records** — so the next round re-reads the corpus and skips them. An un-onboarded
+  proposed ticker is flagged for the human-gated onboard pipeline (no auto-fetch). The point
+  of building it now, with no model, is to prove the read → propose → gate → run → judge →
+  record → re-read plumbing against the real primitives — the LLM later swaps its JSON output
+  for the enumerator while the gate, the lifetime judge, and the record stay identical. Run
+  via `python edge_search.py propose` (preview), `propose --run` (score, no record), or
+  `propose --record`; pinned by the always-run `TestMenuWalkerProposer`.
 
 The roll / stop-loss / spread-width structure *variants* — which need their own
 engine parameters per candidate — are the natural next expansion of this class.

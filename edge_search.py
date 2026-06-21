@@ -661,6 +661,40 @@ def enumerate_structure_candidates(
     ]
 
 
+def _overlay_params_key(overlay: str, params: dict[str, Any]) -> tuple[str, str]:
+    """Order-free identity of a (overlay, params) point: params canonicalized with
+    json sort_keys, exactly as _ledger_key canonicalizes them — so a grid point and a
+    committed template match regardless of param tuple order."""
+    return (overlay, json.dumps(params, sort_keys=True))
+
+
+def enumerate_grammar_templates() -> list[StructureTemplate]:
+    """Expand ALLOWED_GRID into EVERY grammar-valid template — the full menu the
+    deterministic menu-walker proposes from (grid_universe_size() of them). The four
+    committed STRUCTURE_TEMPLATES keep their hand-chosen names (so a menu-walker cell that
+    coincides with a committed one shares its _ledger_key and dedups against the published
+    ledger instead of re-counting the same hypothesis under a new name); every other grid
+    point gets a deterministic systematic name. Every template predicts +1 — the committed
+    convention that the short-vol seller is paid for bearing variance risk.
+
+    The systematic naming is part of the grammar's on-the-record identity: once a
+    menu-walked cell is recorded (via `propose --record`), its name is frozen into the
+    lifetime ledger's _ledger_key, so changing this scheme later would re-count those cells.
+    Treat a naming change like a grammar widening — a human-signed, pinned edit."""
+    import itertools
+    committed = {_overlay_params_key(t.overlay, dict(t.params)): t.name
+                 for t in STRUCTURE_TEMPLATES}
+    out: list[StructureTemplate] = []
+    for overlay, grid in ALLOWED_GRID.items():
+        knobs = sorted(grid)   # canonical knob order (param tuple order is identity-free)
+        for combo in itertools.product(*(grid[k] for k in knobs)):
+            params = tuple((k, v) for k, v in zip(knobs, combo))
+            name = committed.get(_overlay_params_key(overlay, dict(params))) \
+                or f'{overlay}__' + '_'.join(f'{k}{v}' for k, v in params)
+            out.append(StructureTemplate(name, overlay, params, +1))
+    return out
+
+
 def _asymptotic_p(t_nw: float, predicted_sign: int) -> float:
     """One-sided p-value from the HAC t-stat's asymptotic N(0,1) null. The
     structure phase's whole point: short_vol_statistics' Newey-West t is
@@ -742,6 +776,7 @@ def run_structure_campaign(campaign: Campaign = STRUCTURE_CAMPAIGN,
                            q: float = FDR_Q,
                            capital: float = STRUCTURE_CAPITAL,
                            scorer: Callable[[StructureCandidate], dict[str, Any]] | None = None,
+                           candidates: Sequence[StructureCandidate] | None = None,
                            ) -> list[dict[str, Any]]:
     """Enumerate the template x ticker structure batch, run each engine overlay,
     score by the HAC t-stat's asymptotic p, and judge the whole batch by BY.
@@ -752,9 +787,12 @@ def run_structure_campaign(campaign: Campaign = STRUCTURE_CAMPAIGN,
     still COUNTS toward BY's n (a comparison you ran) but can never be rejected, so it
     never masquerades as a survivor and never shrinks the denominator to loosen the bar for
     the other cells. `scorer` is injectable so the synthetic test layer can exercise the
-    FDR/flagging path without the engine."""
+    FDR/flagging path without the engine. `candidates` overrides the enumerated batch (the
+    menu-walker proposer passes its proposed cells); None = the committed cross-section.
+    NOTE: the e-LOND pass here is PER-BATCH (the head-of-stream view); the proposer re-judges
+    over the lifetime stream via judge_against_lifetime_stream before recording (#3b)."""
     from validate_dailies import SCALE_TOL
-    cands = enumerate_structure_candidates(campaign)
+    cands = enumerate_structure_candidates(campaign) if candidates is None else list(candidates)
     if scorer is None:
         cache: dict[str, tuple[Any, list[str], list[float]]] = {}
         invalid: dict[str, float] = {}
@@ -1082,6 +1120,114 @@ def render_proposer_corpus(scrubbed: Sequence[dict[str, Any]]) -> str:
     return '\n'.join(lines)
 
 
+# --- Phase 1: the deterministic menu-walker proposer (no LLM) ----------------
+# The smallest end-to-end slice of the proposer loop, with a DUMB ENUMERATOR standing in
+# for the future LLM author: read the scrubbed corpus -> propose grammar-valid cells not yet
+# tried -> grammar-gate -> run the engine -> judge over the lifetime e-LOND stream (#3b) ->
+# record -> next round re-reads the corpus and skips them. Zero model nondeterminism, zero
+# read-gate exposure (there is no model to deny yet) — it proves the plumbing the LLM later
+# plugs into, swapping its JSON output for the enumerator while the gate/judge/record stay
+# identical. The proposer reads ONLY load_proposer_corpus, never the answer-key ledger.
+
+def _is_onboarded(ticker: str) -> bool:
+    """True iff the ticker's option-daily store is present, so a proposed cell on it can
+    actually run. Keys on the CANONICAL `{ticker}_option_dailies.csv[.gz]` only — the primary
+    store run_structure_campaign loads and the pinned spans clip to; a backfill-only
+    (`{ticker}_option_dailies_<era>...`) ticker is correctly treated as un-onboarded (a backfill
+    is an extended-span MERGE, not a primary store). An un-onboarded ticker is NOT auto-fetched
+    (premium data costs money) — the proposer routes it to the human-gated onboard pipeline."""
+    import os
+    base = os.path.join(os.path.dirname(__file__), f'{ticker.lower()}_option_dailies.csv')
+    return os.path.exists(base) or os.path.exists(base + '.gz')
+
+
+def _proposer_key(template: str, ticker: str, params: dict[str, Any]) -> tuple[str, str, str]:
+    """The proposer's LINEAGE-FREE dedup identity: (template, ticker, canonical params),
+    matching the scrubbed corpus's coordinates exactly (scrub_ledger_row drops the lineage
+    hash — it is not in SAFE_FIELDS). ONE canonicalizer, shared by _cand_key (candidate side)
+    and run_proposer_round (corpus side), so the proposer's skip and the corpus cannot desync.
+
+    Lineage-free is deliberate: within the published data lineage it skips what's already
+    tried. It does NOT auto-re-open a cell after a data refresh — the lineage-free corpus keeps
+    a refreshed cell skipped — so picking up a refresh is a SEPARATE path (the corpus carrying
+    lineage, or a forced re-run), not something record_trials' write-time _ledger_key delivers
+    through the proposer. (record_trials still dedups on the full lineage-aware _ledger_key at
+    write, so a refreshed cell that DID reach it would be a new row; the proposer just never
+    reaches it for a skipped cell.)"""
+    return (template, ticker, json.dumps(params, sort_keys=True))
+
+
+def _cand_key(c: StructureCandidate) -> tuple[str, str, str]:
+    """A candidate's proposer dedup key (see _proposer_key)."""
+    return _proposer_key(c.template, c.ticker, c.params_dict())
+
+
+def propose_structure_candidates(
+    campaign: Campaign = STRUCTURE_CAMPAIGN,
+    tried_keys: set[tuple[str, str, str]] | None = None,
+    templates: Sequence[StructureTemplate] | None = None,
+) -> tuple[list[StructureCandidate], list[str]]:
+    """The deterministic MENU-WALKER — the stand-in for the future LLM author. Cross every
+    grammar template (enumerate_grammar_templates) with every ONBOARDED search ticker, drop
+    the cells already tried (`tried_keys`, the scrubbed corpus's coordinates). Returns
+    (candidates, needs_onboard): an un-onboarded search ticker is never run, only flagged for
+    the human-gated onboard pipeline. The grammar-gate is enforced at StructureCandidate
+    construction — exactly the gate the LLM's output will hit. The seal holds by omission
+    (campaign.search never contains a sealed ticker)."""
+    tried = tried_keys or set()
+    templates = enumerate_grammar_templates() if templates is None else list(templates)
+    cands: list[StructureCandidate] = []
+    needs_onboard: list[str] = []
+    for tk in campaign.search:
+        if not _is_onboarded(tk):
+            needs_onboard.append(tk)
+            continue
+        for t in templates:
+            c = StructureCandidate(t.name, tk, t.overlay, t.params, t.predicted_sign)
+            if _cand_key(c) not in tried:
+                cands.append(c)
+    return cands, needs_onboard
+
+
+def run_proposer_round(
+    campaign: Campaign = STRUCTURE_CAMPAIGN,
+    path: str = IDEA_LEDGER_PATH,
+    capital: float = STRUCTURE_CAPITAL,
+    scorer: Callable[[StructureCandidate], dict[str, Any]] | None = None,
+    run: bool = True,
+    record: bool = False,
+) -> dict[str, Any]:
+    """One menu-walker proposer round (Phase 1 — deterministic, NO LLM): the loop the LLM
+    will later plug into, with the enumerator standing in for the author.
+
+      READ scrubbed corpus -> PROPOSE (menu-walk grammar x onboarded tickers, minus tried)
+      -> GRAMMAR-GATE (StructureCandidate) -> RUN (engine, scored per-batch) -> JUDGE over the
+      lifetime e-LOND stream (judge_against_lifetime_stream, #3b) -> RECORD -> next round
+      re-reads the corpus and skips them.
+
+    `run=False` is a cheap PREVIEW — it proposes the untried cells but runs no engine and
+    writes nothing. `run=True, record=False` runs + lifetime-judges without writing (a dry
+    run). `record=True` appends the judged rows to the lifetime ledger (and implies run). The
+    proposer reads only the scrubbed corpus, never the answer-key ledger. `scorer` is
+    injectable for the synthetic test layer."""
+    corpus = load_proposer_corpus(path)
+    tried = {_proposer_key(r['template'], r['ticker'], r['params']) for r in corpus}
+    cands, needs_onboard = propose_structure_candidates(campaign, tried)
+    result: dict[str, Any] = {'proposed': len(cands), 'recorded': 0,
+                              'needs_onboard': needs_onboard, 'candidates': cands,
+                              'rows': [], 'ledger_rows': []}
+    if not cands or not run:
+        return result
+    rows = run_structure_campaign(campaign, capital=capital, scorer=scorer, candidates=cands)
+    ledger_rows = judge_against_lifetime_stream(
+        structure_ledger_rows(rows, capital=capital), path=path)
+    result['rows'] = rows
+    result['ledger_rows'] = ledger_rows
+    if record:
+        result['recorded'] = record_trials(ledger_rows, path)
+    return result
+
+
 def main() -> None:
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == 'structure':
@@ -1097,6 +1243,26 @@ def main() -> None:
             n = record_trials(ledger_rows)
             print(f'\nidea_ledger: +{n} new comparison(s) recorded to '
                   f'{IDEA_LEDGER_PATH} (deduped; e-LOND judged over the lifetime stream)')
+        return
+    if len(sys.argv) > 1 and sys.argv[1] == 'propose':
+        # Phase 1: the deterministic menu-walker proposer (no LLM). Default is a cheap
+        # PREVIEW (propose untried cells, run nothing); --run scores them; --record records.
+        record = '--record' in sys.argv
+        run = record or '--run' in sys.argv
+        print(f'Menu-walker proposer (deterministic, no LLM); grammar = '
+              f'{grid_universe_size()} templates'
+              f'{" — running engine, a while cold ..." if run else " (preview)"}', flush=True)
+        res = run_proposer_round(run=run, record=record)
+        print(f'proposed {res["proposed"]} untried cell(s) across onboarded search tickers')
+        if res['needs_onboard']:
+            print(f'  needs onboard (NOT run — human-gated fetch): {res["needs_onboard"]}')
+        if run:
+            print(f'  ran + lifetime-judged {len(res["rows"])} cell(s); '
+                  f'recorded {res["recorded"]} to {IDEA_LEDGER_PATH}'
+                  if record else
+                  f'  ran + lifetime-judged {len(res["rows"])} cell(s) (dry run — nothing recorded)')
+        else:
+            print('  preview only — pass --run to score, --record to record')
         return
     print('Loading search runs (sealed set excluded; a few minutes cold) ...',
           flush=True)
