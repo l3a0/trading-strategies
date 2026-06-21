@@ -1,12 +1,13 @@
 export const meta = {
   name: 'onboard',
-  description: 'Onboard tickers end-to-end for the edge-search pipeline. SAFE (default): read-only validate gate -> structure campaign -> triage. LIVE (args.live=true): adds the fetch front-half, auto-applies KNOWN data repairs (a proposed CHAIN_CLEAN_START clip; a split-driven price-scale mismatch), and publishes. Novel pathologies and campaign survivors ALWAYS flag to a human. args: {tickers:[...], live:false}.',
+  description: 'Onboard tickers for the edge-search pipeline ONE AT A TIME — each ticker runs its complete lifecycle (fetch -> clean gate -> publish -> single-ticker structure campaign -> triage) to completion before the next ticker starts. SAFE (default): read-only validate gate -> campaign -> triage. LIVE (args.live=true): adds the fetch front-half (sequential, per the shared API rate budget), auto-applies KNOWN data repairs (a proposed CHAIN_CLEAN_START clip; a split-driven price-scale mismatch), and publishes. Novel pathologies and campaign survivors ALWAYS flag to a human. args: {tickers:[...], live:false}.',
   phases: [
-    { title: 'Fetch', detail: 'live only — fetch_batch.sh' },
+    { title: 'Fetch', detail: 'live only — fetch_batch.sh (sequential, one ticker at a time)' },
     { title: 'Clean gate', detail: 'validate; live auto-applies known repairs' },
     { title: 'Publish', detail: 'live only — publish_dailies.sh' },
-    { title: 'Campaign', detail: 'structure campaign over the clean set' },
+    { title: 'Campaign', detail: 'single-ticker structure smoke test (this ticker alone, TLT sealed)' },
     { title: 'Triage', detail: 'kill, or adversarially vet + flag a survivor' },
+    { title: 'Publish-ready', detail: 'live only — assemble the cross-ticker PR bundle (staged)' },
   ],
 }
 
@@ -16,7 +17,7 @@ const A = typeof args === 'string' ? JSON.parse(args) : (args && typeof args ===
 const LIVE = !!A.live
 const TICKERS = (Array.isArray(A.tickers) && A.tickers.length)
   ? A.tickers : ['GLD', 'XLE', 'EEM']   // safe default: already-onboarded sample
-log(`mode=${LIVE ? 'LIVE (fetch + auto-apply known repairs + publish)' : 'SAFE (read-only)'}  tickers=[${TICKERS.join(', ')}]`)
+log(`mode=${LIVE ? 'LIVE (fetch + auto-apply known repairs + publish)' : 'SAFE (read-only)'}  tickers=[${TICKERS.join(', ')}]  (each ticker end-to-end before the next)`)
 
 const GATE = {
   type: 'object', additionalProperties: false,
@@ -84,6 +85,10 @@ function cleanPrompt(tk) {
    ticker="${tk}".`
 }
 
+// One ticker's COMPLETE lifecycle: fetch -> clean gate -> publish -> single-ticker structure
+// campaign -> triage. The sequential loop below runs this to completion for one ticker before the
+// next begins, so a ticker is finished end-to-end first and the LIVE fetch is serialized (the
+// shared API rate budget — one ticker to completion before the next — is a standing preference).
 async function onboardOne(tk) {
   if (LIVE) {
     await agent(`LIVE — run ./fetch_batch.sh ${tk} to completion (resumable; can take a while on a
@@ -96,43 +101,67 @@ async function onboardOne(tk) {
     await agent(`LIVE — run ./publish_dailies.sh ${tk}; confirm the round-trip verify passed.`,
       { phase: 'Publish', label: `publish:${tk}` })
   }
-  return { ticker: tk, gate }
+
+  // Campaign + triage are part of THIS ticker's lifecycle. Only a clean/repaired ticker is
+  // campaigned (it has a sound store to score); an auto-clean (safe mode) or human-flag ticker
+  // stops at the gate. The campaign is the SINGLE-TICKER onboarding smoke test — this ticker
+  // ALONE, TLT sealed (the per-ticker check pinned by TestNvdaStructureCampaign) — NOT the
+  // cross-sectional batch; folding the ticker into STRUCTURE_SEARCH (which re-pins the whole
+  // 28-cell campaign under one FDR pass) stays the deliberate human step flagged below.
+  let rows = [], survivors = [], critiques = []
+  if (ready) {
+    const camp = await agent(
+      `SAFE — read-only. Run the engine-re-run STRUCTURE campaign on ${tk} ALONE (the single-ticker
+       onboarding smoke test, TLT sealed by omission — a 1-ticker search never includes it), and
+       return every cell. This mirrors the pinned per-ticker check (TestNvdaStructureCampaign).
+       JSON-emitting command:
+         ${PY} -c "import json,edge_search as e; rows=e.run_structure_campaign(e.Campaign(search=('${tk}',))); print(json.dumps([{k:r.get(k) for k in ('template','ticker','t_stat_newey_west','p_value','by_survivor','measurement_invalid')} for r in rows]))"
+       Parse the JSON array; rename t_stat_newey_west -> t_nw. Return rows. (~10-20s; let it finish.)`,
+      { phase: 'Campaign', label: `campaign:${tk}`, schema: CAMP })
+    rows = (camp && camp.rows) || []
+    survivors = rows.filter(r => r.by_survivor)
+    // Triage: adversarially vet this ticker's survivor(s) before any reaches a human. Index-aligned
+    // with `survivors` (no filter, and parallel() preserves input order), so critiques[i] is
+    // survivors[i]'s verdict even if one returns null.
+    if (survivors.length) {
+      critiques = await parallel(survivors.map(s => () =>
+        agent(`Adversarially REFUTE this campaign survivor before a human sees it: ${JSON.stringify(s)}.
+           Real variance-risk premium, or an artifact (regime-specific / cost-fragile / trailing-vol
+           confound)? Default to refuted if uncertain.`,
+          { phase: 'Triage', label: `refute:${s.ticker}:${s.template}`, schema: VERDICT }))
+    }
+  }
+  log(`${tk}: gate=${gate ? gate.action : 'null'}` +
+      (ready ? `, campaigned ${rows.length} cells, ${survivors.length} survivor(s)` : ' — not campaigned'))
+  return { ticker: tk, gate, ready, rows, survivors, critiques }
 }
 
-// Per-ticker onboarding in parallel (each independent); barrier before the batch campaign.
-const onboarded = (await parallel(TICKERS.map(tk => () => onboardOne(tk)))).filter(o => o && o.gate)
-const clean = onboarded.filter(o => o.gate.action === 'proceed' || o.gate.action === 'repaired').map(o => o.ticker)
-const autoClean = onboarded.filter(o => o.gate.action === 'auto-clean').map(o => o.gate)
-const dataFlags = onboarded.filter(o => o.gate.action === 'human-flag').map(o => o.gate)
-log(`clean gate -> ${clean.length} ready, ${autoClean.length} auto-cleanable, ${dataFlags.length} human-flag`)
-
-if (!clean.length) {
-  return { mode: LIVE ? 'LIVE' : 'SAFE', outcome: 'no clean tickers to campaign',
-           human_queue: { data_flags: dataFlags, auto_cleanable: autoClean, survivor_flags: [] } }
+// SEQUENTIAL: each ticker runs its complete lifecycle before the next begins (depth-first per
+// ticker). The deliberate trade vs. the old all-tickers-in-parallel barrier — it finishes a ticker
+// end-to-end first, and serializes the LIVE fetch to respect the shared API rate budget. (Price for
+// it: no overlap on the read-only stages — acceptable for an onboarding tool, and a pipeline that
+// overlapped them would also overlap the rate-budgeted fetch, which the preference forbids.)
+const onboarded = []
+for (const tk of TICKERS) {
+  onboarded.push(await onboardOne(tk))
 }
 
-// One structure campaign over the clean set (TLT sealed).
-const camp = await agent(
-  `SAFE — read-only. Run the engine-re-run STRUCTURE campaign on the clean tickers
-   [${clean.join(', ')}] with TLT sealed, and return every cell. JSON-emitting command:
-     ${PY} -c "import json,edge_search as e; rows=e.run_structure_campaign(e.Campaign(search=tuple('${clean.join(',')}'.split(',')),sealed=('TLT',))); print(json.dumps([{k:r.get(k) for k in ('template','ticker','t_stat_newey_west','p_value','by_survivor','measurement_invalid')} for r in rows]))"
-   Parse the JSON array; rename t_stat_newey_west -> t_nw. Return rows. (~40-70s; let it finish.)`,
-  { phase: 'Campaign', label: 'structure-campaign', schema: CAMP })
-const rows = camp.rows || []
-const survivors = rows.filter(r => r.by_survivor)
-log(`campaign -> ${rows.length} cells, ${survivors.length} survivor(s)`)
-
-// Triage: kill, or adversarially vet a survivor before it reaches a human.
-let critiques = []
-if (survivors.length) {
-  critiques = (await parallel(survivors.map(s => () =>
-    agent(`Adversarially REFUTE this campaign survivor before a human sees it: ${JSON.stringify(s)}.
-       Real variance-risk premium, or an artifact (regime-specific / cost-fragile / trailing-vol
-       confound)? Default to refuted if uncertain.`,
-      { phase: 'Triage', label: `refute:${s.ticker}:${s.template}`, schema: VERDICT })))).filter(Boolean)
-}
+const clean = onboarded.filter(o => o.ready).map(o => o.ticker)
+const autoClean = onboarded.filter(o => o.gate && o.gate.action === 'auto-clean').map(o => o.gate)
+const dataFlags = onboarded.filter(o => o.gate && o.gate.action === 'human-flag').map(o => o.gate)
+const rows = onboarded.flatMap(o => o.rows)
+const survivors = onboarded.flatMap(o =>
+  o.survivors.map((s, i) => ({ ...s, critique: o.critiques[i] || null })))
+log(`onboarded ${onboarded.length} ticker(s) -> ${clean.length} clean/campaigned, ` +
+    `${autoClean.length} auto-cleanable, ${dataFlags.length} human-flag; ` +
+    `${rows.length} cells, ${survivors.length} survivor(s)`)
 
 // ---- PUBLISH-READY (live only): assemble the review-ready PR bundle, STAGED not committed ----
+// Deliberately assembled ONCE over all clean tickers, NOT per-ticker: the three target surfaces
+// (ci.yml's cache lists, the shared docs/edge_search.md addendum, test_edge_search.py) are
+// cross-ticker files, so per-ticker assembly would race N agents on the same edits. The per-ticker
+// requirement governs the data/evidence lifecycle above; PR packaging is a downstream step over the
+// already-finished set, reviewed as one PR.
 // Everything here is mechanical transcription of the deterministic campaign output, so the agents
 // auto-apply it; the human reviews the staged PR and CI validates the edits. The two judgments stay
 // human: folding the ticker into the main STRUCTURE_SEARCH (which re-pins the whole campaign) and
@@ -173,13 +202,15 @@ if (LIVE && clean.length) {
 
 return {
   mode: LIVE ? 'LIVE' : 'SAFE',
-  outcome: survivors.length === 0
-    ? `KILLED — ${clean.length} clean tickers campaigned, 0 survivors / ${rows.length} cells`
-    : `${survivors.length} survivor(s) flagged for human promotion`,
+  outcome: clean.length === 0
+    ? `no clean tickers to campaign (${dataFlags.length} human-flagged, ${autoClean.length} auto-cleanable)`
+    : survivors.length === 0
+      ? `KILLED — ${clean.length} clean ticker(s) campaigned, 0 survivors / ${rows.length} cells`
+      : `${survivors.length} survivor(s) flagged for human promotion`,
   human_queue: {
     data_flags: dataFlags,                                              // novel pathologies
     auto_cleanable: autoClean,                                          // known clips (safe mode only)
-    survivor_flags: survivors.map((s, i) => ({ ...s, critique: critiques[i] || null })),
+    survivor_flags: survivors,                                          // already enriched with the refute critique
   },
   publish_ready: prBundle ? {
     assembled: prBundle,
