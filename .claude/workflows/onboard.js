@@ -44,9 +44,11 @@ const CAMP = {
         properties: {
           template: { type: 'string' }, ticker: { type: 'string' },
           t_nw: { type: ['number', 'null'] }, p_value: { type: ['number', 'null'] },
-          by_survivor: { type: 'boolean' }, measurement_invalid: { type: 'boolean' },
+          elond_survivor: { type: 'boolean' },   // e-LOND, the FDR control of record (#3b)
+          by_survivor: { type: 'boolean' },       // BY, retained as a diagnostic
+          measurement_invalid: { type: 'boolean' },
         },
-        required: ['template', 'ticker', 'by_survivor'],
+        required: ['template', 'ticker', 'elond_survivor', 'by_survivor'],
       },
     },
   },
@@ -115,11 +117,17 @@ async function onboardOne(tk) {
        onboarding smoke test, TLT sealed by omission — a 1-ticker search never includes it), and
        return every cell. This mirrors the pinned per-ticker check (TestNvdaStructureCampaign).
        JSON-emitting command:
-         ${PY} -c "import json,edge_search as e; rows=e.run_structure_campaign(e.Campaign(search=('${tk}',))); print(json.dumps([{k:r.get(k) for k in ('template','ticker','t_stat_newey_west','p_value','by_survivor','measurement_invalid')} for r in rows]))"
+         ${PY} -c "import json,edge_search as e; rows=e.run_structure_campaign(e.Campaign(search=('${tk}',))); print(json.dumps([{k:r.get(k) for k in ('template','ticker','t_stat_newey_west','p_value','elond_survivor','by_survivor','measurement_invalid')} for r in rows]))"
        Parse the JSON array; rename t_stat_newey_west -> t_nw. Return rows. (~10-20s; let it finish.)`,
       { phase: 'Campaign', label: `campaign:${tk}`, schema: CAMP })
     rows = (camp && camp.rows) || []
-    survivors = rows.filter(r => r.by_survivor)
+    // Flag a cell if EITHER FDR gate fires: elond_survivor is the control of record (#3b,
+    // run_structure_campaign), by_survivor the retained BY diagnostic. The union is the conservative
+    // direction for a HUMAN-review gate — over-flagging is cheap (a human dismisses it), missing a
+    // real survivor is the danger — and the two are not guaranteed to coincide (e-LOND's (R+1) reward
+    // can flag a cell BY does not). This is the opposite asymmetry from the proposer corpus, which
+    // excludes on the control ALONE so a non-control cell stays proposable.
+    survivors = rows.filter(r => r.elond_survivor || r.by_survivor)
     // Triage: adversarially vet this ticker's survivor(s) before any reaches a human. Index-aligned
     // with `survivors` (no filter, and parallel() preserves input order), so critiques[i] is
     // survivors[i]'s verdict even if one returns null.
