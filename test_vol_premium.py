@@ -22,9 +22,12 @@ import pandas as pd
 import pytest
 
 from vol_premium import (
+    STRUCTURE_SPECS,
+    _leg_intrinsic,
     run_real_iron_condor_overlay,
     run_real_short_vol_overlay,
     run_real_straddle_overlay,
+    run_structure_via_spec,
     select_iron_condor,
     select_put_entry,
     select_straddle,
@@ -37,6 +40,8 @@ _SPY_PUTS = os.path.join(os.path.dirname(__file__), 'spy_option_dailies_puts.csv
 _HAVE_SPY_PUTS = os.path.exists(_SPY_PUTS) or os.path.exists(_SPY_PUTS + '.gz')
 _IWM_DAILIES = os.path.join(os.path.dirname(__file__), 'iwm_option_dailies.csv')
 _HAVE_IWM = os.path.exists(_IWM_DAILIES) or os.path.exists(_IWM_DAILIES + '.gz')
+_NVDA_DAILIES = os.path.join(os.path.dirname(__file__), 'nvda_option_dailies.csv')
+_HAVE_NVDA = os.path.exists(_NVDA_DAILIES) or os.path.exists(_NVDA_DAILIES + '.gz')
 
 
 def _have(path: str) -> bool:
@@ -1298,3 +1303,93 @@ class TestQqqStraddleExploratory:
         _, st5 = self._run(market, 0.5)
         assert st5['t_stat_newey_west'] == pytest.approx(0.21, abs=0.02)
         assert st5['nw_lag'] == 8
+
+
+# --------------------------------------------------------------------------- #
+# Generic multi-leg structure engine (Ring 1 / Stage A of the "big idea desk")
+# --------------------------------------------------------------------------- #
+class TestGenericStructureEngineSpecs:
+    """ALWAYS-RUN: the generic engine's structure specs + leg math. The three frozen
+    overlays are special cases of run_real_structure_overlay under STRUCTURE_SPECS; the
+    dataset-gated TestGenericStructureEngineEquivalence proves the bit-equivalence."""
+
+    def test_specs_are_well_formed(self) -> None:
+        assert set(STRUCTURE_SPECS) == {'short_vol', 'straddle', 'iron_condor'}
+        for name, spec in STRUCTURE_SPECS.items():
+            assert callable(spec['select'])
+            assert spec['entry_guard'] in ('each_short_positive', 'net_positive')
+            assert spec['hedge_mode'] in ('per_leg_sign', 'combined', 'none')
+            assert spec['management'] in ('hold', 'early_close_single')
+            assert isinstance(spec['defaults'], dict)
+        # the one per-overlay default that differs from the generic's own (1.0): the
+        # straddle's frozen hedge_cost_bps is 0.5 — getting this wrong double-charges its
+        # hedge (the bug Stage A's equivalence pass caught on GLD/XLE/EEM/NVDA).
+        assert STRUCTURE_SPECS['straddle']['defaults'] == {'hedge_cost_bps': 0.5}
+        assert STRUCTURE_SPECS['short_vol']['defaults'] == {}
+        assert STRUCTURE_SPECS['iron_condor']['hedge_mode'] == 'none'
+
+    def test_leg_intrinsic(self) -> None:
+        call = {'right': 'call', 'strike': 100.0}
+        put = {'right': 'put', 'strike': 100.0}
+        assert _leg_intrinsic(call, 110.0) == 10.0 and _leg_intrinsic(call, 90.0) == 0.0
+        assert _leg_intrinsic(put, 90.0) == 10.0 and _leg_intrinsic(put, 110.0) == 0.0
+
+
+def _equiv_market(ticker: str, path: str):
+    from real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
+    store = load_chain_store(path, start=CHAIN_CLEAN_START.get(ticker))
+    days = sorted(store)
+    dates, prices = load_unadjusted_prices(ticker, days[0], '2026-06-06')
+    pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
+    return [d for d, _ in pairs], [p for _, p in pairs], store
+
+
+_FROZEN_OVERLAY = {'short_vol': run_real_short_vol_overlay,
+                   'straddle': run_real_straddle_overlay,
+                   'iron_condor': run_real_iron_condor_overlay}
+_STRUCT_PARAMS = {'short_vol': {'target_delta': 0.25, 'dte': 30},
+                  'straddle': {'dte': 30},
+                  'iron_condor': {'dte': 30, 'short_delta': 0.25, 'wing_delta': 0.10}}
+
+
+def _assert_engine_equivalent(market, name: str) -> None:
+    """The generic engine (via spec) reproduces the frozen overlay: the rounded EQUITY
+    column (the pinned series) is BIT-IDENTICAL, the resulting HAC-t is identical, and
+    rf_credit matches to float-association noise (the unrounded 4-leg cash path)."""
+    dates, prices, store = market
+    params = {**_STRUCT_PARAMS[name], 'capital': 100_000}
+    sF, _, eqF = _FROZEN_OVERLAY[name](dates, prices, store, params)
+    sG, _, eqG = run_structure_via_spec(name, dates, prices, store, params)
+    assert eqF['equity'].equals(eqG['equity'])            # the pinned series, bit-for-bit
+    assert eqF['price'].equals(eqG['price'])
+    assert float((eqF['rf_credit'] - eqG['rf_credit']).abs().max()) < 1e-9   # float noise only
+    tF = short_vol_statistics(eqF, sF['capital'], rf=sF['risk_free_rate'])['t_stat_newey_west']
+    tG = short_vol_statistics(eqG, sG['capital'], rf=sG['risk_free_rate'])['t_stat_newey_west']
+    assert tF == tG                                       # the pinned HAC-t is unchanged
+
+
+@pytest.mark.skipif(not _HAVE_SPY, reason='needs spy_option_dailies.csv or its .gz twin')
+class TestGenericStructureEngineEquivalence:
+    """DATASET-GATED: run_real_structure_overlay reproduces each frozen overlay BIT-FOR-BIT
+    on real chains — the equality oracle gating the eventual in-place swap (Stage B). SPY
+    covers all three; NVDA additionally covers the iron-condor's 4-leg float-association edge
+    (equity bit-identical, rf_credit ~3e-14)."""
+
+    @pytest.fixture(scope='class')
+    def spy(self):
+        return _equiv_market('SPY', _SPY_DAILIES)
+
+    def test_short_vol_equivalent(self, spy) -> None:
+        _assert_engine_equivalent(spy, 'short_vol')
+
+    def test_straddle_equivalent(self, spy) -> None:
+        _assert_engine_equivalent(spy, 'straddle')
+
+    def test_iron_condor_equivalent(self, spy) -> None:
+        _assert_engine_equivalent(spy, 'iron_condor')
+
+    @pytest.mark.skipif(not _HAVE_NVDA, reason='needs nvda_option_dailies.csv or its .gz twin')
+    def test_iron_condor_equivalent_nvda_floatnoise(self) -> None:
+        # NVDA's iron condor is where .equals() on the full frame fails on rf_credit float
+        # noise while equity + the t-stat stay bit-identical — the case to pin explicitly.
+        _assert_engine_equivalent(_equiv_market('NVDA', _NVDA_DAILIES), 'iron_condor')

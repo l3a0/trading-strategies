@@ -56,7 +56,7 @@ realistic transaction costs. Phase B (the put side) is the remaining open work.
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
@@ -771,6 +771,286 @@ def run_real_iron_condor_overlay(
         'cash': round(capital, 2),
     }
     return summary, trades, daily_equity
+
+
+# ============================================================================
+# Generic multi-leg structure engine (Ring 1 / Stage A of the "big idea desk").
+#
+# The three overlays above (short_vol / straddle / iron_condor) are SPECIAL CASES
+# of one loop: a single cash account, the per-day rf credit, the gap<=4 settlement,
+# the mark equity = cash + hedge*price + sum(sign*mid)*shares, and the
+# [date, equity, price, rf_credit] schema short_vol_statistics consumes. They differ
+# only in three parameterized knobs: the entry guard, the hedge mode, and management.
+# The unifying leg math (verified per overlay):
+#   entry credit  = sum over legs of (-sign * entry_net)   [short: sell-comm; long: buy+comm]
+#   settle cash   = sum over legs of ( sign * intrinsic)
+#   mark          = cash + hedge*price + sum over legs of (sign * mid) * shares
+#
+# This runner is ADDITIVE — it does NOT replace the three frozen overlays. The
+# dataset-gated equivalence test pins that it reproduces each one's daily_equity on
+# the real chains; the in-place swap (Stage B) only follows once that holds.
+# ============================================================================
+
+def _leg_intrinsic(leg: dict[str, Any], settle_price: float) -> float:
+    """Per-leg expiry intrinsic: a call pays max(0, S-K), a put max(0, K-S)."""
+    return max(0.0, (settle_price - leg['strike']) if leg['right'] == 'call'
+               else (leg['strike'] - settle_price))
+
+
+def _legs_short_vol(day: dict[str, Any], params: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """One short option leg (call default; put if option_type='put', via a NEGATIVE
+    target_delta) — the run_real_short_vol_overlay structure as a leg list."""
+    dte = int(params.get('dte', 30))
+    target_delta = float(params.get('target_delta', 0.50))
+    fill = str(params.get('fill', 'bid_ask'))
+    is_put = str(params.get('option_type', 'call')) == 'put'
+    pick = (select_put_entry if is_put else select_entry)(day, dte, target_delta)
+    if pick is None:
+        return None
+    _dte, _delta, bid, _ask, mid, expiration, strike, cid = pick
+    sell = bid if fill == 'bid_ask' else mid
+    return [{'sign': -1, 'right': 'put' if is_put else 'call', 'strike': strike,
+             'contract': cid, 'entry_net': sell - COMMISSION_PER_SHARE,
+             'mid': mid, 'delta': _delta, 'expiration': expiration}]
+
+
+def _legs_straddle(day: dict[str, Any], params: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Short call + short put at the same expiry — the run_real_straddle_overlay structure."""
+    dte = int(params.get('dte', 30))
+    fill = str(params.get('fill', 'bid_ask'))
+    call_delta = float(params.get('call_delta', 0.50))
+    put_delta = float(params.get('put_delta', -0.50))
+    pick = select_straddle(day, dte, call_delta, put_delta)
+    if pick is None:
+        return None
+    call, put = pick
+    c_sell = call[2] if fill == 'bid_ask' else call[4]
+    p_sell = put[2] if fill == 'bid_ask' else put[4]
+    return [
+        {'sign': -1, 'right': 'call', 'strike': call[6], 'contract': call[7],
+         'entry_net': c_sell - COMMISSION_PER_SHARE, 'mid': call[4], 'delta': call[1],
+         'expiration': call[5]},
+        {'sign': -1, 'right': 'put', 'strike': put[6], 'contract': put[7],
+         'entry_net': p_sell - COMMISSION_PER_SHARE, 'mid': put[4], 'delta': put[1],
+         'expiration': call[5]},
+    ]
+
+
+def _legs_iron_condor(day: dict[str, Any], params: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Short 0.25d strangle + long 0.10d wings — the run_real_iron_condor_overlay structure.
+    Leg order (sc, sp, lc, lp) is the recorded identity; shorts fill at bid, longs at ask."""
+    dte = int(params.get('dte', 30))
+    fill = str(params.get('fill', 'bid_ask'))
+    short_delta = float(params.get('short_delta', 0.25))
+    wing_delta = float(params.get('wing_delta', 0.10))
+    pick = select_iron_condor(day, dte, short_delta, wing_delta)
+    if pick is None:
+        return None
+    sc, lc, sp, lp = pick
+    sc_in = sc[2] if fill == 'bid_ask' else sc[4]
+    sp_in = sp[2] if fill == 'bid_ask' else sp[4]
+    lc_in = lc[3] if fill == 'bid_ask' else lc[4]
+    lp_in = lp[3] if fill == 'bid_ask' else lp[4]
+    return [
+        {'sign': -1, 'right': 'call', 'strike': sc[6], 'contract': sc[7],
+         'entry_net': sc_in - COMMISSION_PER_SHARE, 'mid': sc[4], 'delta': sc[1], 'expiration': sc[5]},
+        {'sign': -1, 'right': 'put', 'strike': sp[6], 'contract': sp[7],
+         'entry_net': sp_in - COMMISSION_PER_SHARE, 'mid': sp[4], 'delta': sp[1], 'expiration': sc[5]},
+        {'sign': +1, 'right': 'call', 'strike': lc[6], 'contract': lc[7],
+         'entry_net': lc_in + COMMISSION_PER_SHARE, 'mid': lc[4], 'delta': lc[1], 'expiration': sc[5]},
+        {'sign': +1, 'right': 'put', 'strike': lp[6], 'contract': lp[7],
+         'entry_net': lp_in + COMMISSION_PER_SHARE, 'mid': lp[4], 'delta': lp[1], 'expiration': sc[5]},
+    ]
+
+
+# The three structures as their generic-engine configs (selector + the three knobs) plus
+# `defaults` — the per-overlay parameter defaults that differ from the generic's own (only
+# the straddle's hedge_cost_bps=0.5 vs the generic/short-vol 1.0). Merged UNDER user params,
+# exactly reproducing each frozen overlay's `params.get(..., default)`. The equivalence test
+# (and the Stage-B dispatch) call run_real_structure_overlay({**spec['defaults'], **params}).
+STRUCTURE_SPECS: dict[str, dict[str, Any]] = {
+    'short_vol':   {'select': _legs_short_vol, 'entry_guard': 'each_short_positive',
+                    'hedge_mode': 'per_leg_sign', 'management': 'early_close_single',
+                    'defaults': {}},                              # hedge_cost_bps 1.0 = generic default
+    'straddle':    {'select': _legs_straddle, 'entry_guard': 'each_short_positive',
+                    'hedge_mode': 'combined', 'management': 'hold',
+                    'defaults': {'hedge_cost_bps': 0.5}},          # straddle's frozen default
+    'iron_condor': {'select': _legs_iron_condor, 'entry_guard': 'net_positive',
+                    'hedge_mode': 'none', 'management': 'hold',
+                    'defaults': {}},                              # no hedge, so bps is irrelevant
+}
+
+
+def run_structure_via_spec(name: str, dates: list[str], prices: list[float],
+                           store: dict[str, dict[str, Any]], params: dict[str, Any],
+                           ) -> tuple[dict[str, Any], list[dict[str, Any]], pd.DataFrame]:
+    """Run the generic engine under a named STRUCTURE_SPEC, merging the spec's per-overlay
+    defaults UNDER the caller's params (so an unspecified knob falls back to the frozen
+    overlay's default). The single call site the equivalence test and the Stage-B dispatch use."""
+    spec = STRUCTURE_SPECS[name]
+    return run_real_structure_overlay(
+        dates, prices, store, {**spec['defaults'], **params},
+        select=spec['select'], entry_guard=spec['entry_guard'],
+        hedge_mode=spec['hedge_mode'], management=spec['management'])
+
+
+def run_real_structure_overlay(
+    dates: list[str],
+    prices: list[float],
+    store: dict[str, dict[str, Any]],
+    params: dict[str, Any],
+    *,
+    select: Callable[[dict[str, Any], dict[str, Any]], list[dict[str, Any]] | None],
+    entry_guard: str = 'each_short_positive',
+    hedge_mode: str = 'combined',
+    management: str = 'hold',
+) -> tuple[dict[str, Any], list[dict[str, Any]], pd.DataFrame]:
+    """Generic multi-leg short-vol structure runner — the single loop the three frozen
+    overlays are special cases of. A structure is a list of LEGS produced at entry by
+    `select(day, params)`, each {sign(+1 long/-1 short), right, strike, contract,
+    entry_net, mid, delta, expiration}. Returns (summary, trades=[], daily_equity) with
+    the same daily_equity schema short_vol_statistics consumes.
+
+    Parameterized differences from the shared skeleton:
+      entry_guard  'each_short_positive' (every short leg's net premium > 0; short_vol /
+                   straddle) | 'net_positive' (the net credit > 0; iron_condor)
+      hedge_mode   'per_leg_sign' (clamp the single leg's delta to its sign range [0,1]
+                   call / [-1,0] put; short_vol) | 'combined' (clamp the summed delta to
+                   [-1,1]; straddle) | 'none' (static; iron_condor)
+      management   'hold' (mark to expiry) | 'early_close_single' (short_vol's
+                   close_at_pct / manage_deep_itm on the single leg)
+
+    ADDITIVE: does not replace the frozen overlays; pinned bit-equivalent to each by the
+    dataset-gated equivalence test before any in-place swap.
+
+    Drive this via `run_structure_via_spec` / STRUCTURE_SPECS — a BARE call reverts an
+    unspecified knob to the GENERIC default, which for hedge_cost_bps is 1.0 (the straddle's
+    frozen default is 0.5; the spec injects it). Stage-B caveats the equivalence oracle does
+    NOT cover: (1) the `net_positive` entry credit is left-folded with COMMISSION baked into
+    each leg's entry_net, a different float association than the frozen iron-condor's
+    `(shorts)-(longs)-4*comm` — harmless today (it rounds away in equity; verified to never
+    flip the `> 0` guard across the search tickers), but a swap must confirm it cannot flip at
+    a net-credit-near-zero boundary, or match the frozen association there; (2) this `summary`
+    is a SUBSET of each frozen overlay's (it carries capital + risk_free_rate + the equity
+    series — exactly what the FDR campaign reads — but drops alpha_vs_cash / win_rate /
+    num_*_sold / max_drawdown_pct), so a swap must NOT route run_registered_vrp.py /
+    run_backtest.py through it until the summary is enriched."""
+    fill = str(params.get('fill', 'bid_ask'))
+    capital = float(params.get('capital', 100_000))
+    rf = float(params.get('risk_free_rate', 0.045))
+    hedge_cost_bps = float(params.get('hedge_cost_bps', 1.0))
+    close_at_pct = params.get('close_at_pct')
+    manage_deep_itm = bool(params.get('manage_deep_itm', False))
+    daily_rf = rf / 252.0
+
+    initial_price = prices[0]
+    num_contracts = int(capital // (initial_price * 100))
+    if num_contracts < 1:
+        raise ValueError('capital insufficient for one contract')
+    shares = 100 * num_contracts
+
+    cash = capital
+    hedge_shares = 0
+    legs: list[dict[str, Any]] | None = None
+    expiration: str | None = None
+    interest_earned = 0.0
+    total_hedge_cost = 0.0
+    daily_rows: list[dict[str, Any]] = []
+    prev_date: str | None = None
+    prev_price: float | None = None
+
+    for i, (date, price) in enumerate(zip(dates, prices)):
+        day = store.get(date)
+
+        # 1. rf on yesterday's cash (recorded for rf-netting in short_vol_statistics).
+        day_rf_credit = 0.0
+        if i > 0:
+            day_rf_credit = cash * daily_rf
+            cash += day_rf_credit
+            interest_earned += day_rf_credit
+
+        # 2. entry / settlement / mark+manage (all cash flows).
+        if legs is None:
+            if day is not None:
+                picked = select(day, params)
+                if picked is not None:
+                    if entry_guard == 'each_short_positive':
+                        ok = all(leg['entry_net'] > 0 for leg in picked if leg['sign'] < 0)
+                    else:  # net_positive
+                        ok = sum(-leg['sign'] * leg['entry_net'] for leg in picked) > 0
+                    if ok:
+                        cash += sum(-leg['sign'] * leg['entry_net'] for leg in picked) * shares
+                        legs = picked
+                        expiration = picked[0]['expiration']
+        elif date >= expiration:
+            if date == expiration:
+                settle_price = price
+            else:
+                assert prev_date is not None and prev_price is not None
+                gap = (pd.Timestamp(expiration) - pd.Timestamp(prev_date)).days
+                assert gap <= 4, (f'{gap} days between {prev_date} and expiration '
+                                  f'{expiration} — missing data?')
+                settle_price = prev_price
+            cash += sum(leg['sign'] * _leg_intrinsic(leg, settle_price) for leg in legs) * shares
+            legs = None
+            expiration = None
+        elif day is not None:
+            for leg in legs:
+                q = day['marks'].get(leg['contract'])
+                if q is not None:
+                    leg['mid'], leg['delta'] = q[2], q[3]
+            if management == 'early_close_single':
+                leg = legs[0]
+                q = day['marks'].get(leg['contract'])
+                if q is not None:
+                    short_buy = q[1] if fill == 'bid_ask' else q[2]
+                    hit = (close_at_pct is not None
+                           and short_buy <= leg['entry_net'] * (1 - close_at_pct))
+                    deep = manage_deep_itm and (leg['delta'] < -0.70 if leg['right'] == 'put'
+                                                else leg['delta'] > 0.70)
+                    if hit or deep:
+                        cash -= (short_buy + COMMISSION_PER_SHARE) * shares
+                        legs = None
+                        expiration = None
+
+        # 3. delta hedge (mode-dependent); unwinds to 0 when flat.
+        if legs is not None and hedge_mode != 'none':
+            if hedge_mode == 'per_leg_sign':
+                leg = legs[0]
+                lo, hi = (-1.0, 0.0) if leg['right'] == 'put' else (0.0, 1.0)
+                target_hedge = int(round(min(max(leg['delta'], lo), hi) * shares))
+            else:  # combined
+                combined = sum(leg['delta'] for leg in legs)
+                target_hedge = int(round(min(max(combined, -1.0), 1.0) * shares))
+        else:
+            target_hedge = 0
+        hedge_trade = target_hedge - hedge_shares
+        if hedge_trade != 0:
+            cash -= hedge_trade * price
+            cost = abs(hedge_trade) * price * (hedge_cost_bps / 10_000.0)
+            cash -= cost
+            total_hedge_cost += cost
+            hedge_shares = target_hedge
+
+        # 4. mark.
+        equity = cash + price * hedge_shares
+        if legs is not None:
+            equity += sum(leg['sign'] * leg['mid'] for leg in legs) * shares
+        daily_rows.append({'date': date, 'equity': round(equity, 2), 'price': price,
+                           'rf_credit': day_rf_credit})
+        prev_date, prev_price = date, price
+
+    daily_equity = pd.DataFrame(daily_rows, columns=['date', 'equity', 'price', 'rf_credit'])
+    final_equity = float(daily_equity['equity'].iloc[-1])
+    summary = {
+        'capital': round(capital, 2), 'num_contracts': num_contracts,
+        'final_equity': round(final_equity, 2),
+        'net_pnl': round(final_equity - capital, 2),
+        'interest_earned': round(interest_earned, 2),
+        'total_hedge_cost': round(total_hedge_cost, 2),
+        'risk_free_rate': rf, 'cash': round(capital, 2),
+    }
+    return summary, [], daily_equity
 
 
 def _cli() -> None:
