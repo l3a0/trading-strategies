@@ -172,10 +172,15 @@ does not bend the cheap re-tag gate:
   *by construction* (`scrub_ledger_row` copies only `SAFE_FIELDS`, so a result column
   added to the ledger later cannot leak); the magnitude is the dangerous channel — a
   near-miss t-stat tells a proposer where to fish. **SURVIVED rows are excluded:** a
-  survivor is itself a BY-thresholded result — the one genuine "fish here" coordinate
-  — so it escalates to manual pre-registration out-of-band and never feeds back into
-  automated proposal; the corpus is the duds to avoid (KILLED) plus unmeasurable
-  tickers (INVALID, a per-ticker data-quality state). **Contingency, not yet an
+  survivor is an `elond_survivor` — a cell flagged by **e-LOND, the FDR control of
+  record** (#3b), not the retained BY diagnostic — the one genuine "fish here"
+  coordinate, so it escalates to manual pre-registration out-of-band and never feeds
+  back into automated proposal. (Keying the exclusion off the control rather than the
+  diagnostic matters because the two need not coincide: e-LOND's `(R+1)` reward can
+  flag a cell BY does not, and the prereg is explicit that *only e-LOND flags* — so a
+  BY-only cell is KILLED and stays in the corpus, while an e-LOND survivor the
+  diagnostic missed is correctly dropped.) The corpus is the duds to avoid (KILLED)
+  plus unmeasurable tickers (INVALID, a per-ticker data-quality state). **Contingency, not yet an
   interlock:** this is leak-proof only for a proposer that reads *through* it —
   `idea_ledger.jsonl` is committed and carries the answer key, and nothing yet denies
   a repo-aware agent from reading it directly, so "the proposer must never read the
