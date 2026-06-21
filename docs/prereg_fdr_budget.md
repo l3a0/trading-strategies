@@ -4,12 +4,12 @@
 ACTIVATED. The machinery (§2) and constants (§3) are implemented in `evalue_fdr.py`
 and pinned by `test_evalue_fdr.py` (oracle-validated against the `online-fdr` package
 / the papers). e-LOND is now the live FDR control in `run_structure_campaign` (BY
-retained as a reported diagnostic): its first governed verdict — **0 / 24 cells
+retained as a reported diagnostic): its first governed verdict — **0 / 28 cells
 flagged** in the structure campaign — is pinned by `TestStructureCampaign`. The rule
 still predates every number it governs: it was registered at #50 before the e-LOND
-control judged anything. (The live campaign judges its 24-cell batch as the *head* of
-the e-LOND stream — R = 0, t = 1, which is why the `1/(α·γ₁)` bar applies — because the
-committed lifetime ledger remains empty until `--record`; §6 is the pre-registration
+control judged anything. (The 28-cell batch is the *head* of the e-LOND stream — R = 0
+at the start, so the first cell faces the loosest `1/(α·γ₁)` bar — and is now the
+committed lifetime ledger, populated via `--record`; §6 is the pre-registration
 snapshot.)
 
 **Date drafted:** 2026-06-19.
@@ -63,9 +63,9 @@ not detection. Calibrating an asymptotic p into an e-value is lossy (a calibrate
 e-value is conservative under a genuinely uniform null), so on the same data
 calibrated-e-LOND rejects **no more than BY did, and typically fewer**. With the
 registered `κ = 0.5`, a single top-ranked cell is rejectable only at e ≳ `n/α` —
-i.e. `p ≲ 4×10⁻⁶`, far stricter than BY's ≈ `0.0011` rank-1 bar at `n=24`. **The
+i.e. `p ≲ 3×10⁻⁶`, far stricter than BY's ≈ `0.0009` rank-1 bar at `n=28`. **The
 price for e-LOND's arbitrary-dependence, peek-whenever guarantee is a stricter
-per-cell bar.** For a loop that has been 0/24 every campaign — where the binding
+per-cell bar.** For a loop that has been 0/28 every campaign — where the binding
 goal is *never to falsely promote*, not to squeeze out marginal discoveries — that
 is the right trade, but it is a trade, not a free win.
 
@@ -169,12 +169,14 @@ defaults.
 
 ## 6. Current state (for the record, computed pre-registration)
 
-At registration the operative per-batch `n` is **24** (structure) / 9 (re-tag).
-The lifetime ledger is **empty** (`idea_ledger.jsonl` not yet populated). The
-structure comparisons already spent and to be recorded on first `--record` are the
-24-cell batch plus the 4-cell NVDA addendum = **≈ 28**, the first elements the
-e-LOND stream will consume. These condition on no new outcome; they are the
-existing, published 0/24 results. (The re-tag phase is namespaced by `phase` in the
+At registration the operative per-batch `n` was **24** (structure) / 9 (re-tag), the
+lifetime ledger was **empty**, and the structure comparisons already spent were the
+24-cell batch plus the 4-cell NVDA addendum = **≈ 28** — the first elements the e-LOND
+stream would consume, conditioning on no new outcome (the existing, published 0/24
+results). **Post-registration update:** NVDA was folded into `STRUCTURE_SEARCH` (the
+addendum becomes the seventh ticker), so the structure batch is now **28**, and the
+lifetime ledger has been populated via `--record` with exactly those 28 cells — verdict
+unchanged at **0/28**. (The re-tag phase is namespaced by `phase` in the
 ledger and runs a separate stream — §7.)
 
 ## 7. Open questions, deferred (NOT resolved here)
