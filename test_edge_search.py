@@ -44,6 +44,7 @@ from edge_search import (
     _add_one_p,
     _asymptotic_p,
     _cooldown_null,
+    _cand_key,
     _data_lineage_hash,
     _ledger_key,
     _vol_confound,
@@ -51,9 +52,12 @@ from edge_search import (
     build_cycle_data,
     build_proposer_corpus,
     enumerate_candidates,
+    enumerate_grammar_templates,
     enumerate_structure_candidates,
     judge_against_lifetime_stream,
     kill_gate,
+    propose_structure_candidates,
+    run_proposer_round,
     load_idea_ledger,
     load_proposer_corpus,
     load_search_runs,
@@ -841,6 +845,72 @@ class TestProposerCorpus:
         assert len(corpus) == 1
         assert 'p_value' not in corpus[0] and 'statistic' not in corpus[0]
         assert corpus[0]['verdict'] == 'KILLED' and corpus[0]['template'] == 'straddle'
+
+
+class TestMenuWalkerProposer:
+    """Phase 1: the deterministic menu-walker proposer (no LLM) — the loop the LLM later
+    plugs into. read scrubbed corpus -> propose grammar-valid untried cells -> grammar-gate
+    -> run -> lifetime-judge (#3b) -> record -> re-read. Always-run, synthetic (injected
+    scorer + monkeypatched onboarding + temp ledger; no engine, no datasets)."""
+
+    @staticmethod
+    def _scorer(cand):
+        # a run_structure_campaign-shaped row from an injected scorer (no engine)
+        return {'phase': 'structure', 'template': cand.template, 'ticker': cand.ticker,
+                'params': cand.params_dict(), 'predicted_sign': cand.predicted_sign,
+                't_stat_newey_west': 0.5, 'sign_ok': True, 'p_value': 0.3}
+
+    def test_grammar_menu_is_the_full_universe(self) -> None:
+        tmpls = enumerate_grammar_templates()
+        assert len(tmpls) == grid_universe_size()                 # the whole reachable menu (30)
+        assert len({t.name for t in tmpls}) == len(tmpls)         # names unique
+        assert all(t.predicted_sign == +1 for t in tmpls)         # committed sign convention
+        # the committed cells keep their hand-chosen names so a menu-walked cell that coincides
+        # with one dedups against the published ledger instead of re-counting it under a new name
+        assert {t.name for t in STRUCTURE_TEMPLATES} <= {t.name for t in tmpls}
+
+    def test_menu_walker_dedups_and_routes_unonboarded(self, monkeypatch) -> None:
+        monkeypatch.setattr('edge_search._is_onboarded', lambda tk: tk != 'NEW')
+        camp = Campaign(search=('AAA', 'NEW'))
+        cands, need = propose_structure_candidates(camp, set())
+        assert need == ['NEW']                                    # un-onboarded -> flagged, not run
+        assert len(cands) == grid_universe_size()                 # only AAA's full menu runs
+        assert all(c.ticker == 'AAA' for c in cands)
+        # dedup: a tried cell is dropped (keyed on the corpus coordinates)
+        tried = {_cand_key(cands[0])}
+        cands2, _ = propose_structure_candidates(camp, tried)
+        assert len(cands2) == len(cands) - 1
+
+    def test_round_records_via_lifetime_judge_and_re_reads(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setattr('edge_search._is_onboarded', lambda tk: True)
+        p = str(tmp_path / 'idea_ledger.jsonl')
+        camp = Campaign(search=('AAA',))
+        res = run_proposer_round(camp, path=p, scorer=self._scorer, run=True, record=True)
+        assert res['proposed'] == grid_universe_size()            # the full untried menu
+        assert res['recorded'] == grid_universe_size()            # all recorded (fresh ledger)
+        assert len(load_idea_ledger(p)) == grid_universe_size()
+        # re-read: the corpus now carries every cell, so a second round proposes/records nothing
+        res2 = run_proposer_round(camp, path=p, scorer=self._scorer, run=True, record=True)
+        assert res2['proposed'] == 0 and res2['recorded'] == 0
+
+    def test_preview_runs_no_engine_and_writes_nothing(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setattr('edge_search._is_onboarded', lambda tk: True)
+        p = str(tmp_path / 'idea_ledger.jsonl')
+        called = []
+        res = run_proposer_round(Campaign(search=('AAA',)), path=p,
+                                 scorer=lambda c: called.append(c) or {}, run=False)
+        assert res['proposed'] == grid_universe_size() and res['recorded'] == 0
+        assert called == []                                       # run=False: no engine/scorer call
+        assert load_idea_ledger(p) == []                          # and nothing written
+
+    def test_dry_run_judges_without_recording(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setattr('edge_search._is_onboarded', lambda tk: True)
+        p = str(tmp_path / 'idea_ledger.jsonl')
+        res = run_proposer_round(Campaign(search=('AAA',)), path=p, scorer=self._scorer,
+                                 run=True, record=False)
+        assert res['proposed'] == grid_universe_size()            # ran + judged ...
+        assert len(res['ledger_rows']) == grid_universe_size()
+        assert res['recorded'] == 0 and load_idea_ledger(p) == []  # ... but wrote nothing
 
 
 class TestStructurePhase:
