@@ -901,11 +901,13 @@ def structure_ledger_rows(campaign_rows: Sequence[dict[str, Any]],
                           end: str = STRUCTURE_END,
                           capital: float = STRUCTURE_CAPITAL) -> list[dict[str, Any]]:
     """Project run_structure_campaign rows into lean lifetime-ledger rows: the
-    hypothesis (template/ticker/params/sign), the decisive statistic + verdict,
-    and a per-ticker data-lineage hash. Carries the result — it is the answer key,
-    not the scrubbed view (#2). `end` / `capital` default to the phase constants the
-    campaign runs with, so the recorded lineage is provably the span + size the
-    comparison ran on (pass the same values you ran run_structure_campaign with)."""
+    hypothesis (template/ticker/params/sign), the decisive statistic, the verdict of
+    record (`elond_survivor` — the e-LOND FDR control, #3b), the retained BY
+    diagnostic (`by_survivor`), and a per-ticker data-lineage hash. Carries the
+    result — it is the answer key, not the scrubbed view (#2). `end` / `capital`
+    default to the phase constants the campaign runs with, so the recorded lineage is
+    provably the span + size the comparison ran on (pass the same values you ran
+    run_structure_campaign with)."""
     return [{
         'phase': 'structure',
         'template': r['template'],
@@ -915,7 +917,8 @@ def structure_ledger_rows(campaign_rows: Sequence[dict[str, Any]],
         'statistic_kind': 't_nw',
         'statistic': r.get('t_stat_newey_west'),
         'p_value': r.get('p_value'),
-        'by_survivor': bool(r.get('by_survivor', False)),
+        'elond_survivor': bool(r.get('elond_survivor', False)),   # FDR control of record (#3b)
+        'by_survivor': bool(r.get('by_survivor', False)),         # retained BY diagnostic
         'measurement_invalid': bool(r.get('measurement_invalid', False)),
         'fdr_q': r.get('fdr_q'),
         'end': end,
@@ -978,22 +981,28 @@ def scrub_ledger_row(row: dict[str, Any]) -> dict[str, Any]:
     """Project one lifetime-ledger row to the proposer-safe fields + a one-bit
     verdict. Allow-list: only SAFE_FIELDS survive, so no result statistic can leak
     through a forgotten field. `params` is defensively copied so a consumer mutating
-    the corpus cannot reach back into the source row. measurement_invalid surfaces as
-    INVALID — a per-TICKER data-quality state (the scale mismatch), not a per-
-    hypothesis result; it tells a proposer which ticker's price file needs a human
-    fix, nothing about where an edge lives."""
+    the corpus cannot reach back into the source row. The verdict keys off
+    `elond_survivor` — the e-LOND FDR control of record (#3b), NOT the retained
+    `by_survivor` diagnostic: a SURVIVED cell is exactly one e-LOND flags (the one the
+    prereg escalates to manual pre-registration), so the corpus exclusion tracks the
+    control, not the diagnostic. The two are not guaranteed to coincide — e-LOND's
+    (R+1) reward can flag a cell BY does not — so keying off the diagnostic would
+    mislabel an e-LOND survivor KILLED and leak it back into automated proposal.
+    measurement_invalid surfaces as INVALID — a per-TICKER data-quality state (the
+    scale mismatch), not a per-hypothesis result; it tells a proposer which ticker's
+    price file needs a human fix, nothing about where an edge lives."""
     out = {f: (dict(row[f]) if f == 'params' else row[f]) for f in SAFE_FIELDS}
     out['verdict'] = ('INVALID' if row.get('measurement_invalid')
-                      else 'SURVIVED' if row.get('by_survivor') else 'KILLED')
+                      else 'SURVIVED' if row.get('elond_survivor') else 'KILLED')
     return out
 
 
 def build_proposer_corpus(ledger_rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     """The scrubbed view of the lifetime ledger an automated proposer may read —
     names + verdict, no numbers beyond the hypothesis coordinates. SURVIVED rows are
-    EXCLUDED: a survivor is the one genuine "fish here" coordinate (it is a BY-
-    thresholded function of the batch magnitudes, announcing the cell that cleared
-    the bar), and per the manual-graduation discipline it escalates to human pre-
+    EXCLUDED: a survivor is the one genuine "fish here" coordinate (an e-LOND-flagged
+    cell — the FDR control of record, #3b — announcing the comparison that cleared the
+    bar), and per the manual-graduation discipline it escalates to human pre-
     registration out-of-band — it must never feed back into automated proposal. So
     the corpus is the duds to avoid (KILLED) plus unmeasurable tickers (INVALID).
     Re-proposing an excluded survivor cell is harmless: record_trials dedupes it."""
