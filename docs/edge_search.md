@@ -193,7 +193,7 @@ does not bend the cheap re-tag gate:
   now sets `elond_survivor` (the control flag); BY is retained as a reported *diagnostic*
   (`by_survivor`). The honest price: e-LOND is *less* powerful than BY (calibration is
   lossy), buying dependence-robustness + online validity rather than power — and it is
-  *stricter* here, so the verdict is unchanged: **0 / 24 cells flagged.** The strongest
+  *stricter* here, so the verdict is unchanged: **0 / 28 cells flagged.** The strongest
   cell (SPY short-call-25, t_NW ≈ +2.17) calibrates to e ≈ 4.1, far below the
   head-of-stream bar 1/(α·γ₁) ≈ 16.3. The machinery is oracle-tested against the
   `online-fdr` package; `TestStructureCampaign` now pins the e-LOND verdict on real
@@ -263,23 +263,23 @@ both out of this MVP's scope, both the natural next phase.
 
 ---
 
-## Campaign 2 — structure class — EMPTY (2026-06-17)
+## Campaign 2 — structure class — EMPTY (2026-06-17; NVDA folded in 2026-06-20)
 
-**The batch.** Twenty-four `(template, ticker)` cells — four structure templates
+**The batch.** Twenty-eight `(template, ticker)` cells — four structure templates
 (short call 0.25Δ, short call ATM, ATM straddle, 25Δ/10Δ iron condor) crossed
-with the six search tickers (MSFT, SPY, QQQ, GLD, XLE, EEM; **TLT sealed**) —
+with the seven search tickers (MSFT, SPY, QQQ, GLD, XLE, EEM, NVDA; **TLT sealed**) —
 each a full `run_real_*_overlay` engine pass scored by the Newey-West HAC t-stat
 against its asymptotic normal null (closed-form p, no permutation), then judged as a
 stream by **e-LOND** (the FDR control of record, #3b) — with Benjamini-Yekutieli at
 q = 0.10 retained as a diagnostic. The chains are era-clipped at the live
 `CHAIN_CLEAN_START` (exploratory sees the corrected SPY boundary).
 
-**The result.** No cell is flagged by e-LOND, the control (`0 / 24`); none survives
+**The result.** No cell is flagged by e-LOND, the control (`0 / 28`); none survives
 the BY diagnostic either. The strongest is SPY short-call 0.25Δ at t = +2.17 (the
 exploratory cousin of the frozen +2.54 short-vol headline, now on the wider corrected
 SPY span): individually suggestive at p \~0.015, but it calibrates to an e-value of
 \~4.1 — far short of the e-LOND head-of-stream bar 1/(α·γ₁) \~16.3, and missing the BY
-diagnostic's rank-1 bar (\~0.0011 for 24 dependent tests) by an order of magnitude.
+diagnostic's rank-1 bar (\~0.0009 for 28 dependent tests) by an order of magnitude.
 Every other cell is t < +1.2.
 
 **A data-hygiene catch that mattered.** The first run flagged two XLE "survivors"
@@ -297,17 +297,18 @@ the class. Repaired, XLE shows no edge (short-call t \~−1.7) and the batch is
 empty.
 
 **What this campaign settles.** The delta-neutral short-vol structure class on
-six underlyings contains no cell flagged by e-LOND, its honest FDR control — the
+seven underlyings contains no cell flagged by e-LOND, its honest FDR control — the
 variance premium that survives a single HAC-t (SPY's call wing) does not clear the
 cross-section's online-FDR bar. The next moves are a stronger sealed
 vault and the roll/stop/spread structure variants that carry their own engine
 parameters.
 
-### Campaign 2 addendum — NVDA (live-onboarded) — EMPTY
+### NVDA — the seventh ticker (live-onboarded, folded in)
 
-NVDA was onboarded after the campaign ran and swept through the same structure
-class as a single live-staged ticker. The four `(template, NVDA)` cells extend
-the cross-section by one underlying; the verdict is unchanged.
+NVDA was onboarded after the original six tickers were frozen, and is now folded
+into `STRUCTURE_SEARCH` as the seventh — its four `(template, NVDA)` cells are part
+of the 28-cell batch above. It keeps its own callout here because NVDA's onboarding
+was the worked example of the clean-gate; the verdict is unchanged.
 
 **The result.** No NVDA cell is flagged — every t-stat is negative, so each one is
 on the wrong side of the predicted positive premium before any FDR bar (e-LOND or the

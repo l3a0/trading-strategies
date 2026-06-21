@@ -525,7 +525,7 @@ def _format_summary(rows: Sequence[dict[str, Any]],
 # Seal a structurally-different underlying the structure work never used. TLT
 # (long bonds) is the strong vault here; QQQ — the re-tag seal — appears in the
 # structure cross-section, so it cannot seal this phase.
-STRUCTURE_SEARCH: tuple[str, ...] = ('MSFT', 'SPY', 'QQQ', 'GLD', 'XLE', 'EEM')
+STRUCTURE_SEARCH: tuple[str, ...] = ('MSFT', 'SPY', 'QQQ', 'GLD', 'XLE', 'EEM', 'NVDA')
 STRUCTURE_SEALED: tuple[str, ...] = ('TLT',)
 STRUCTURE_CAMPAIGN = Campaign(search=STRUCTURE_SEARCH, sealed=STRUCTURE_SEALED)
 
@@ -875,8 +875,9 @@ def _data_lineage_hash(ticker: str, end: str, capital: float = STRUCTURE_CAPITAL
     no matter what else the grid can express — folding it in would re-lineage every
     comparison on a menu edit and silently RESET the lifetime counter (a fresh
     false-discovery budget on every grid widening). The grammar's countability role
-    lives where it belongs: grid_universe_size and the pinned 24-cell batch (the BY
-    denominator of a single batch), not the per-comparison identity. `checksums` is
+    lives where it belongs: grid_universe_size and the pinned 28-cell batch (the
+    denominator the BY diagnostic of a single batch needs), not the per-comparison
+    identity. `checksums` is
     injectable for tests."""
     from real_cc_backtest import CHAIN_CLEAN_START
     checks = _read_data_checksums() if checksums is None else checksums

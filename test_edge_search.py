@@ -540,10 +540,11 @@ class TestClosedGrammar:
                            (('target_delta', 0.25), ('dte', 30)), +1)
 
     def test_committed_batch_is_the_by_denominator(self) -> None:
-        # The number BY divides by is the run count, not the universe — so pin it.
-        # 4 committed templates x 6 search tickers = 24 cells (the n in benjamini_yekutieli).
+        # The cross-section size — the e-LOND stream length and the BY diagnostic's
+        # denominator — is the run count, not the grammar universe, so pin it.
+        # 4 committed templates x 7 search tickers = 28 cells.
         cands = enumerate_structure_candidates(STRUCTURE_CAMPAIGN)
-        assert len(cands) == 24
+        assert len(cands) == 28
         assert len(cands) == len(STRUCTURE_TEMPLATES) * len(STRUCTURE_SEARCH)
         # and the committed menu is a subset of the reachable universe (4 <= 30),
         # so widening either the templates or the grid is a deliberate, pinned edit.
@@ -597,7 +598,7 @@ class TestIdeaLedger:
         # grid can express, so folding ALLOWED_GRID into the lineage would re-record
         # every prior look as "new" on a grid edit and hand #3b a fresh false-discovery
         # budget — the exact reset the lifetime counter exists to prevent. The menu's
-        # countability lives in grid_universe_size + the pinned 24-cell batch, not here.
+        # countability lives in grid_universe_size + the pinned 28-cell batch, not here.
         before = _data_lineage_hash('MSFT', '2026-06-06')
         orig = ALLOWED_GRID['short_vol']['target_delta']
         ALLOWED_GRID['short_vol']['target_delta'] = orig + (0.70,)   # widen the menu
@@ -836,7 +837,7 @@ class TestStructureCampaign:
 
     def test_batch_all_scored_none_invalid(self, structure_campaign) -> None:
         rows = structure_campaign
-        assert len(rows) == len(STRUCTURE_TEMPLATES) * len(STRUCTURE_SEARCH)  # 24
+        assert len(rows) == len(STRUCTURE_TEMPLATES) * len(STRUCTURE_SEARCH)  # 28
         # after the split fix every search ticker is scale-valid -> nothing excluded
         assert sum(r.get('measurement_invalid', False) for r in rows) == 0
 
@@ -897,11 +898,12 @@ def nvda_structure_campaign():
     reason='needs NVDA option dailies (or its committed .gz twin)',
 )
 class TestNvdaStructureCampaign:
-    """Pin NVDA's single-ticker structure campaign (its onboarding smoke test) on
-    the published chain — short-vol / straddle / iron-condor run on NVDA alone,
-    scored by the HAC-t asymptotic null and judged by BY over the 4 template
-    cells. EXPLORATORY, not a registered verdict. Deterministic (overlays +
-    closed-form p, no RNG); the LIVE CHAIN_CLEAN_START applies."""
+    """Pin NVDA's structure cells as a focused per-ticker check — NVDA is also one
+    of the seven search tickers in the main 28-cell campaign, so this isolates it
+    on the published chain: short-vol / straddle / iron-condor run on NVDA alone,
+    scored by the HAC-t asymptotic null; e-LOND is the control (BY a diagnostic)
+    over the 4 template cells. EXPLORATORY, not a registered verdict. Deterministic
+    (overlays + closed-form p, no RNG); the LIVE CHAIN_CLEAN_START applies."""
 
     @staticmethod
     def _cell(rows, template):
