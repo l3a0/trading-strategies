@@ -961,6 +961,49 @@ def record_trials(ledger_rows: Sequence[dict[str, Any]],
     return len(fresh)
 
 
+def judge_against_lifetime_stream(
+    new_ledger_rows: Sequence[dict[str, Any]],
+    path: str = IDEA_LEDGER_PATH,
+    prior_rows: Sequence[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Judge new ledger-format rows as the TAIL of the committed lifetime e-LOND stream,
+    not as a fresh batch restarting at t=1.
+
+    e-LOND is the cumulative-n FDR control of record (#3b, docs/prereg_fdr_budget.md): a
+    hypothesis at stream position t faces level alpha_t = alpha*gamma_t*(R_{t-1}+1), so its bar
+    depends on EVERYTHING before it. run_structure_campaign runs e-LOND over one batch in
+    ISOLATION — correct for the published one-shot (the batch IS the head of the stream), but
+    judging each appended batch alone restarts t at 1 and re-faces the loosest head-of-stream bar
+    1/(alpha*gamma_1): a silent per-session budget reset, the multiple-looks leak the registration
+    exists to prevent (prereg §0). This closes it for the recording path — the lifetime-stream
+    judging the registration describes but run_structure_campaign alone does not deliver.
+
+    Places the committed prior ledger AHEAD of the new rows, runs ONE e-LOND pass over the whole
+    concatenation, and returns the new rows with `elond_survivor` corrected to the lifetime-stream
+    verdict — schema otherwise unchanged (no e_value/elond_level leaks into the committed ledger).
+    The new rows are ordered by `_ledger_key` for the pass to MATCH the order record_trials commits
+    them in, so the recorded verdict is exactly what a future re-judge of the file reproduces.
+    Because e-LOND is ONLINE (a row's decision depends only on rows before it), each verdict is
+    fixed on arrival and never moves under later appends, so recording it is permanent. Rows
+    already in the prior ledger OR repeated within the batch (same `_ledger_key`) are NOT a fresh
+    look: they are not re-appended (no double-count, exactly as record_trials dedups) and return
+    their committed-position verdict. `prior_rows` is injectable for tests (else loaded from
+    `path`)."""
+    from evalue_fdr import online_fdr_survivors
+    prior = list(load_idea_ledger(path)) if prior_rows is None else list(prior_rows)
+    seen = {_ledger_key(r) for r in prior}
+    fresh: list[dict[str, Any]] = []
+    for r in new_ledger_rows:        # dedup against prior AND within the batch — EXACTLY as
+        k = _ledger_key(r)           # record_trials does — so the judged stream is byte-for-byte the
+        if k not in seen:            # sequence record_trials commits, and the recorded verdict is
+            seen.add(k)              # reproducible by a future re-judge of the file.
+            fresh.append(r)
+    fresh.sort(key=_ledger_key)
+    judged = online_fdr_survivors(prior + fresh)
+    survivor = {_ledger_key(r): bool(r['elond_survivor']) for r in judged}
+    return [{**r, 'elond_survivor': survivor[_ledger_key(r)]} for r in new_ledger_rows]
+
+
 # --- the number-free scoreboard (interlock #2: what the proposer may read) ---
 # An ALLOW-LIST projection of the lifetime ledger: the hypothesis coordinates a
 # proposer needs to avoid re-suggesting duds (template / ticker / params /
@@ -1048,9 +1091,12 @@ def main() -> None:
         write_ledger(rows)
         print(_format_structure_summary(rows))
         if '--record' in sys.argv:
-            n = record_trials(structure_ledger_rows(rows))
+            # judge the batch as the TAIL of the committed lifetime stream (cumulative-n
+            # e-LOND), not in isolation — so an appended batch never resets the budget.
+            ledger_rows = judge_against_lifetime_stream(structure_ledger_rows(rows))
+            n = record_trials(ledger_rows)
             print(f'\nidea_ledger: +{n} new comparison(s) recorded to '
-                  f'{IDEA_LEDGER_PATH} (deduped against the lifetime record)')
+                  f'{IDEA_LEDGER_PATH} (deduped; e-LOND judged over the lifetime stream)')
         return
     print('Loading search runs (sealed set excluded; a few minutes cold) ...',
           flush=True)

@@ -45,12 +45,14 @@ from edge_search import (
     _asymptotic_p,
     _cooldown_null,
     _data_lineage_hash,
+    _ledger_key,
     _vol_confound,
     benjamini_yekutieli,
     build_cycle_data,
     build_proposer_corpus,
     enumerate_candidates,
     enumerate_structure_candidates,
+    judge_against_lifetime_stream,
     kill_gate,
     load_idea_ledger,
     load_proposer_corpus,
@@ -63,6 +65,7 @@ from edge_search import (
     scrub_ledger_row,
     structure_ledger_rows,
 )
+from evalue_fdr import online_fdr_survivors
 from test_real_cc_backtest import _HAVE_MSFT_DAILIES, _HAVE_SPY_DAILIES
 
 _HAVE_SEARCH = _HAVE_MSFT_DAILIES and _HAVE_SPY_DAILIES
@@ -646,6 +649,106 @@ class TestIdeaLedger:
 
     def test_load_missing_ledger_is_empty(self, tmp_path) -> None:
         assert load_idea_ledger(str(tmp_path / 'nope.jsonl')) == []
+
+
+class TestLifetimeStreamJudge:
+    """Interlock #3b correctness: judge_against_lifetime_stream judges a new batch as the TAIL of
+    the committed lifetime e-LOND stream, not in isolation. run_structure_campaign runs e-LOND
+    per-batch (correct only for the published head-of-stream one-shot); judging each APPENDED batch
+    alone restarts the discount sequence at t=1 — a silent per-session budget reset, the
+    multiple-looks leak docs/prereg_fdr_budget.md exists to prevent. Always-run, synthetic (no
+    engine, no datasets)."""
+
+    @staticmethod
+    def _lrow(template='t', ticker='AAA', p=0.5, params=None, lineage='lin0'):
+        # a ledger-format row (post structure_ledger_rows): carries p_value + a distinct _ledger_key.
+        return {'phase': 'structure', 'template': template, 'ticker': ticker,
+                'params': params or {'dte': 30}, 'predicted_sign': 1,
+                'statistic_kind': 't_nw', 'statistic': 0.0, 'p_value': p,
+                'elond_survivor': False, 'by_survivor': False, 'measurement_invalid': False,
+                'fdr_q': 0.10, 'end': '2026-06-06', 'data_lineage_hash': lineage}
+
+    def test_empty_prior_equals_per_batch(self) -> None:
+        """With no prior, the lifetime judge IS the per-batch judge — so the published first batch
+        (empty ledger before it) is unaffected and TestStructureCampaign's 0/28 head-of-stream pin
+        stands."""
+        rows = [self._lrow(template=f't{i}', p=p) for i, p in enumerate([0.0001, 0.5, 0.5])]
+        per_batch = [r['elond_survivor'] for r in online_fdr_survivors(rows)]
+        lifetime = [r['elond_survivor'] for r in judge_against_lifetime_stream(rows, prior_rows=[])]
+        assert per_batch == lifetime
+
+    def test_closes_the_per_session_reset(self) -> None:
+        """The decisive pin: a strong cell (tiny p -> big e) IS flagged as the head of the stream,
+        but the SAME cell placed deep in the lifetime stream faces a far tighter gamma_t bar and is
+        NOT flagged. Judging each appended batch in isolation (the bug) would flag it every time."""
+        strong = self._lrow(template='strong', p=1e-6)
+        head = online_fdr_survivors([strong])[0]
+        assert head['elond_survivor'] is True            # head of stream: loosest 1/(alpha*gamma_1) bar
+        prior = [self._lrow(template=f'dud{i}', p=0.9) for i in range(12)]   # 12 non-survivors ahead
+        tail = judge_against_lifetime_stream([strong], prior_rows=prior)[0]
+        assert tail['elond_survivor'] is False           # deep tail: gamma_t shrank the bar past its e
+
+    def test_already_recorded_rows_not_double_counted(self) -> None:
+        """A row already in the prior ledger is not a fresh look: it is not re-appended to the
+        stream, and it returns its existing-position verdict (record_trials would dedup it anyway)."""
+        a, b = self._lrow(template='a', p=0.5), self._lrow(template='b', p=0.5)
+        prior = [a, b]
+        out = judge_against_lifetime_stream([a, b], prior_rows=prior)
+        base = online_fdr_survivors(prior)
+        assert [r['elond_survivor'] for r in out] == [r['elond_survivor'] for r in base]
+
+    def test_online_verdict_stable_under_later_appends(self) -> None:
+        """e-LOND is online: a row's decision depends only on rows BEFORE it, so a verdict is fixed
+        on arrival and never moves when more cells are appended later — which is why recording it
+        here is permanent and correct."""
+        early = self._lrow(template='early', p=1e-6)
+        first = judge_against_lifetime_stream([early], prior_rows=[])[0]['elond_survivor']
+        later = [self._lrow(template=f'after{i}', p=0.5) for i in range(5)]
+        again = online_fdr_survivors([early] + later)[0]['elond_survivor']
+        assert first is True and again == first          # appends after `early` don't move its verdict
+
+    def test_judged_rows_keep_ledger_schema(self) -> None:
+        """The corrected rows keep the ledger schema exactly (only elond_survivor may change) — no
+        e_value / elond_level leaks into the committed answer key."""
+        r = self._lrow(template='x', p=0.2)
+        out = judge_against_lifetime_stream([r], prior_rows=[])[0]
+        assert set(out) == set(r)
+        assert 'e_value' not in out and 'elond_level' not in out
+
+    def test_within_batch_duplicate_matches_record_trials_stream(self) -> None:
+        """The judge must dedup WITHIN the batch exactly as record_trials does, so the stream it
+        scores equals the deduped sequence record_trials commits — otherwise an intra-batch
+        duplicate would inflate the stream length and shift downstream cells' gamma_t, and the
+        recorded verdict would not reproduce on a re-judge of the file. (Latent: the real --record
+        path enumerates unique cells; pinned so a future proposer batch can't silently diverge.)"""
+        dup, x = self._lrow(template='dup', p=0.5), self._lrow(template='x', p=0.5)
+        out = judge_against_lifetime_stream([dup, x, dup], prior_rows=[])   # internal duplicate
+        # record_trials commits the deduped+sorted batch; judging THAT must reproduce the verdicts
+        committed = sorted({_ledger_key(r): r for r in [dup, x, dup]}.values(), key=_ledger_key)
+        ref = {_ledger_key(r): r['elond_survivor'] for r in online_fdr_survivors(committed)}
+        assert all(o['elond_survivor'] == ref[_ledger_key(o)] for o in out)
+        assert out[0]['elond_survivor'] == out[2]['elond_survivor']   # both dups, same verdict
+
+    def test_measurement_invalid_occupies_a_position_and_never_flags(self) -> None:
+        """A measurement_invalid row (p_value=None -> e=0) can never flag, yet it OCCUPIES a stream
+        position — so a borderline cell after it faces the tighter t=2 bar, not the head bar."""
+        invalid = {**self._lrow(template='broken'), 'p_value': None, 'measurement_invalid': True}
+        assert judge_against_lifetime_stream([invalid], prior_rows=[])[0]['elond_survivor'] is False
+        borderline = self._lrow(template='borderline', p=2.78e-4)   # flags at the head, not at t=2
+        at_head = judge_against_lifetime_stream([borderline], prior_rows=[])[0]
+        after_invalid = judge_against_lifetime_stream([borderline], prior_rows=[invalid])[0]
+        assert at_head['elond_survivor'] is True and after_invalid['elond_survivor'] is False
+
+    def test_prior_survivor_raises_R_for_a_later_cell(self) -> None:
+        """e-LOND's (R+1) reward flows ACROSS the prior/new boundary: a survivor already in the
+        lifetime stream raises R for an appended cell, loosening its bar. The same new cell flags
+        when a prior survivor precedes it but not when the prior is a non-survivor at that position."""
+        probe = self._lrow(template='probe', p=1e-4)
+        with_surv = judge_against_lifetime_stream(
+            [probe], prior_rows=[self._lrow(template='winner', p=1e-9)])[0]
+        without = judge_against_lifetime_stream(
+            [probe], prior_rows=[self._lrow(template='dud', p=0.9)])[0]
+        assert with_surv['elond_survivor'] is True and without['elond_survivor'] is False
 
 
 class TestProposerCorpus:
