@@ -130,7 +130,15 @@ does not bend the cheap re-tag gate:
   enumerable, and pre-specified (`grid_universe_size`) — a pre-specification and
   power precondition, not an FDR-validity one (e-LOND, the control, needs no fixed
   comparison count; the `Σγ_t ≤ 1` budget replaces the offline denominator — only
-  the BY diagnostic still needs a count).
+  the BY diagnostic still needs a count). The grammar is also **economically typed**
+  (`STRUCTURE_GRAMMAR` — the typed source of truth, with `ALLOWED_GRID` its flat lattice
+  view): each overlay declares a `PremiumFamily` (the committed three are all `VARIANCE`)
+  and a net-greek signature. No widening yet, and it is a *labeling* scaffold — not yet an
+  enforcement: `_assert_grammar_well_typed` (at import) gates that each overlay carries a
+  registered family + a complete signature, but the signature is author-declared and is NOT yet
+  cross-checked against the engine's computed greeks. The "mechanism by construction" guarantee —
+  a composition whose greeks contradict its claimed family being *unreachable* — is the next
+  interlock a widening adds (a signature-vs-engine consistency check).
 - **A HAC-t kill-gate with a closed-form null.** The score is
   `short_vol_statistics`'s Newey-West (HAC) t-stat on the daily rate-netted P&L,
   whose asymptotic null is standard normal — so the p-value is closed-form

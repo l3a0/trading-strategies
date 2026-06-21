@@ -28,6 +28,8 @@ from edge_search import (
     ALLOWED_GRID,
     COOLDOWN_NS,
     DEFAULT_CAMPAIGN,
+    PremiumFamily,
+    STRUCTURE_GRAMMAR,
     SEALED_TICKERS,
     SEARCH_TICKERS,
     STRUCTURE_CAMPAIGN,
@@ -38,10 +40,13 @@ from edge_search import (
     Campaign,
     Candidate,
     CycleData,
+    OverlayGrammar,
     StructureCandidate,
     StructureTemplate,
     grid_universe_size,
+    structure_family,
     _add_one_p,
+    _assert_grammar_well_typed,
     _asymptotic_p,
     _cooldown_null,
     _cand_key,
@@ -573,6 +578,38 @@ class TestClosedGrammar:
             StructureTemplate('x', 'straddle', (('dte', 30.0),), +1)
         with pytest.raises(ValueError, match='off-menu'):
             StructureCandidate('x', 'MSFT', 'straddle', (('dte', 30.0),), +1)
+
+    def test_grammar_is_economically_typed(self) -> None:
+        # the scaffold (no widening here): every overlay carries a registered PremiumFamily +
+        # a complete net-greek signature. The committed three are all VARIANCE; SKEW/TERM/CARRY
+        # are registered for a future widening's productions.
+        assert {f.name for f in PremiumFamily} == {'VARIANCE', 'SKEW', 'TERM', 'CARRY'}
+        assert set(STRUCTURE_GRAMMAR) == {'short_vol', 'straddle', 'iron_condor'}
+        for name, og in STRUCTURE_GRAMMAR.items():
+            assert og.family is PremiumFamily.VARIANCE
+            assert structure_family(name) is og.family
+            assert {'expirations', 'legs', 'net_gamma', 'net_vega'} <= set(og.signature)
+            assert og.signature['expirations'] == 1   # single-expiration today (no calendar yet)
+
+    def test_allowed_grid_is_the_grammar_flat_view(self) -> None:
+        # ALLOWED_GRID is the grammar's lattices, SAME dict objects (so grid_universe_size /
+        # _validate_grammar / enumerate_grammar_templates are byte-unchanged, and the
+        # lineage-no-reset-loophole test's mutate/restore still operates on the live grid).
+        assert ALLOWED_GRID == {n: og.lattices for n, og in STRUCTURE_GRAMMAR.items()}
+        assert ALLOWED_GRID['short_vol'] is STRUCTURE_GRAMMAR['short_vol'].lattices
+
+    def test_well_typed_assertion_rejects_untyped_overlay(self, monkeypatch) -> None:
+        # the import-time scaffold catches an overlay added without a registered family or a
+        # complete signature (PRESENCE gate — it does NOT yet check the signature against the
+        # engine's greeks). monkeypatch.setitem auto-restores STRUCTURE_GRAMMAR at teardown.
+        monkeypatch.setitem(STRUCTURE_GRAMMAR, '_probe',
+                            OverlayGrammar({'dte': (30,)}, 'not_a_family', {}))  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match='not a registered PremiumFamily'):
+            _assert_grammar_well_typed()
+        monkeypatch.setitem(STRUCTURE_GRAMMAR, '_probe',
+                            OverlayGrammar({'dte': (30,)}, PremiumFamily.VARIANCE, {'expirations': 1}))
+        with pytest.raises(ValueError, match='signature missing'):
+            _assert_grammar_well_typed()
 
 
 class TestIdeaLedger:

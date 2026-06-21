@@ -62,6 +62,7 @@ import hashlib
 import json
 import math
 from dataclasses import dataclass, field
+from enum import Enum
 from datetime import datetime
 from typing import Any, Callable, Sequence
 
@@ -553,12 +554,87 @@ STRUCTURE_ENGINE_VERSION = 'v1'
 # construction, not an infinite fishing ground. The grid is a SUPERSET of the
 # committed STRUCTURE_TEMPLATES below (standard option deltas / DTEs), so it
 # leaves room to enumerate without re-running the published campaign.
-ALLOWED_GRID: dict[str, dict[str, tuple[Any, ...]]] = {
-    'short_vol':   {'target_delta': (0.15, 0.25, 0.50), 'dte': (21, 30, 45)},
-    'straddle':    {'dte': (21, 30, 45)},
-    'iron_condor': {'dte': (21, 30, 45), 'short_delta': (0.20, 0.25, 0.30),
-                    'wing_delta': (0.05, 0.10)},
+#
+# The grammar is now ECONOMICALLY TYPED (the scaffold a generative widening builds on, no
+# widening here — still grid_universe_size()==30): each overlay RESERVES a PREMIUM FAMILY and a
+# net-greek SIGNATURE slot. The committed three are all VARIANCE (short gamma/vega at one expiry).
+# Scope honesty — this is a LABELING scaffold, not yet an enforcement: the signature is
+# AUTHOR-DECLARED metadata, and _assert_grammar_well_typed gates only that a registered family
+# and a complete signature are PRESENT, NOT that the declared greeks match the engine's actual
+# greeks. So the "mechanism by construction / a composition whose greeks contradict its claimed
+# family is UNREACHABLE" guarantee (the contrast paper's post-hoc-rationalization failure mode) is
+# the NEXT interlock a widening must add — a signature-vs-engine consistency check — not something
+# this scaffold yet delivers. STRUCTURE_GRAMMAR is the typed source of truth; ALLOWED_GRID is its
+# flat lattice view (same dict objects), so grid_universe_size / _validate_grammar /
+# enumerate_grammar_templates are byte-unchanged.
+
+
+class PremiumFamily(Enum):
+    """The economic mechanism a structure claims to harvest — the typing that keeps the grammar
+    mechanism-coherent as it grows. VARIANCE (short gamma/vega, one expiration) is the only family
+    the committed overlays use; SKEW / TERM / CARRY are registered for a future widening."""
+    VARIANCE = 'variance'   # short realized-vs-implied variance (short gamma/vega, one expiry)
+    SKEW = 'skew'           # delta-offset wing asymmetry (risk reversal)
+    TERM = 'term'           # opposite-sign vega across two expirations (calendar / diagonal)
+    CARRY = 'carry'         # theta-positive defined-risk
+
+
+@dataclass
+class OverlayGrammar:
+    """One overlay's slot in the structure grammar: its parameter lattices (the knob menu), its
+    premium `family`, and a declared net-greek `signature`. The reachable templates for the
+    overlay are the Cartesian product of its lattices."""
+    lattices: dict[str, tuple[Any, ...]]
+    family: PremiumFamily
+    signature: dict[str, Any]
+
+
+STRUCTURE_GRAMMAR: dict[str, OverlayGrammar] = {
+    'short_vol':   OverlayGrammar({'target_delta': (0.15, 0.25, 0.50), 'dte': (21, 30, 45)},
+                                  PremiumFamily.VARIANCE,
+                                  {'expirations': 1, 'legs': 1, 'net_gamma': 'short', 'net_vega': 'short'}),
+    'straddle':    OverlayGrammar({'dte': (21, 30, 45)},
+                                  PremiumFamily.VARIANCE,
+                                  {'expirations': 1, 'legs': 2, 'net_gamma': 'short', 'net_vega': 'short'}),
+    'iron_condor': OverlayGrammar({'dte': (21, 30, 45), 'short_delta': (0.20, 0.25, 0.30),
+                                   'wing_delta': (0.05, 0.10)},
+                                  PremiumFamily.VARIANCE,
+                                  {'expirations': 1, 'legs': 4, 'net_gamma': 'short', 'net_vega': 'short'}),
 }
+
+# Flat lattice view of the grammar — byte-identical to the prior ALLOWED_GRID literal (SAME dict
+# objects as STRUCTURE_GRAMMAR[...].lattices), so every consumer of ALLOWED_GRID is unchanged.
+ALLOWED_GRID: dict[str, dict[str, tuple[Any, ...]]] = {
+    name: og.lattices for name, og in STRUCTURE_GRAMMAR.items()
+}
+
+
+def structure_family(overlay: str) -> PremiumFamily:
+    """The premium family an overlay is typed to (the economic mechanism it claims)."""
+    return STRUCTURE_GRAMMAR[overlay].family
+
+
+def _assert_grammar_well_typed() -> None:
+    """Economic-typing scaffold (runs at import): gate that every overlay carries a REGISTERED
+    PremiumFamily and a net-greek signature with all expected keys PRESENT, and that ALLOWED_GRID
+    matches the grammar's lattices (a structural/key-level check — value drift is impossible since
+    ALLOWED_GRID shares the same dict objects, so this only catches a future hand-written grid whose
+    top-level structure diverges). This checks PRESENCE only: the signature is author-declared and
+    is NOT yet cross-checked against the engine's computed greeks, so an overlay added without a
+    family or with an incomplete signature fails here, but a MIS-declared one (net_vega='short' on
+    an actually long-vega engine) does not — the signature-vs-engine consistency check is the next
+    interlock a widening adds. Pinned by the always-run TestClosedGrammar."""
+    for name, og in STRUCTURE_GRAMMAR.items():
+        if not isinstance(og.family, PremiumFamily):
+            raise ValueError(f'{name}: {og.family!r} is not a registered PremiumFamily')
+        missing = {'expirations', 'legs', 'net_gamma', 'net_vega'} - set(og.signature)
+        if missing:
+            raise ValueError(f'{name}: net-greek signature missing {sorted(missing)}')
+    if ALLOWED_GRID != {n: og.lattices for n, og in STRUCTURE_GRAMMAR.items()}:
+        raise ValueError('ALLOWED_GRID drifted from STRUCTURE_GRAMMAR lattices')
+
+
+_assert_grammar_well_typed()
 
 
 def grid_universe_size() -> int:
