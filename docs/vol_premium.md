@@ -379,6 +379,35 @@ put and straddle cells are exploratory extensions, pinned by `TestMsftShortPutEx
 `TestQqqStraddleExploratory`. The post-2010 decline is total: one thin, single-index,
 cost-fragile call-wing survivor, nulls and a blow-up everywhere else.
 
+## The generic structure engine (toward a bigger menu)
+
+The three overlays above — short-vol, straddle, iron condor — are special cases of one
+loop. `run_real_structure_overlay` factors out the shared skeleton (a single cash
+account, the per-day rf credit, the `gap ≤ 4` Saturday-expiry settlement, the mark
+`equity = cash + hedge·price + Σ sign·mid·shares`, and the `[date, equity, price,
+rf_credit]` schema), driven by a leg list plus three knobs: the entry guard
+(`each_short_positive` | `net_positive`), the hedge mode (`per_leg_sign` | `combined` |
+`none`), and management (`hold` | `early_close_single`). `STRUCTURE_SPECS` holds each
+overlay's config (incl. the one per-overlay default that differs — the straddle's
+`hedge_cost_bps = 0.5` vs the others' 1.0), and `run_structure_via_spec` is the entry
+point.
+
+It is **additive**: the three frozen overlays are untouched, and
+`TestGenericStructureEngineEquivalence` pins that the generic engine reproduces each one
+**bit-for-bit** on the real chains — the *rounded equity series* (the pinned quantity) and
+the Newey-West t are identical across SPY × the three structures (and NVDA on the four-leg
+condor, which additionally exercises the `rf_credit` float-association edge); only the
+unrounded `rf_credit` differs by float-association noise (\~3 × 10⁻¹⁴). That equality oracle
+is what gates the eventual in-place swap — which is **deferred**, because the generic
+`summary` is a *subset* of each frozen overlay's (it carries the `capital` + `risk_free_rate`
+the FDR campaign reads, but drops `alpha_vs_cash` / `win_rate` / `num_*_sold` /
+`max_drawdown_pct`): a swap must enrich the summary before routing `run_registered_vrp.py` /
+`run_backtest.py` through it, and confirm the iron-condor's left-folded entry credit can't
+flip a net-credit-near-zero entry guard. The point of generalizing now is
+to make an arbitrary grammar-reachable structure *runnable* — the precondition for a larger,
+mechanism-typed menu of short-vol structures (roll / stop / spread / calendar variants),
+each still scored by the same `short_vol_statistics` HAC-t and judged by the same FDR ledger.
+
 ## Remaining limitations
 
 The hedge cost is modeled (commission-free shares, half-spread) and the rf-base
