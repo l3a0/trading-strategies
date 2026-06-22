@@ -489,13 +489,14 @@ class TestClosedGrammar:
 
     def test_grid_universe_size_pinned(self) -> None:
         # short_vol 3x3=9, straddle 3, iron_condor 3x3x2=18, strangle 3x3=9, risk_reversal 3x3=9,
-        # credit_spread 3x3x2=18 -> 66. Bump the grid, bump this pin — the universe size is on the
-        # record by design.
-        assert grid_universe_size() == 66
+        # credit_spread 3x3x2=18, calendar 2x2=4 -> 70. Bump the grid, bump this pin — the universe
+        # size is on the record by design.
+        assert grid_universe_size() == 70
         by_hand = sum(
             len(grid['target_delta']) * len(grid['dte']) if ov == 'short_vol'
             else len(grid['dte']) if ov == 'straddle'
             else len(grid['dte']) * len(grid['short_delta']) if ov in ('strangle', 'risk_reversal')
+            else len(grid['near_dte']) * len(grid['far_dte']) if ov == 'calendar'
             else len(grid['dte']) * len(grid['short_delta']) * len(grid['wing_delta'])
             for ov, grid in ALLOWED_GRID.items())
         assert by_hand == grid_universe_size()
@@ -504,7 +505,7 @@ class TestClosedGrammar:
         # Importing edge_search already constructed STRUCTURE_TEMPLATES; if any cell
         # were off-menu, __post_init__ would have raised at import. Re-affirm here:
         # every committed template's params match its overlay grid exactly, value-wise.
-        assert len(STRUCTURE_TEMPLATES) == 7   # + strangle (1), risk-reversal (2), credit-spread (3)
+        assert len(STRUCTURE_TEMPLATES) == 8   # + strangle (1), risk-reversal (2), credit-spread (3), calendar (4)
         for t in STRUCTURE_TEMPLATES:
             grid = ALLOWED_GRID[t.overlay]
             params = dict(t.params)
@@ -557,12 +558,12 @@ class TestClosedGrammar:
     def test_committed_batch_is_the_by_denominator(self) -> None:
         # The cross-section size — the e-LOND stream length and the BY diagnostic's
         # denominator — is the run count, not the grammar universe, so pin it.
-        # 7 committed templates x 7 search tickers = 49 cells (the credit-spread widening
-        # took it 6->7 / 42->49).
+        # 8 committed templates x 7 search tickers = 56 cells (the credit-spread widening took it
+        # 6->7 / 42->49, then the calendar widening 7->8 / 49->56).
         cands = enumerate_structure_candidates(STRUCTURE_CAMPAIGN)
-        assert len(cands) == 49
+        assert len(cands) == 56
         assert len(cands) == len(STRUCTURE_TEMPLATES) * len(STRUCTURE_SEARCH)
-        # and the committed menu is a subset of the reachable universe (7 <= 66),
+        # and the committed menu is a subset of the reachable universe (8 <= 70),
         # so widening either the templates or the grid is a deliberate, pinned edit.
         assert len(STRUCTURE_TEMPLATES) <= grid_universe_size()
 
@@ -586,21 +587,26 @@ class TestClosedGrammar:
     def test_grammar_is_economically_typed(self) -> None:
         # every overlay carries a registered PremiumFamily + a complete signature. The four short-vol
         # overlays are VARIANCE; the risk reversal (widening 2) is the first SKEW; the credit spread
-        # (widening 3) is the first CARRY; TERM is registered for a future widening. net_GAMMA is
-        # intentionally NOT a signature axis (it is un-pinnable for offset-leg structures — see
-        # structure_greek_signature); the three robust axes are net_vega / net_delta / net_skew.
+        # (widening 3) is the first CARRY; the calendar (widening 4) is the first TERM (two
+        # expirations). net_GAMMA is intentionally NOT a signature axis (it is un-pinnable for
+        # offset-leg structures — see structure_greek_signature); the three robust axes are
+        # net_vega / net_delta / net_skew.
         assert {f.name for f in PremiumFamily} == {'VARIANCE', 'SKEW', 'TERM', 'CARRY'}
         assert set(STRUCTURE_GRAMMAR) == {'short_vol', 'straddle', 'iron_condor', 'strangle',
-                                          'risk_reversal', 'credit_spread'}
+                                          'risk_reversal', 'credit_spread', 'calendar'}
         families = {name: og.family for name, og in STRUCTURE_GRAMMAR.items()}
         assert families['risk_reversal'] is PremiumFamily.SKEW
         assert families['credit_spread'] is PremiumFamily.CARRY
+        assert families['calendar'] is PremiumFamily.TERM
         assert all(families[n] is PremiumFamily.VARIANCE
                    for n in ('short_vol', 'straddle', 'iron_condor', 'strangle'))
         for name, og in STRUCTURE_GRAMMAR.items():
             assert structure_family(name) is og.family
             assert {'expirations', 'legs', 'net_vega', 'net_delta', 'net_skew'} <= set(og.signature)
-            assert og.signature['expirations'] == 1   # single-expiration today (no calendar yet)
+        # the calendar is the first TWO-expiration structure; every other overlay is single-expiration.
+        assert STRUCTURE_GRAMMAR['calendar'].signature['expirations'] == 2
+        assert all(og.signature['expirations'] == 1 for name, og in STRUCTURE_GRAMMAR.items()
+                   if name != 'calendar')
 
     def test_allowed_grid_is_the_grammar_flat_view(self) -> None:
         # ALLOWED_GRID is the grammar's lattices, SAME dict objects (so grid_universe_size /
@@ -1092,11 +1098,19 @@ class TestStructureCampaign:
     def _cell(rows, template, ticker):
         return next(r for r in rows if r['template'] == template and r['ticker'] == ticker)
 
-    def test_batch_all_scored_none_invalid(self, structure_campaign) -> None:
+    def test_batch_all_scored_one_invalid(self, structure_campaign) -> None:
         rows = structure_campaign
-        assert len(rows) == len(STRUCTURE_TEMPLATES) * len(STRUCTURE_SEARCH)  # 49
-        # after the split fix every search ticker is scale-valid -> nothing excluded
-        assert sum(r.get('measurement_invalid', False) for r in rows) == 0
+        assert len(rows) == len(STRUCTURE_TEMPLATES) * len(STRUCTURE_SEARCH)  # 56 (credit-spread + calendar)
+        # Exactly ONE cell is measurement-invalid: the MSFT calendar. MSFT's listed chains carry no
+        # far-dated call at the near leg's exact strike (a same-strike calendar needs the strike
+        # quoted >=30 DTE beyond the near, which MSFT's grid doesn't list), so the structure never
+        # enters and the no_trades guard flags it. It still COUNTS toward the e-LOND/BY denominator
+        # (n stays 56) but can never be flagged — the campaign analog of must_trade. Every other
+        # search-ticker cell is scale-valid and traded.
+        invalid = [r for r in rows if r.get('measurement_invalid')]
+        assert len(invalid) == 1
+        assert invalid[0]['template'] == 'calendar' and invalid[0]['ticker'] == 'MSFT'
+        assert invalid[0].get('no_trades') is True
 
     def test_no_survivor(self, structure_campaign) -> None:
         """The decisive output: no structure candidate is flagged by e-LOND (the FDR
@@ -1154,7 +1168,7 @@ class TestStructureCampaign:
         """Widening 2 (the first NEW family, SKEW): every risk-reversal cell is wrong-signed
         (negative alpha over cash) on all 7 search tickers — no harvestable put-call skew premium
         at these names/era. The structure's large RAW P&L is rf-interest; the alpha the campaign
-        scores is negative, so the SKEW family enters the lifetime stream as 7 more nulls (0/49)."""
+        scores is negative, so the SKEW family enters the lifetime stream as 7 more nulls (0/56)."""
         rows = structure_campaign
         rr = [r for r in rows if r['template'] == 'risk_reversal']
         assert len(rr) == len(STRUCTURE_SEARCH)        # 7 tickers
@@ -1166,7 +1180,7 @@ class TestStructureCampaign:
         """Widening 3 (the first CARRY structure, the bull put credit spread): every credit-spread
         cell is wrong-signed (negative alpha over cash) on all 7 search tickers — the defined-risk
         carry collects a credit but the delta-hedged vol-P&L is negative at these names/era. So the
-        CARRY family enters the lifetime stream as 7 more nulls and the verdict holds at 0/49.
+        CARRY family enters the lifetime stream as 7 more nulls and the verdict holds at 0/56.
         Per-ticker HAC-t: MSFT -2.08 / SPY -0.91 / QQQ -0.72 / GLD -3.24 / XLE -2.74 / EEM -2.21 /
         NVDA -0.06 (all short of significance)."""
         rows = structure_campaign
@@ -1177,6 +1191,26 @@ class TestStructureCampaign:
         assert all(not r['elond_survivor'] and not r['by_survivor'] for r in cs)
         # not measurement_invalid: the put legs trade on calls-only SPY/MSFT/QQQ (merged puts)
         assert all(not r.get('measurement_invalid') for r in cs)
+
+    def test_calendar_all_wrong_signed_or_invalid(self, structure_campaign) -> None:
+        """Widening 4 (the first TERM family, the long calendar): six of seven calendar cells trade
+        and are wrong-signed (negative alpha — a long-vega calendar pays for term-structure exposure
+        these names/era don't reward), and the seventh (MSFT) is measurement-invalid because MSFT's
+        chains don't list a far call at the near's strike. So the TERM family enters the lifetime
+        stream as six more nulls plus one invalid — none flagged, and 0/56 holds."""
+        rows = structure_campaign
+        cal = [r for r in rows if r['template'] == 'calendar']
+        assert len(cal) == len(STRUCTURE_SEARCH)        # 7 tickers
+        traded = [r for r in cal if not r.get('measurement_invalid')]
+        invalid = [r for r in cal if r.get('measurement_invalid')]
+        assert len(traded) == 6 and len(invalid) == 1
+        assert invalid[0]['ticker'] == 'MSFT'           # the listed-strike gap
+        assert all(r['t_stat_newey_west'] < 0 for r in traded)   # all six traded cells wrong-signed
+        assert all(r['sign_ok'] is False for r in traded)
+        assert all(not r['elond_survivor'] and not r['by_survivor'] for r in cal)
+        # the SPY calendar is the strongest-wrong-signed (a clean two-expiration measurement)
+        spy = self._cell(rows, 'calendar', 'SPY')
+        assert spy['t_stat_newey_west'] == pytest.approx(-2.44, abs=0.10)
 
     @pytest.mark.skipif(not _have_dailies('QQQ'), reason='needs qqq_option_dailies.csv (+ _puts)')
     def test_puts_merge_keeps_window_on_calls_span(self) -> None:
@@ -1214,10 +1248,10 @@ def nvda_structure_campaign():
 )
 class TestNvdaStructureCampaign:
     """Pin NVDA's structure cells as a focused per-ticker check — NVDA is also one
-    of the seven search tickers in the main 49-cell campaign, so this isolates it
-    on the published chain: all seven structures (short-vol x2 / straddle / iron-condor /
-    strangle / risk-reversal / credit-spread) run on NVDA alone, scored by the HAC-t
-    asymptotic null; e-LOND is the control (BY a diagnostic) over the 7 template cells.
+    of the seven search tickers in the main 56-cell campaign, so this isolates it
+    on the published chain: all eight structures (short-vol x2 / straddle / iron-condor /
+    strangle / risk-reversal / credit-spread / calendar) run on NVDA alone, scored by the HAC-t
+    asymptotic null; e-LOND is the control (BY a diagnostic) over the 8 template cells.
     EXPLORATORY, not a registered verdict. Deterministic (overlays + closed-form p, no
     RNG); the LIVE CHAIN_CLEAN_START applies."""
 
@@ -1227,8 +1261,10 @@ class TestNvdaStructureCampaign:
 
     def test_batch_all_scored_none_invalid(self, nvda_structure_campaign) -> None:
         rows = nvda_structure_campaign
-        assert len(rows) == len(STRUCTURE_TEMPLATES)   # 7 cells: NVDA x every template
+        assert len(rows) == len(STRUCTURE_TEMPLATES)   # 8 cells: NVDA x every template
         assert all(r['ticker'] == 'NVDA' for r in rows)
+        # NVDA's chain DOES list far calls at the near strike, so the calendar trades here
+        # (unlike MSFT in the full campaign) — every NVDA cell is a real measurement.
         assert sum(r.get('measurement_invalid', False) for r in rows) == 0
 
     def test_no_survivor(self, nvda_structure_campaign) -> None:
@@ -1241,9 +1277,9 @@ class TestNvdaStructureCampaign:
 
     def test_every_cell_wrong_signed(self, nvda_structure_campaign) -> None:
         """Every template predicts positive premium (t_NW>0); on NVDA every cell —
-        short-vol, straddle, iron-condor, strangle, the SKEW risk reversal, AND the
-        CARRY credit spread — is wrong-signed (t_NW<0). No structure carries an edge on
-        NVDA's runaway chain."""
+        short-vol, straddle, iron-condor, strangle, the SKEW risk reversal, the CARRY credit
+        spread, AND the TERM calendar — is wrong-signed (t_NW<0). No structure carries an edge
+        on NVDA's runaway chain."""
         rows = nvda_structure_campaign
         assert all(r['t_stat_newey_west'] < 0 for r in rows)
         assert all(r['sign_ok'] is False for r in rows)
@@ -1272,3 +1308,6 @@ class TestNvdaStructureCampaign:
         cs = self._cell(rows, 'credit_spread')                     # widening 3 (CARRY)
         assert cs['t_stat_newey_west'] == pytest.approx(-0.06, abs=0.05)
         assert cs['p_value'] == pytest.approx(0.5239, abs=0.01)
+        cal = self._cell(rows, 'calendar')                         # widening 4 (TERM)
+        assert cal['t_stat_newey_west'] == pytest.approx(-1.88, abs=0.05)
+        assert cal['p_value'] == pytest.approx(0.9699, abs=0.01)

@@ -29,12 +29,14 @@ from vol_premium import (
     bs_price,
     bs_vega,
     implied_vol,
+    run_real_calendar_overlay,
     run_real_credit_spread_overlay,
     run_real_iron_condor_overlay,
     run_real_risk_reversal_overlay,
     run_real_short_vol_overlay,
     run_real_straddle_overlay,
     run_real_strangle_overlay,
+    select_calendar,
     select_credit_spread,
     select_iron_condor,
     select_put_entry,
@@ -1136,6 +1138,56 @@ class TestCreditSpreadMechanics:
         assert s['net_pnl'] >= worst_spread_loss - abs(0.10 * worst_spread_loss)
 
 
+class TestCalendarMechanics:
+    """Synthetic, always-run checks of select_calendar — the only selector that
+    forces a SECOND, later expiration (widening 4, the TERM family). Pin the
+    selection CONTRACT regardless of real data: the far leg is matched by the near
+    leg's exact STRIKE on a strictly-later expiration, and only when that expiry
+    clears the `min_gap_dte` term-separation floor. The staggered-settlement engine
+    path these legs drive is exercised end-to-end by the dataset-gated equivalence
+    and campaign tests; here we pin the selector in isolation."""
+
+    @staticmethod
+    def _cand(dte: int, delta: float, strike: float, exp: str,
+              bid: float = 1.0) -> tuple[Any, ...]:
+        # candidate tuple: (dte, delta, bid, ask, mid, expiration, strike, contractID)
+        return (dte, delta, bid, bid + 0.2, bid + 0.1, exp, strike, f'C{exp}-{strike}')
+
+    def test_picks_far_leg_at_same_strike_later_expiry(self) -> None:
+        """The near leg is an ~ATM call (select_entry, ~0.50 delta); the far leg is
+        the SAME-strike call on a later expiration ≥ min_gap_dte beyond the near."""
+        day = {'candidates': [
+            self._cand(30, 0.50, 100.0, '2024-02-16'),   # the near ATM call (strike 100)
+            self._cand(30, 0.30, 105.0, '2024-02-16'),   # near, wrong strike: not the far match
+            self._cand(60, 0.55, 100.0, '2024-03-15'),   # the far same-strike call, +30 DTE
+        ], 'marks': {}}
+        pick = select_calendar(day, near_dte=30, far_dte=60, target_delta=0.50)
+        assert pick is not None
+        near, far = pick
+        assert near[6] == far[6] == 100.0          # SAME strike (a true calendar)
+        assert far[5] > near[5]                     # far expiry strictly later
+        assert far[0] - near[0] >= 30               # clears the min_gap_dte floor
+
+    def test_none_when_far_leg_too_close(self) -> None:
+        """A far call at the same strike but only a few DTE past the near reads
+        vega-neutral, not the long-vega calendar — the min_gap_dte floor rejects it."""
+        day = {'candidates': [
+            self._cand(30, 0.50, 100.0, '2024-02-16'),   # near ATM call
+            self._cand(40, 0.52, 100.0, '2024-02-23'),   # same strike but only +10 DTE
+        ], 'marks': {}}
+        assert select_calendar(day, near_dte=30, far_dte=60, target_delta=0.50,
+                               min_gap_dte=30) is None
+
+    def test_none_when_no_far_strike_listed(self) -> None:
+        """No later expiration carries the near leg's exact strike (MSFT's real
+        failure mode) — the same-strike calendar can't be built, so None."""
+        day = {'candidates': [
+            self._cand(30, 0.50, 100.0, '2024-02-16'),   # near ATM call at strike 100
+            self._cand(60, 0.55, 105.0, '2024-03-15'),   # far call, DIFFERENT strike (105)
+        ], 'marks': {}}
+        assert select_calendar(day, near_dte=30, far_dte=60, target_delta=0.50) is None
+
+
 @pytest.mark.skipif(not (_HAVE_SPY and _HAVE_SPY_PUTS),
                     reason='needs spy_option_dailies.csv + spy_option_dailies_puts.csv (or .gz)')
 class TestSpyIronCondorExploratory:
@@ -1379,7 +1431,7 @@ class TestGenericStructureEngineSpecs:
 
     def test_specs_are_well_formed(self) -> None:
         assert set(STRUCTURE_SPECS) == {'short_vol', 'straddle', 'iron_condor', 'strangle',
-                                        'risk_reversal', 'credit_spread'}
+                                        'risk_reversal', 'credit_spread', 'calendar'}
         for name, spec in STRUCTURE_SPECS.items():
             assert callable(spec['select'])
             assert spec['entry_guard'] in ('each_short_positive', 'net_positive')
@@ -1422,13 +1474,15 @@ _NAMED_OVERLAY = {'short_vol': run_real_short_vol_overlay,    # post-Stage-B: th
                   'iron_condor': run_real_iron_condor_overlay,
                   'strangle': run_real_strangle_overlay,     # widening 1 (the OTM straddle)
                   'risk_reversal': run_real_risk_reversal_overlay,  # widening 2 (SKEW)
-                  'credit_spread': run_real_credit_spread_overlay}  # widening 3 (CARRY)
+                  'credit_spread': run_real_credit_spread_overlay,  # widening 3 (CARRY)
+                  'calendar': run_real_calendar_overlay}     # widening 4 (TERM, two expirations)
 _STRUCT_PARAMS = {'short_vol': {'target_delta': 0.25, 'dte': 30},
                   'straddle': {'dte': 30},
                   'iron_condor': {'dte': 30, 'short_delta': 0.25, 'wing_delta': 0.10},
                   'strangle': {'dte': 30, 'short_delta': 0.25},
                   'risk_reversal': {'dte': 30, 'short_delta': 0.25},
-                  'credit_spread': {'dte': 30, 'short_delta': 0.25, 'wing_delta': 0.10}}
+                  'credit_spread': {'dte': 30, 'short_delta': 0.25, 'wing_delta': 0.10},
+                  'calendar': {'near_dte': 30, 'far_dte': 60}}
 
 # The EXACT rich summary field set each named overlay produces — an INDEPENDENT reference (not the
 # engine), so a dropped/renamed field fails the check. Per-overlay: short-vol echoes target_delta +
@@ -1458,6 +1512,10 @@ _OVERLAY_SUMMARY_KEYS = {
                       'interest_earned', 'total_premium_collected', 'total_hedge_cost',
                       'hedge_cost_bps', 'num_credit_spreads_sold', 'wins', 'losses', 'win_rate',
                       'max_drawdown_pct', 'risk_free_rate', 'cash'},   # hedged 2-leg put, CARRY
+    'calendar': {'capital', 'num_contracts', 'final_equity', 'net_pnl', 'alpha_vs_cash',
+                 'interest_earned', 'total_premium_collected', 'total_hedge_cost', 'hedge_cost_bps',
+                 'num_calendars_sold', 'wins', 'losses', 'win_rate', 'max_drawdown_pct',
+                 'risk_free_rate', 'cash'},   # hedged TWO-expiration structure (TERM)
 }
 
 
@@ -1510,6 +1568,11 @@ class TestGenericStructureEngineEquivalence:
 
     def test_credit_spread_summary_complete(self, spy_merged_market) -> None:
         _assert_engine_equivalent(spy_merged_market, 'credit_spread')  # widening 3 (CARRY, put-leg)
+
+    def test_calendar_summary_complete(self, spy_merged_market) -> None:
+        # widening 4 (TERM): the first TWO-expiration structure — exercises the engine's staggered
+        # settlement (the near leg settles while the far leg lives on) and the multi-exp signature.
+        _assert_engine_equivalent(spy_merged_market, 'calendar')
 
     @pytest.mark.skipif(not _HAVE_NVDA, reason='needs nvda_option_dailies.csv or its .gz twin')
     def test_iron_condor_summary_complete_nvda(self) -> None:
@@ -1614,7 +1677,12 @@ class TestGrammarSignatureMatchesEngine:
     something long-vega — or a skew structure that declares short_rich while the engine longs the rich
     wing — fails here. (This is exactly the check that corrected the credit spread's declared net_skew
     from short_rich to long_rich: its long OTM put wing sits on the steep part of the put skew, so it
-    is the richer leg — the same long_rich read as the iron condor.)"""
+    is the richer leg — the same long_rich read as the iron condor.)
+
+    The calendar (widening 4, TERM) is the first TWO-expiration structure: `entry_date` is passed so
+    structure_greek_signature backs each leg's IV out at its OWN tenor (the near and far calls live on
+    different clocks), which is what makes net_vega='long' the engine's real signature. Passing
+    entry_date is byte-identical for the single-expiration structures (all their legs share one tenor)."""
 
     def test_each_overlay_signature_matches_engine(self, spy_merged_market) -> None:
         dates, prices, store = spy_merged_market
@@ -1629,7 +1697,9 @@ class TestGrammarSignatureMatchesEngine:
                     continue
                 years = (pd.Timestamp(legs[0]['expiration']) - pd.Timestamp(d)).days / 365.0
                 try:
-                    derived = structure_greek_signature(legs, prices[i], years)
+                    # entry_date drives per-leg tenor (the calendar's near/far legs differ);
+                    # single-expiration structures are unaffected (one shared tenor).
+                    derived = structure_greek_signature(legs, prices[i], years, entry_date=d)
                     break
                 except ValueError:
                     continue   # a stale-mark entry; try the next

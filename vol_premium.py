@@ -304,6 +304,42 @@ def select_credit_spread(
     return short_put, long_put
 
 
+def select_calendar(
+    day: dict[str, Any], near_dte: int = 30, far_dte: int = 60,
+    target_delta: float = 0.50, min_gap_dte: int = 30,
+) -> tuple[tuple[Any, ...], tuple[Any, ...]] | None:
+    """The two legs of a long CALL calendar across TWO expirations: a near-month call
+    near `target_delta` (~ATM) via select_entry, and a far-month call at the SAME STRIKE
+    on a LATER expiration whose DTE is at least `min_gap_dte` days beyond the near's.
+    Returns (near_call, far_call) candidate tuples — the SHORT near + LONG far the
+    `_legs_calendar` builder signs — or None when no qualifying later expiration carries
+    that strike with a buyable ask.
+
+    The far leg is matched by STRIKE, not delta (a same-strike calendar is the canonical
+    TERM structure): the far call at the near's strike has more time value and more vega,
+    so the spread is net LONG vega across the two expirations. The `min_gap_dte` floor is
+    the TERM precondition — a far leg only a handful of days past the near has almost the
+    same vega, leaving the structure vega-NEUTRAL rather than long. Measured on SPY: a
+    far−near DTE gap below ~25 days reads mostly neutral, the [25,30) band is mixed, and
+    at or above 30 days it reads LONG on every sampled entry — so the floor is 30, which
+    makes net_vega='long' the engine's actual signature, not a sometimes-true label. This
+    is the only selector that forces a SECOND, later expiration — every other structure
+    pins one. EXPLORATORY, not a registered instrument: the first TERM-family widening,
+    sample-spending."""
+    near = select_entry(day, near_dte, target_delta)
+    if near is None:
+        return None
+    near_dte_actual, near_exp, strike = near[0], near[5], near[6]
+    # candidate tuple = (dte, delta, bid, ask, mid, expiration, strike, contractID)
+    far_cands = [c for c in day['candidates']
+                 if c[6] == strike and c[5] > near_exp and c[1] > 0 and c[3] > 0  # later, same K, buyable call
+                 and c[0] - near_dte_actual >= min_gap_dte]                       # genuine term separation
+    if not far_cands:
+        return None
+    far = min(far_cands, key=lambda c: abs(c[0] - far_dte))   # nearest-DTE to the far target
+    return near, far
+
+
 def run_real_iron_condor_overlay(
     dates: list[str],
     prices: list[float],
@@ -342,6 +378,24 @@ def _leg_intrinsic(leg: dict[str, Any], settle_price: float) -> float:
     """Per-leg expiry intrinsic: a call pays max(0, S-K), a put max(0, K-S)."""
     return max(0.0, (settle_price - leg['strike']) if leg['right'] == 'call'
                else (leg['strike'] - settle_price))
+
+
+def _settle_price_at(expiration: str, date: str, price: float,
+                     prev_date: str | None, prev_price: float | None) -> float:
+    """The close an expiration settles against, given today's (date, price). On the
+    expiration date itself it is today's close; for a Saturday-dated expiry (the
+    pre-Feb-2015 era) it is the prior trading day's close, with the same `gap <= 4`
+    sanity assert the single-expiration settlement always used — applied PER expiration
+    so a calendar's near and far legs each settle against the right close. Factored out
+    of the loop so the staggered (multi-expiration) path reuses it byte-for-byte; the
+    single-expiration path calls it with the one structure expiration and is unchanged."""
+    if date == expiration:
+        return price
+    assert prev_date is not None and prev_price is not None
+    gap = (pd.Timestamp(expiration) - pd.Timestamp(prev_date)).days
+    assert gap <= 4, (f'{gap} days between {prev_date} and expiration '
+                      f'{expiration} — missing data?')
+    return prev_price
 
 
 def _legs_short_vol(day: dict[str, Any], params: dict[str, Any]) -> list[dict[str, Any]] | None:
@@ -578,6 +632,47 @@ def _summary_credit_spread(q: dict[str, Any], p: dict[str, Any]) -> dict[str, An
     }
 
 
+def _legs_calendar(day: dict[str, Any], params: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Long CALL calendar across TWO expirations — SHORT a near-month ~ATM call + LONG a far-month
+    call at the SAME strike. The TERM family's first structure: it harvests the term structure of
+    implied vol by SELLING the near (faster-decaying) leg and BUYING the far (richer-vega) leg, so
+    the spread is net LONG vega across two expirations (opposite-sign vega — the TERM axis). The
+    legs carry DIFFERENT `expiration`s, which is what drives the engine's staggered settlement: the
+    near leg settles at its expiry while the far leg lives on. select_calendar matches the far leg
+    by strike (a true same-strike calendar). The short near fills at bid, the long far at ask; net
+    premium is typically a DEBIT (the far leg costs more than the near credit)."""
+    near_dte = int(params.get('near_dte', 30))
+    far_dte = int(params.get('far_dte', 60))
+    fill = str(params.get('fill', 'bid_ask'))
+    pick = select_calendar(day, near_dte, far_dte, 0.50)
+    if pick is None:
+        return None
+    near, far = pick
+    n_sell = near[2] if fill == 'bid_ask' else near[4]     # short the near call — collect the bid
+    f_buy = far[3] if fill == 'bid_ask' else far[4]        # long the far call — pay the ask
+    return [
+        {'sign': -1, 'right': 'call', 'strike': near[6], 'contract': near[7],
+         'entry_net': n_sell - COMMISSION_PER_SHARE, 'mid': near[4], 'delta': near[1],
+         'expiration': near[5]},                            # NEAR expiry — settles first
+        {'sign': +1, 'right': 'call', 'strike': far[6], 'contract': far[7],
+         'entry_net': f_buy + COMMISSION_PER_SHARE, 'mid': far[4], 'delta': far[1],
+         'expiration': far[5]},                             # FAR expiry — lives on past the near
+    ]
+
+
+def _summary_calendar(q: dict[str, Any], p: dict[str, Any]) -> dict[str, Any]:
+    return {                              # hedged TWO-expiration structure; net premium is a DEBIT
+        'capital': q['capital'], 'num_contracts': q['num_contracts'],   # (long far > short near)
+        'final_equity': q['final_equity'], 'net_pnl': q['net_pnl'],
+        'alpha_vs_cash': q['alpha_vs_cash'], 'interest_earned': q['interest_earned'],
+        'total_premium_collected': q['total_premium_collected'],
+        'total_hedge_cost': q['total_hedge_cost'], 'hedge_cost_bps': q['hedge_cost_bps'],
+        'num_calendars_sold': q['num_sold'], 'wins': q['wins'], 'losses': q['losses'],
+        'win_rate': q['win_rate'], 'max_drawdown_pct': q['max_drawdown_pct'],
+        'risk_free_rate': q['risk_free_rate'], 'cash': q['cash'],
+    }
+
+
 # The SIX structures as their generic-engine configs (selector + the three knobs) plus
 # `defaults` — the per-overlay parameter defaults that differ from the generic's own (only
 # the straddle's hedge_cost_bps=0.5 vs the generic/short-vol 1.0). Merged UNDER user params,
@@ -602,6 +697,9 @@ STRUCTURE_SPECS: dict[str, dict[str, Any]] = {
     'credit_spread': {'select': _legs_credit_spread, 'entry_guard': 'net_positive',
                     'hedge_mode': 'combined', 'management': 'hold',   # CARRY: short near put + long wing
                     'defaults': {'hedge_cost_bps': 0.5}, 'summary': _summary_credit_spread},
+    'calendar':    {'select': _legs_calendar, 'entry_guard': 'each_short_positive',
+                    'hedge_mode': 'combined', 'management': 'hold',   # TERM: two expirations, staggered
+                    'defaults': {'hedge_cost_bps': 0.5}, 'summary': _summary_calendar},
 }
 
 
@@ -661,6 +759,21 @@ def run_real_credit_spread_overlay(
     the iron condor). A pure STRUCTURE_SPEC + delegate, no engine change — single-expiration, so the
     Stage-B engine already handles it. Net SHORT vega, net LONG delta, long_rich skew (engine-verified)."""
     return run_structure_via_spec('credit_spread', dates, prices, store, params)
+
+
+def run_real_calendar_overlay(
+    dates: list[str],
+    prices: list[float],
+    store: dict[str, dict[str, Any]],
+    params: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]], pd.DataFrame]:
+    """Real-chain long-calendar overlay — SHORT a near-month ~ATM call + LONG a far-month call at
+    the SAME strike, combined-delta-hedged, each leg held to ITS OWN expiry. The first TERM-family
+    widening and the hardest one: it is the first structure with TWO distinct expirations, so it
+    needs the engine's STAGGERED settlement (the near leg settles while the far leg lives on). Net
+    LONG vega across the two expirations — the TERM axis. Every single-expiration overlay still
+    takes the byte-identical scalar-expiration path; only this one exercises the new branch."""
+    return run_structure_via_spec('calendar', dates, prices, store, params)
 
 
 def run_real_structure_overlay(
@@ -734,6 +847,7 @@ def run_real_structure_overlay(
     wins = 0
     losses = 0
     entry_credit = 0.0           # the open structure's net credit per share (for its realized P&L)
+    realized_settle_flow = 0.0   # near-leg settle flow already booked this cycle (staggered/calendar)
     daily_rows: list[dict[str, Any]] = []
     trades: list[dict[str, Any]] = []   # one record per entry/settle/close — non-empty iff it traded
     prev_date: str | None = None
@@ -761,29 +875,58 @@ def run_real_structure_overlay(
                     if ok:
                         entry_credit = sum(-leg['sign'] * leg['entry_net'] for leg in picked)
                         cash += entry_credit * shares
+                        realized_settle_flow = 0.0   # fresh cycle: no near-leg settle booked yet
                         legs = picked
-                        expiration = picked[0]['expiration']
+                        # `expiration` is the structure's FINAL (latest) leg expiration — the
+                        # sentinel for "the whole structure is now settled". For every
+                        # single-expiration overlay this is picked[0]['expiration'] (all legs
+                        # share it), so the settlement branch below is byte-identical to the
+                        # scalar-expiration code it replaces. A calendar/diagonal carries TWO
+                        # distinct expirations; the near leg settles first (the staggered branch),
+                        # the far leg lives on until this final date.
+                        expiration = max(leg['expiration'] for leg in picked)
                         num_sold += 1
                         total_premium_collected += entry_credit * shares
                         trades.append({'date': date, 'action': 'enter',
                                        'legs': len(picked), 'credit': round(entry_credit, 4)})
+        elif legs is not None and date >= min(leg['expiration'] for leg in legs) < expiration:
+            # STAGGERED settlement (multi-expiration only — a calendar/diagonal). One or more
+            # NEAR legs have reached their own expiration while a LATER leg still lives, so the
+            # structure is NOT yet fully settled (date < `expiration`, the final leg's expiry).
+            # Settle and remove only the due legs; the survivors keep marking and hedging. The
+            # `< expiration` guard makes this branch UNREACHABLE for any single-expiration
+            # structure (there min == expiration, so `date >= min < expiration` is false on the
+            # settlement day), which is what preserves byte-identity for every existing overlay —
+            # they fall straight through to the all-at-once branch below.
+            survivors: list[dict[str, Any]] = []
+            for leg in legs:
+                if date >= leg['expiration']:
+                    sp = _settle_price_at(leg['expiration'], date, price, prev_date, prev_price)
+                    leg_flow = leg['sign'] * _leg_intrinsic(leg, sp)
+                    cash += leg_flow * shares
+                    realized_settle_flow += leg_flow   # rolled into the structure's win/loss at final
+                    trades.append({'date': date, 'action': 'settle_leg',
+                                   'right': leg['right'], 'strike': leg['strike'],
+                                   'expiration': leg['expiration'],
+                                   'pnl': round(leg_flow * shares, 2)})
+                else:
+                    survivors.append(leg)
+            legs = survivors            # the far leg(s) live on; the structure stays open
         elif date >= expiration:
-            if date == expiration:
-                settle_price = price
-            else:
-                assert prev_date is not None and prev_price is not None
-                gap = (pd.Timestamp(expiration) - pd.Timestamp(prev_date)).days
-                assert gap <= 4, (f'{gap} days between {prev_date} and expiration '
-                                  f'{expiration} — missing data?')
-                settle_price = prev_price
+            settle_price = _settle_price_at(expiration, date, price, prev_date, prev_price)
             settle_flow = sum(leg['sign'] * _leg_intrinsic(leg, settle_price) for leg in legs)
             cash += settle_flow * shares
-            wins, losses = ((wins + 1, losses) if (entry_credit + settle_flow) * shares >= 0
-                            else (wins, losses + 1))      # realized P&L = entry credit + settlement
+            # realized P&L = entry credit + EVERY leg's settlement (near legs already booked into
+            # realized_settle_flow during the staggered branch; 0.0 for a single-expiration cycle,
+            # so this is byte-identical there).
+            structure_flow = settle_flow + realized_settle_flow
+            wins, losses = ((wins + 1, losses) if (entry_credit + structure_flow) * shares >= 0
+                            else (wins, losses + 1))
             trades.append({'date': date, 'action': 'settle',
-                           'pnl': round((entry_credit + settle_flow) * shares, 2)})
+                           'pnl': round((entry_credit + structure_flow) * shares, 2)})
             legs = None
             expiration = None
+            realized_settle_flow = 0.0
         elif day is not None:
             for leg in legs:
                 q = day['marks'].get(leg['contract'])
@@ -944,11 +1087,14 @@ def implied_vol(right: str, price: float, spot: float, strike: float, years: flo
 
 def structure_greek_signature(legs: list[dict[str, Any]], spot: float, years: float,
                               rf: float = 0.045, neutral_tol: float = 0.15,
-                              skew_tol: float = 0.05) -> dict[str, Any]:
+                              skew_tol: float = 0.05,
+                              entry_date: str | None = None) -> dict[str, Any]:
     """Derive a structure's SIGNATURE from the engine's entry legs — what the grammar's declared
     signature is checked against. Three robust economic axes (NOT net_gamma — see below):
 
-      net_vega  (the VARIANCE axis): 'short' (net < 0) | 'long' (net > 0) | 'neutral'.
+      net_vega  (the VARIANCE/TERM axis): 'short' (net < 0) | 'long' (net > 0) | 'neutral'. A
+                single-expiration short-vol structure is short vega; a long CALENDAR is LONG vega
+                (the far leg outweighs the near).
       net_delta (the DIRECTION axis): 'short' | 'long' | 'neutral'. Uses the vendor delta the engine
                 hedges on (call +, put -).
       net_skew  (the SKEW axis): 'short_rich' if the SHORT legs sit at higher IV than the LONG legs
@@ -965,23 +1111,40 @@ def structure_greek_signature(legs: list[dict[str, Any]], spot: float, years: fl
     instead (gamma and vega align for these single-expiration structures). net_skew types the SKEW
     family by the EDGE itself rather than that fragile greek.
 
-    Raises if any leg's IV can't be implied (a stale mark) — the caller picks a clean entry. Robust
-    to the exact t/r since every leg shares the one expiration."""
+    PER-LEG TENOR (the TERM/calendar schema change). The single-expiration callers pass one `years`
+    (all legs share it) and are byte-unchanged. A MULTI-expiration structure (the calendar) must back
+    each leg's IV out at its OWN tenor and weight its vega by that tenor — a far leg has more time
+    value and more vega than a near leg at the same strike, which is exactly the LONG-vega TERM edge.
+    Pass `entry_date` for that: each leg's `years` is then (leg['expiration'] − entry_date)/365, so
+    the near and far calls are priced on their own clocks. Without `entry_date` the scalar `years` is
+    used for every leg (the single-expiration path, byte-identical).
+
+    Raises if any leg's IV can't be implied (a stale mark) — the caller picks a clean entry. The
+    family-direction SIGN is robust to the exact t/r per leg."""
+    def _leg_years(leg: dict[str, Any]) -> float:
+        if entry_date is None:
+            return years
+        return (pd.Timestamp(leg['expiration']) - pd.Timestamp(entry_date)).days / 365.0
+
     nets = {'net_vega': 0.0, 'net_delta': 0.0}
     mags = {'net_vega': 0.0, 'net_delta': 0.0}
     short_iv: list[float] = []
     long_iv: list[float] = []
+    short_k: list[float] = []
+    long_k: list[float] = []
     for leg in legs:
-        iv = implied_vol(leg['right'], leg['mid'], spot, leg['strike'], years, rf)
+        ly = _leg_years(leg)
+        iv = implied_vol(leg['right'], leg['mid'], spot, leg['strike'], ly, rf)
         if iv is None:
             raise ValueError(f"could not imply vol for leg {leg.get('contract')} "
                              f"(mid={leg['mid']}, K={leg['strike']}, S={spot})")
-        per = {'net_vega': bs_vega(spot, leg['strike'], years, rf, iv),
+        per = {'net_vega': bs_vega(spot, leg['strike'], ly, rf, iv),
                'net_delta': leg['delta']}     # vendor delta (call +, put -) — what the engine hedges
         for k in nets:
             nets[k] += leg['sign'] * per[k]
             mags[k] += abs(per[k])
         (short_iv if leg['sign'] < 0 else long_iv).append(iv)
+        (short_k if leg['sign'] < 0 else long_k).append(leg['strike'])
 
     def _classify(net: float, mag: float) -> str:
         if mag == 0 or abs(net) / mag < neutral_tol:
@@ -991,6 +1154,14 @@ def structure_greek_signature(legs: list[dict[str, Any]], spot: float, years: fl
     def _skew() -> str:
         if not short_iv or not long_iv:
             return 'flat'                     # all-short (or all-long) — no short-vs-long asymmetry
+        # net_skew is a WING asymmetry: it only means something when the short and long legs sit at
+        # DIFFERENT strikes (the risk reversal's short put vs long call; the iron-condor's inner
+        # shorts vs outer long wings). A same-strike spread across two EXPIRATIONS (the calendar) has
+        # no wing to be asymmetric about — its short-vs-long IV gap is the TERM-STRUCTURE slope, not
+        # skew — so it reads 'flat'. Without this guard the calendar's slope would masquerade as a
+        # skew edge (short_rich on an inverted term structure), mis-typing a TERM structure as SKEW.
+        if set(short_k) == set(long_k):
+            return 'flat'
         s, lo = sum(short_iv) / len(short_iv), sum(long_iv) / len(long_iv)
         rel = (s - lo) / ((s + lo) / 2)
         return 'short_rich' if rel > skew_tol else 'long_rich' if rel < -skew_tol else 'flat'

@@ -576,11 +576,12 @@ STRUCTURE_ENGINE_VERSION = 'v1'
 class PremiumFamily(Enum):
     """The economic mechanism a structure claims to harvest — the typing that keeps the grammar
     mechanism-coherent as it grows. VARIANCE (short gamma/vega, one expiration) covers the four
-    short-vol overlays; SKEW (the risk reversal, widening 2) harvests the put-call skew; TERM /
-    CARRY are registered for a future widening."""
+    short-vol overlays; SKEW (the risk reversal, widening 2) harvests the put-call skew; CARRY (the
+    credit spread, widening 3) is theta-positive defined-risk; TERM (the calendar, widening 4)
+    harvests opposite-sign vega across TWO expirations."""
     VARIANCE = 'variance'   # short realized-vs-implied variance (short gamma/vega, one expiry)
     SKEW = 'skew'           # delta-offset wing asymmetry (risk reversal — sell rich put, buy cheap call)
-    TERM = 'term'           # opposite-sign vega across two expirations (calendar / diagonal)
+    TERM = 'term'           # opposite-sign vega across two expirations (calendar — long far, short near)
     CARRY = 'carry'         # theta-positive defined-risk
 
 
@@ -631,6 +632,10 @@ STRUCTURE_GRAMMAR: dict[str, OverlayGrammar] = {
                                   # OTM wing sits on the steep part of the put skew, so it carries
                                   # HIGHER IV than the nearer-ATM short — the same long_rich read as
                                   # the iron condor (which also longs its richer OTM wings).
+    'calendar':    OverlayGrammar({'near_dte': (21, 30), 'far_dte': (60, 90)},
+                                  PremiumFamily.TERM,       # widening 4: the first TERM family
+                                  {'expirations': 2, 'legs': 2, 'net_vega': 'long',
+                                   'net_delta': 'neutral', 'net_skew': 'flat'}),
 }
 
 # Flat lattice view of the grammar — byte-identical to the prior ALLOWED_GRID literal (SAME dict
@@ -725,8 +730,10 @@ class StructureTemplate:
 
 # The committed structure batch: the short call at two deltas (0.25 = the
 # variance-premium wing of the +2.54 headline, 0.50 = ATM, max gamma/vega), the
-# two-leg ATM straddle, and the defined-risk iron condor — every existing
-# vol_premium overlay, one row each. Each states its +1 sign explicitly (no
+# two-leg ATM straddle, the defined-risk iron condor, the OTM strangle (widening 1),
+# the risk reversal (widening 2), the bull put credit spread (widening 3), and the long
+# calendar (widening 4) — every existing vol_premium overlay, one row each. Each states
+# its +1 sign explicitly (no
 # default), and every value is a member of ALLOWED_GRID above.
 STRUCTURE_TEMPLATES: tuple[StructureTemplate, ...] = (
     StructureTemplate('short_call_25', 'short_vol', (('target_delta', 0.25), ('dte', 30)), +1),
@@ -740,6 +747,8 @@ STRUCTURE_TEMPLATES: tuple[StructureTemplate, ...] = (
                       (('dte', 30), ('short_delta', 0.25)), +1),
     StructureTemplate('credit_spread', 'credit_spread',   # widening 3 (the first CARRY structure)
                       (('dte', 30), ('short_delta', 0.25), ('wing_delta', 0.10)), +1),
+    StructureTemplate('calendar', 'calendar',         # widening 4 (the first TERM family: two expirations)
+                      (('near_dte', 30), ('far_dte', 60)), +1),
 )
 
 
@@ -869,7 +878,8 @@ def structure_kill_gate(cand: StructureCandidate,
     (store, dates, prices). Runs the overlay and scores the daily vol-P&L by the
     HAC t-stat's asymptotic null — no RNG, closed-form p (the only mechanical
     difference from the re-tag gate)."""
-    from vol_premium import (run_real_credit_spread_overlay,
+    from vol_premium import (run_real_calendar_overlay,
+                             run_real_credit_spread_overlay,
                              run_real_iron_condor_overlay,
                              run_real_risk_reversal_overlay,
                              run_real_short_vol_overlay,
@@ -880,7 +890,8 @@ def structure_kill_gate(cand: StructureCandidate,
                 'iron_condor': run_real_iron_condor_overlay,
                 'strangle': run_real_strangle_overlay,
                 'risk_reversal': run_real_risk_reversal_overlay,
-                'credit_spread': run_real_credit_spread_overlay}
+                'credit_spread': run_real_credit_spread_overlay,
+                'calendar': run_real_calendar_overlay}
     store, dates, prices = loaded
     summary, trades, eq = overlays[cand.overlay](dates, prices, store,
                                                  {**cand.params_dict(), 'capital': capital})
