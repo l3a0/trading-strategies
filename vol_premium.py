@@ -1053,6 +1053,112 @@ def run_real_structure_overlay(
     return summary, [], daily_equity
 
 
+# ============================================================================
+# Black-Scholes greeks — the signature-vs-engine consistency check.
+#
+# The grammar's economic typing (edge_search.STRUCTURE_GRAMMAR) declares each overlay's
+# premium family + a net-greek SIGNATURE. structure_greek_signature derives that signature
+# from the ENGINE's actual entry legs (BS gamma/vega on the IV backed out of each leg's mid),
+# so a structure that DECLARES short gamma/vega while the engine runs something long-vega is
+# caught — turning the typing from a label into an enforcement. IV is per-leg (skew-aware);
+# the net-greek SIGN is robust to the exact t/r (all legs share the one expiration), which is
+# all the family direction needs.
+# ============================================================================
+
+def _norm_pdf(x: float) -> float:
+    return math.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi)
+
+
+def _norm_cdf(x: float) -> float:
+    return 0.5 * math.erfc(-x / math.sqrt(2.0))
+
+
+def _bs_d1(spot: float, strike: float, years: float, rf: float, sigma: float) -> float:
+    return (math.log(spot / strike) + (rf + 0.5 * sigma * sigma) * years) / (sigma * math.sqrt(years))
+
+
+def bs_price(right: str, spot: float, strike: float, years: float, rf: float, sigma: float) -> float:
+    """Black-Scholes price of a European call/put. Degenerate (years<=0 or sigma<=0) -> intrinsic."""
+    if years <= 0 or sigma <= 0:
+        return max(0.0, (spot - strike) if right == 'call' else (strike - spot))
+    d1 = _bs_d1(spot, strike, years, rf, sigma)
+    d2 = d1 - sigma * math.sqrt(years)
+    disc = math.exp(-rf * years)
+    if right == 'call':
+        return spot * _norm_cdf(d1) - strike * disc * _norm_cdf(d2)
+    return strike * disc * _norm_cdf(-d2) - spot * _norm_cdf(-d1)
+
+
+def bs_vega(spot: float, strike: float, years: float, rf: float, sigma: float) -> float:
+    """Black-Scholes vega (per 1.0 of vol), the same for a call or a put. Always >= 0."""
+    if years <= 0 or sigma <= 0:
+        return 0.0
+    return spot * _norm_pdf(_bs_d1(spot, strike, years, rf, sigma)) * math.sqrt(years)
+
+
+def bs_gamma(spot: float, strike: float, years: float, rf: float, sigma: float) -> float:
+    """Black-Scholes gamma, the same for a call or a put. Always >= 0."""
+    if years <= 0 or sigma <= 0:
+        return 0.0
+    return _norm_pdf(_bs_d1(spot, strike, years, rf, sigma)) / (spot * sigma * math.sqrt(years))
+
+
+def implied_vol(right: str, price: float, spot: float, strike: float, years: float,
+                rf: float, lo: float = 1e-4, hi: float = 5.0, tol: float = 1e-7) -> float | None:
+    """Back the Black-Scholes implied vol out of an option mid by BISECTION (robust — no vega
+    blow-up near the boundary). Returns None for a mark that has no reliable IV: a non-finite
+    input (NaN/inf), years<=0, a price whose extrinsic value is within `tol` of intrinsic (the
+    whole bisection residual would sit below tolerance and converge to a junk vol), or a price
+    outside the [lo, hi]-vol bracket (a stale / arbitrage-violating mark)."""
+    if not (math.isfinite(price) and math.isfinite(spot) and math.isfinite(strike)) or years <= 0:
+        return None
+    intrinsic = max(0.0, (spot - strike) if right == 'call' else (strike - spot))
+    if price <= intrinsic + tol:        # extrinsic value below the price tolerance -> no IV
+        return None
+    f_lo = bs_price(right, spot, strike, years, rf, lo) - price
+    f_hi = bs_price(right, spot, strike, years, rf, hi) - price
+    if f_lo * f_hi > 0:
+        return None
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        f_mid = bs_price(right, spot, strike, years, rf, mid) - price
+        if abs(f_mid) < tol:
+            return mid
+        if f_lo * f_mid <= 0:
+            hi = mid
+        else:
+            lo, f_lo = mid, f_mid
+    return 0.5 * (lo + hi)
+
+
+def structure_greek_signature(legs: list[dict[str, Any]], spot: float, years: float,
+                              rf: float = 0.045) -> dict[str, Any]:
+    """Derive a structure's net-greek SIGNATURE from the engine's entry legs — what the grammar's
+    declared signature is checked against. For each leg (a generic-engine leg dict: sign / right /
+    strike / mid / expiration) it backs the IV out of the mid and computes BS gamma/vega, then
+    sums `sign * greek` over the legs. Returns {legs, expirations, net_gamma, net_vega} where the
+    greek fields are 'short' (net < 0) or 'long' (net >= 0). Raises if any leg's IV can't be
+    implied (a stale mark) — the caller picks a clean entry. The net SIGN is robust to the exact
+    t/r since every leg shares the one expiration; for the committed VARIANCE overlays it is also
+    robust to skew (the short legs sit nearer the money than any long wing, so they dominate net
+    gamma/vega) — but that is a property of those structures' geometry, NOT of arbitrary leg sets,
+    and a future widening (e.g. a matched-gamma calendar) could put net at or near zero, where the
+    `>= 0 -> 'long'` tie-break is arbitrary. Such a structure must add a tolerance/degenerate
+    branch before it relies on this."""
+    net_gamma = net_vega = 0.0
+    for leg in legs:
+        iv = implied_vol(leg['right'], leg['mid'], spot, leg['strike'], years, rf)
+        if iv is None:
+            raise ValueError(f"could not imply vol for leg {leg.get('contract')} "
+                             f"(mid={leg['mid']}, K={leg['strike']}, S={spot})")
+        net_gamma += leg['sign'] * bs_gamma(spot, leg['strike'], years, rf, iv)
+        net_vega += leg['sign'] * bs_vega(spot, leg['strike'], years, rf, iv)
+    return {'legs': len(legs),
+            'expirations': len({leg['expiration'] for leg in legs}),
+            'net_gamma': 'short' if net_gamma < 0 else 'long',
+            'net_vega': 'short' if net_vega < 0 else 'long'}
+
+
 def _cli() -> None:
     """Preview run: python vol_premium.py SPY  (delta-neutral ATM short call)."""
     import sys

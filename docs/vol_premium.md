@@ -395,10 +395,19 @@ point.
 It is **additive**: the three frozen overlays are untouched, and
 `TestGenericStructureEngineEquivalence` pins that the generic engine reproduces each one
 **bit-for-bit** on the real chains — the *rounded equity series* (the pinned quantity) and
-the Newey-West t are identical across SPY × the three structures (and NVDA on the four-leg
-condor, which additionally exercises the `rf_credit` float-association edge); only the
-unrounded `rf_credit` differs by float-association noise (\~3 × 10⁻¹⁴). That equality oracle
-is what gates the eventual in-place swap — which is **deferred**, because the generic
+the Newey-West t are identical. All three are checked on **SPY**: the canonical
+`spy_option_dailies.csv` is *calls-only*, so the put-leg `straddle`/`iron_condor` merge the
+separate `spy_option_dailies_puts.csv` at load (the same way `run_registered_vrp` loads the SPY
+straddle), and a `must_trade` guard keyed off the trade list makes a missing-puts run a failure
+rather than a vacuous pass. On SPY every overlay matches to the last bit (`rf_credit` included);
+**NVDA** is retained only because its four-leg iron-condor exercises the `rf_credit`
+float-association edge (\~3 × 10⁻¹⁴, under the `< 1e-9` tolerance) that SPY's summation path hits
+at exactly 0. A second oracle pins **economic** fidelity: `TestGrammarSignatureMatchesEngine` backs
+the IV out of each entry leg's mid (`structure_greek_signature`, on the `bs_gamma` / `bs_vega` /
+`implied_vol` primitives) and asserts the engine's actual net gamma/vega/legs/expirations match
+the family signature the grammar *declares* — so a structure typed `VARIANCE` that the engine
+runs long-vega fails. The bit-for-bit *equivalence* oracle (the first one, not this signature
+check) is what gates the eventual in-place swap — which is **deferred**, because the generic
 `summary` is a *subset* of each frozen overlay's (it carries the `capital` + `risk_free_rate`
 the FDR campaign reads, but drops `alpha_vs_cash` / `win_rate` / `num_*_sold` /
 `max_drawdown_pct`): a swap must enrich the summary before routing `run_registered_vrp.py` /

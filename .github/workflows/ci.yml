@@ -160,7 +160,7 @@ jobs:
     # docs/explorations.md), and the automated FDR-controlled edge-search
     # campaign (test_edge_search.py, docs/edge_search.md), and the delta-neutral
     # VRP scaffold (test_vol_premium.py, docs/vol_premium.md — synthetic mechanics
-    # always run; the SPY structural check is dataset-gated), and the chain-hygiene
+    # always run; the real-chain equivalence + signature checks are dataset-gated), and the chain-hygiene
     # validator (test_validate_dailies.py — the classifier + boundary scan run
     # synthetically; the MSFT-backfill calibration to 2010-05-10 is dataset-gated).
     # Their dataset-gated pins need the same option dailies as the real-chain job;

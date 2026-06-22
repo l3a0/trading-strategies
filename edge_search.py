@@ -555,18 +555,22 @@ STRUCTURE_ENGINE_VERSION = 'v1'
 # committed STRUCTURE_TEMPLATES below (standard option deltas / DTEs), so it
 # leaves room to enumerate without re-running the published campaign.
 #
-# The grammar is now ECONOMICALLY TYPED (the scaffold a generative widening builds on, no
-# widening here — still grid_universe_size()==30): each overlay RESERVES a PREMIUM FAMILY and a
-# net-greek SIGNATURE slot. The committed three are all VARIANCE (short gamma/vega at one expiry).
-# Scope honesty — this is a LABELING scaffold, not yet an enforcement: the signature is
-# AUTHOR-DECLARED metadata, and _assert_grammar_well_typed gates only that a registered family
-# and a complete signature are PRESENT, NOT that the declared greeks match the engine's actual
-# greeks. So the "mechanism by construction / a composition whose greeks contradict its claimed
-# family is UNREACHABLE" guarantee (the contrast paper's post-hoc-rationalization failure mode) is
-# the NEXT interlock a widening must add — a signature-vs-engine consistency check — not something
-# this scaffold yet delivers. STRUCTURE_GRAMMAR is the typed source of truth; ALLOWED_GRID is its
-# flat lattice view (same dict objects), so grid_universe_size / _validate_grammar /
-# enumerate_grammar_templates are byte-unchanged.
+# The grammar is ECONOMICALLY TYPED (the scaffold a generative widening builds on, no widening
+# here — still grid_universe_size()==30): each overlay carries a PREMIUM FAMILY and a net-greek
+# SIGNATURE. The committed three are all VARIANCE (short gamma/vega at one expiry). Enforcement is
+# two-layer: (1) _assert_grammar_well_typed gates at IMPORT that every overlay carries a registered
+# family + a complete signature (PRESENCE only — it can't run the engine without data); (2) the
+# signature is CROSS-CHECKED against the engine's ACTUAL greeks by the dataset-gated
+# TestGrammarSignatureMatchesEngine, which runs each overlay on real chains, backs the IV out of
+# each entry leg's mid, computes BS net gamma/vega (vol_premium.structure_greek_signature), and
+# asserts the engine-derived {legs, expirations, net_gamma, net_vega} matches the declared
+# signature. So for the committed overlays a composition that DECLARES short gamma/vega while the
+# engine runs something long-vega FAILS the test — mechanism is CHECKED against the engine, not a
+# post-hoc label (the contrast paper's failure mode). The guarantee is per-verified-overlay (a test
+# that must run with data, not a constructor invariant): a widening must
+# ADD its structure to that test (on a ticker that actually trades it) to inherit it. STRUCTURE_GRAMMAR
+# is the typed source of truth; ALLOWED_GRID is its flat lattice view (same dict objects), so
+# grid_universe_size / _validate_grammar / enumerate_grammar_templates are byte-unchanged.
 
 
 class PremiumFamily(Enum):
@@ -615,15 +619,16 @@ def structure_family(overlay: str) -> PremiumFamily:
 
 
 def _assert_grammar_well_typed() -> None:
-    """Economic-typing scaffold (runs at import): gate that every overlay carries a REGISTERED
-    PremiumFamily and a net-greek signature with all expected keys PRESENT, and that ALLOWED_GRID
-    matches the grammar's lattices (a structural/key-level check — value drift is impossible since
-    ALLOWED_GRID shares the same dict objects, so this only catches a future hand-written grid whose
-    top-level structure diverges). This checks PRESENCE only: the signature is author-declared and
-    is NOT yet cross-checked against the engine's computed greeks, so an overlay added without a
-    family or with an incomplete signature fails here, but a MIS-declared one (net_vega='short' on
-    an actually long-vega engine) does not — the signature-vs-engine consistency check is the next
-    interlock a widening adds. Pinned by the always-run TestClosedGrammar."""
+    """Economic-typing scaffold, layer 1 of 2 (runs at IMPORT): gate that every overlay carries a
+    REGISTERED PremiumFamily and a net-greek signature with all expected keys PRESENT, and that
+    ALLOWED_GRID matches the grammar's lattices (a structural/key-level check — value drift is
+    impossible since ALLOWED_GRID shares the same dict objects, so this only catches a future
+    hand-written grid whose top-level structure diverges). This is PRESENCE only: it can't run the
+    engine without market data, so a MIS-declared signature (net_vega='short' on an actually
+    long-vega engine) is NOT caught here. Layer 2 — the signature-vs-engine cross-check that DOES
+    catch a mis-declaration — is the dataset-gated TestGrammarSignatureMatchesEngine (it backs the
+    IV out of each entry leg and compares BS net greeks to the declared signature). Pinned by the
+    always-run TestClosedGrammar."""
     for name, og in STRUCTURE_GRAMMAR.items():
         if not isinstance(og.family, PremiumFamily):
             raise ValueError(f'{name}: {og.family!r} is not a registered PremiumFamily')

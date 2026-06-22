@@ -21,9 +21,14 @@ from typing import Any
 import pandas as pd
 import pytest
 
+from edge_search import STRUCTURE_GRAMMAR
 from vol_premium import (
     STRUCTURE_SPECS,
     _leg_intrinsic,
+    bs_gamma,
+    bs_price,
+    bs_vega,
+    implied_vol,
     run_real_iron_condor_overlay,
     run_real_short_vol_overlay,
     run_real_straddle_overlay,
@@ -32,6 +37,7 @@ from vol_premium import (
     select_put_entry,
     select_straddle,
     short_vol_statistics,
+    structure_greek_signature,
 )
 
 _SPY_DAILIES = os.path.join(os.path.dirname(__file__), 'spy_option_dailies.csv')
@@ -1335,13 +1341,21 @@ class TestGenericStructureEngineSpecs:
         assert _leg_intrinsic(put, 90.0) == 10.0 and _leg_intrinsic(put, 110.0) == 0.0
 
 
-def _equiv_market(ticker: str, path: str):
+def _equiv_market(ticker: str, path: str, extra_paths=()):
     from real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
-    store = load_chain_store(path, start=CHAIN_CLEAN_START.get(ticker))
+    store = load_chain_store(path, extra_paths=extra_paths, start=CHAIN_CLEAN_START.get(ticker))
     days = sorted(store)
     dates, prices = load_unadjusted_prices(ticker, days[0], '2026-06-06')
     pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
     return [d for d, _ in pairs], [p for _, p in pairs], store
+
+
+@pytest.fixture(scope='module')
+def spy_merged_market():
+    # SPY calls + the separate puts file merged at load (extra_paths), the same way
+    # run_registered_vrp loads the SPY straddle — so the put-leg straddle/iron-condor trade
+    # on the canonical ticker rather than falling back to NVDA. Loaded once for the module.
+    return _equiv_market('SPY', _SPY_DAILIES, extra_paths=[_SPY_PUTS])
 
 
 _FROZEN_OVERLAY = {'short_vol': run_real_short_vol_overlay,
@@ -1352,14 +1366,20 @@ _STRUCT_PARAMS = {'short_vol': {'target_delta': 0.25, 'dte': 30},
                   'iron_condor': {'dte': 30, 'short_delta': 0.25, 'wing_delta': 0.10}}
 
 
-def _assert_engine_equivalent(market, name: str) -> None:
+def _assert_engine_equivalent(market, name: str, *, must_trade: bool = True) -> None:
     """The generic engine (via spec) reproduces the frozen overlay: the rounded EQUITY
     column (the pinned series) is BIT-IDENTICAL, the resulting HAC-t is identical, and
-    rf_credit matches to float-association noise (the unrounded 4-leg cash path)."""
+    rf_credit matches to float-association noise (the unrounded 4-leg cash path). `must_trade`
+    asserts the structure actually ENTERED — it keys off the frozen overlay's TRADE LIST, not
+    equity movement, because equity drifts every day from the rf credit on idle cash even when
+    nothing trades (so equity.nunique() can't tell a real run from a CALLS-ONLY store fed a
+    put-leg structure — the exact vacuous-equivalence case this guards)."""
     dates, prices, store = market
     params = {**_STRUCT_PARAMS[name], 'capital': 100_000}
-    sF, _, eqF = _FROZEN_OVERLAY[name](dates, prices, store, params)
+    sF, tradesF, eqF = _FROZEN_OVERLAY[name](dates, prices, store, params)
     sG, _, eqG = run_structure_via_spec(name, dates, prices, store, params)
+    if must_trade:
+        assert len(tradesF) > 0, f'{name} never traded on this store — vacuous equivalence'
     assert eqF['equity'].equals(eqG['equity'])            # the pinned series, bit-for-bit
     assert eqF['price'].equals(eqG['price'])
     assert float((eqF['rf_credit'] - eqG['rf_credit']).abs().max()) < 1e-9   # float noise only
@@ -1368,28 +1388,135 @@ def _assert_engine_equivalent(market, name: str) -> None:
     assert tF == tG                                       # the pinned HAC-t is unchanged
 
 
-@pytest.mark.skipif(not _HAVE_SPY, reason='needs spy_option_dailies.csv or its .gz twin')
+@pytest.mark.skipif(not (_HAVE_SPY and _HAVE_SPY_PUTS),
+                    reason='needs spy_option_dailies.csv + spy_option_dailies_puts.csv (or .gz twins)')
 class TestGenericStructureEngineEquivalence:
-    """DATASET-GATED: run_real_structure_overlay reproduces each frozen overlay BIT-FOR-BIT
-    on real chains — the equality oracle gating the eventual in-place swap (Stage B). SPY
-    covers all three; NVDA additionally covers the iron-condor's 4-leg float-association edge
-    (equity bit-identical, rf_credit ~3e-14)."""
+    """DATASET-GATED: run_real_structure_overlay reproduces each frozen overlay BIT-FOR-BIT on real
+    chains — the equality oracle gating the eventual in-place swap (Stage B). All three are verified
+    on SPY: the canonical spy_option_dailies.csv is CALLS-ONLY, so the put-leg straddle/iron-condor
+    need the separate spy_option_dailies_puts.csv MERGED at load (the `spy_merged_market` fixture,
+    the same way run_registered_vrp loads the SPY straddle); the `must_trade` guard turns a
+    missing-puts vacuity into a failure rather than a false pass. NVDA additionally pins the
+    iron-condor's 4-leg rf_credit float-association edge (~3e-14, < the 1e-9 tolerance) that SPY's
+    summation path happens to hit at exactly 0 — keeping that tolerance assertion non-vacuous."""
 
-    @pytest.fixture(scope='class')
-    def spy(self):
-        return _equiv_market('SPY', _SPY_DAILIES)
+    def test_short_vol_equivalent(self, spy_merged_market) -> None:
+        _assert_engine_equivalent(spy_merged_market, 'short_vol')
 
-    def test_short_vol_equivalent(self, spy) -> None:
-        _assert_engine_equivalent(spy, 'short_vol')
+    def test_straddle_equivalent(self, spy_merged_market) -> None:
+        _assert_engine_equivalent(spy_merged_market, 'straddle')
 
-    def test_straddle_equivalent(self, spy) -> None:
-        _assert_engine_equivalent(spy, 'straddle')
-
-    def test_iron_condor_equivalent(self, spy) -> None:
-        _assert_engine_equivalent(spy, 'iron_condor')
+    def test_iron_condor_equivalent(self, spy_merged_market) -> None:
+        _assert_engine_equivalent(spy_merged_market, 'iron_condor')
 
     @pytest.mark.skipif(not _HAVE_NVDA, reason='needs nvda_option_dailies.csv or its .gz twin')
     def test_iron_condor_equivalent_nvda_floatnoise(self) -> None:
-        # NVDA's iron condor is where .equals() on the full frame fails on rf_credit float
-        # noise while equity + the t-stat stay bit-identical — the case to pin explicitly.
+        # NVDA's iron condor exercises the rf_credit float-association edge (~3e-14) that SPY's
+        # path hits at exactly 0 — keep it so the `< 1e-9` tolerance is actually exercised.
         _assert_engine_equivalent(_equiv_market('NVDA', _NVDA_DAILIES), 'iron_condor')
+
+
+# --------------------------------------------------------------------------- #
+# Signature-vs-engine consistency check (Black-Scholes greeks)
+# --------------------------------------------------------------------------- #
+class TestGreeks:
+    """ALWAYS-RUN: the BS greek primitives + structure_greek_signature. These derive a
+    structure's net-greek signature from real entry legs — the math the dataset-gated
+    consistency check rides on."""
+
+    def test_bs_price_and_iv_roundtrip(self) -> None:
+        S, K, t, r, sig = 100.0, 100.0, 0.25, 0.045, 0.20
+        price = bs_price('call', S, K, t, r, sig)
+        assert price == pytest.approx(4.5498, abs=1e-3)          # ATM call, known value
+        assert implied_vol('call', price, S, K, t, r) == pytest.approx(sig, abs=1e-5)
+        # put via the same machinery; IV round-trips too
+        pput = bs_price('put', S, K, t, r, sig)
+        assert implied_vol('put', pput, S, K, t, r) == pytest.approx(sig, abs=1e-5)
+
+    def test_gamma_vega_positive_and_degenerate(self) -> None:
+        S, K, t, r, sig = 100.0, 105.0, 0.25, 0.045, 0.25
+        assert bs_gamma(S, K, t, r, sig) > 0 and bs_vega(S, K, t, r, sig) > 0
+        # degenerate inputs -> 0, intrinsic
+        assert bs_gamma(S, K, 0.0, r, sig) == 0.0 and bs_vega(S, K, t, r, 0.0) == 0.0
+        assert bs_price('call', S, K, 0.0, r, sig) == max(0.0, S - K)
+
+    def test_gamma_vega_known_magnitudes(self) -> None:
+        # exact ATM BS gamma/vega (S=K=100, t=0.25, r=0.045, sigma=0.20) — the consistency check
+        # reads only the net-greek SIGN, so this magnitude pin is what locks the normalization
+        # (a missing sqrt(t) or a misplaced sigma would keep the sign and slip through otherwise).
+        S, K, t, r, sig = 100.0, 100.0, 0.25, 0.045, 0.20
+        assert bs_gamma(S, K, t, r, sig) == pytest.approx(0.039371, abs=1e-6)
+        assert bs_vega(S, K, t, r, sig) == pytest.approx(19.685481, abs=1e-5)
+
+    def test_iv_none_below_intrinsic(self) -> None:
+        # a mark at/below intrinsic (or t<=0) has no implied vol
+        assert implied_vol('call', 0.0, 100.0, 90.0, 0.25, 0.045) is None   # < 10 intrinsic
+        assert implied_vol('call', 5.0, 100.0, 90.0, 0.0, 0.045) is None    # t=0
+
+    def test_iv_none_on_degenerate_marks(self) -> None:
+        # a NaN mark must return None, not leak past the guards to a fabricated vol of hi=5.0
+        assert implied_vol('call', float('nan'), 100.0, 100.0, 0.25, 0.045) is None
+        assert implied_vol('call', 5.0, float('nan'), 100.0, 0.25, 0.045) is None
+        # a price whose extrinsic value sits below the price tolerance -> no reliable IV (None),
+        # rather than a junk root from the absolute-residual stopping test
+        deep = 10.0 + 1e-12                       # K=90 call, spot 100 -> intrinsic 10
+        assert implied_vol('call', deep, 100.0, 90.0, 0.25, 0.045) is None
+
+    def test_structure_greek_signature_synthetic(self) -> None:
+        S, yrs = 100.0, 0.1
+        short_straddle = [
+            {'sign': -1, 'right': 'call', 'strike': 100.0, 'mid': 5.0, 'expiration': 'E', 'contract': 'c'},
+            {'sign': -1, 'right': 'put', 'strike': 100.0, 'mid': 5.0, 'expiration': 'E', 'contract': 'p'},
+        ]
+        assert structure_greek_signature(short_straddle, S, yrs) == {
+            'legs': 2, 'expirations': 1, 'net_gamma': 'short', 'net_vega': 'short'}
+        # a single LONG option flips both signs to 'long'
+        long_call = [{'sign': +1, 'right': 'call', 'strike': 100.0, 'mid': 5.0,
+                      'expiration': 'E', 'contract': 'c'}]
+        s = structure_greek_signature(long_call, S, yrs)
+        assert s['net_gamma'] == 'long' and s['net_vega'] == 'long'
+        # distinct expirations are counted (a calendar would be expirations=2)
+        cal = [{'sign': -1, 'right': 'call', 'strike': 100.0, 'mid': 3.0, 'expiration': 'E1', 'contract': 'a'},
+               {'sign': +1, 'right': 'call', 'strike': 100.0, 'mid': 5.0, 'expiration': 'E2', 'contract': 'b'}]
+        assert structure_greek_signature(cal, S, yrs)['expirations'] == 2
+
+    def test_structure_greek_signature_raises_on_uninvertible_leg(self) -> None:
+        bad = [{'sign': -1, 'right': 'call', 'strike': 90.0, 'mid': 0.0,  # mid < 10 intrinsic
+                'expiration': 'E', 'contract': 'x'}]
+        with pytest.raises(ValueError, match='could not imply vol'):
+            structure_greek_signature(bad, 100.0, 0.1)
+
+
+@pytest.mark.skipif(not (_HAVE_SPY and _HAVE_SPY_PUTS),
+                    reason='needs spy_option_dailies.csv + spy_option_dailies_puts.csv (or .gz twins)')
+class TestGrammarSignatureMatchesEngine:
+    """DATASET-GATED: the grammar's DECLARED economic signature (edge_search.STRUCTURE_GRAMMAR) is
+    VERIFIED against the engine's actual entry legs — the consistency check that turns the typing
+    from a label into an enforcement. For each structure, run its selector on SPY (calls + the
+    separate puts file merged at load, so the put-leg straddle/iron-condor trade), back the IV out
+    of each leg's mid, compute BS net gamma/vega, and assert the engine-derived
+    {legs, expirations, net_gamma, net_vega} matches the declared signature. A future overlay that
+    DECLARES short gamma/vega while the engine runs something long-vega fails here."""
+
+    def test_each_overlay_signature_matches_engine(self, spy_merged_market) -> None:
+        dates, prices, store = spy_merged_market
+        for name, spec in STRUCTURE_SPECS.items():
+            derived = None
+            for i, d in enumerate(dates):
+                day = store.get(d)
+                if day is None:
+                    continue
+                legs = spec['select'](day, _STRUCT_PARAMS[name])
+                if not legs:
+                    continue
+                years = (pd.Timestamp(legs[0]['expiration']) - pd.Timestamp(d)).days / 365.0
+                try:
+                    derived = structure_greek_signature(legs, prices[i], years)
+                    break
+                except ValueError:
+                    continue   # a stale-mark entry; try the next
+            assert derived is not None, f'{name}: found no clean SPY entry to verify'
+            declared = STRUCTURE_GRAMMAR[name].signature
+            for k in ('legs', 'expirations', 'net_gamma', 'net_vega'):
+                assert derived[k] == declared[k], (
+                    f'{name}.{k}: engine-derived {derived[k]!r} != declared {declared[k]!r}')
