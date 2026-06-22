@@ -32,6 +32,7 @@ from vol_premium import (
     run_real_iron_condor_overlay,
     run_real_short_vol_overlay,
     run_real_straddle_overlay,
+    run_real_strangle_overlay,
     select_iron_condor,
     select_put_entry,
     select_straddle,
@@ -1320,7 +1321,7 @@ class TestGenericStructureEngineSpecs:
     complete rich summary (the byte-identical numbers carry through the registered regressions)."""
 
     def test_specs_are_well_formed(self) -> None:
-        assert set(STRUCTURE_SPECS) == {'short_vol', 'straddle', 'iron_condor'}
+        assert set(STRUCTURE_SPECS) == {'short_vol', 'straddle', 'iron_condor', 'strangle'}
         for name, spec in STRUCTURE_SPECS.items():
             assert callable(spec['select'])
             assert spec['entry_guard'] in ('each_short_positive', 'net_positive')
@@ -1360,10 +1361,12 @@ def spy_merged_market():
 
 _NAMED_OVERLAY = {'short_vol': run_real_short_vol_overlay,    # post-Stage-B: thin delegates
                   'straddle': run_real_straddle_overlay,     # to run_structure_via_spec
-                  'iron_condor': run_real_iron_condor_overlay}
+                  'iron_condor': run_real_iron_condor_overlay,
+                  'strangle': run_real_strangle_overlay}     # the first grammar widening
 _STRUCT_PARAMS = {'short_vol': {'target_delta': 0.25, 'dte': 30},
                   'straddle': {'dte': 30},
-                  'iron_condor': {'dte': 30, 'short_delta': 0.25, 'wing_delta': 0.10}}
+                  'iron_condor': {'dte': 30, 'short_delta': 0.25, 'wing_delta': 0.10},
+                  'strangle': {'dte': 30, 'short_delta': 0.25}}
 
 # The EXACT rich summary field set each named overlay produces — an INDEPENDENT reference (not the
 # engine), so a dropped/renamed field fails the check. Per-overlay: short-vol echoes target_delta +
@@ -1381,6 +1384,10 @@ _OVERLAY_SUMMARY_KEYS = {
     'iron_condor': {'capital', 'num_contracts', 'final_equity', 'net_pnl', 'alpha_vs_cash',
                     'interest_earned', 'total_premium_collected', 'num_condors_sold', 'wins',
                     'losses', 'win_rate', 'max_drawdown_pct', 'risk_free_rate', 'cash'},
+    'strangle': {'capital', 'num_contracts', 'final_equity', 'net_pnl', 'alpha_vs_cash',
+                 'interest_earned', 'total_premium_collected', 'total_hedge_cost', 'hedge_cost_bps',
+                 'num_strangles_sold', 'wins', 'losses', 'win_rate', 'max_drawdown_pct',
+                 'risk_free_rate', 'cash'},   # same shape as the straddle (its OTM cousin)
 }
 
 
@@ -1424,6 +1431,9 @@ class TestGenericStructureEngineEquivalence:
 
     def test_iron_condor_summary_complete(self, spy_merged_market) -> None:
         _assert_engine_equivalent(spy_merged_market, 'iron_condor')
+
+    def test_strangle_summary_complete(self, spy_merged_market) -> None:
+        _assert_engine_equivalent(spy_merged_market, 'strangle')   # the first grammar widening
 
     @pytest.mark.skipif(not _HAVE_NVDA, reason='needs nvda_option_dailies.csv or its .gz twin')
     def test_iron_condor_summary_complete_nvda(self) -> None:

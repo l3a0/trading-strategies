@@ -433,7 +433,44 @@ def _summary_iron_condor(q: dict[str, Any], p: dict[str, Any]) -> dict[str, Any]
     }
 
 
-# The three structures as their generic-engine configs (selector + the three knobs) plus
+def _legs_strangle(day: dict[str, Any], params: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Short OTM strangle — short a +short_delta call + a -short_delta put at one expiry. The
+    straddle's OTM cousin (a wider short-vol structure): select_straddle with a symmetric non-ATM
+    target, so the same VARIANCE leg math (short gamma/vega, combined-delta-hedged), just struck
+    out of the money. `short_delta` (default 0.25) sets both wings symmetrically."""
+    dte = int(params.get('dte', 30))
+    fill = str(params.get('fill', 'bid_ask'))
+    sd = float(params.get('short_delta', 0.25))
+    pick = select_straddle(day, dte, sd, -sd)
+    if pick is None:
+        return None
+    call, put = pick
+    c_sell = call[2] if fill == 'bid_ask' else call[4]
+    p_sell = put[2] if fill == 'bid_ask' else put[4]
+    return [
+        {'sign': -1, 'right': 'call', 'strike': call[6], 'contract': call[7],
+         'entry_net': c_sell - COMMISSION_PER_SHARE, 'mid': call[4], 'delta': call[1],
+         'expiration': call[5]},
+        {'sign': -1, 'right': 'put', 'strike': put[6], 'contract': put[7],
+         'entry_net': p_sell - COMMISSION_PER_SHARE, 'mid': put[4], 'delta': put[1],
+         'expiration': call[5]},
+    ]
+
+
+def _summary_strangle(q: dict[str, Any], p: dict[str, Any]) -> dict[str, Any]:
+    return {                                       # same field set as the straddle (its OTM cousin)
+        'capital': q['capital'], 'num_contracts': q['num_contracts'],
+        'final_equity': q['final_equity'], 'net_pnl': q['net_pnl'],
+        'alpha_vs_cash': q['alpha_vs_cash'], 'interest_earned': q['interest_earned'],
+        'total_premium_collected': q['total_premium_collected'],
+        'total_hedge_cost': q['total_hedge_cost'], 'hedge_cost_bps': q['hedge_cost_bps'],
+        'num_strangles_sold': q['num_sold'], 'wins': q['wins'], 'losses': q['losses'],
+        'win_rate': q['win_rate'], 'max_drawdown_pct': q['max_drawdown_pct'],
+        'risk_free_rate': q['risk_free_rate'], 'cash': q['cash'],
+    }
+
+
+# The FOUR structures as their generic-engine configs (selector + the three knobs) plus
 # `defaults` — the per-overlay parameter defaults that differ from the generic's own (only
 # the straddle's hedge_cost_bps=0.5 vs the generic/short-vol 1.0). Merged UNDER user params,
 # exactly reproducing each frozen overlay's `params.get(..., default)`. `summary` reassembles the
@@ -448,6 +485,9 @@ STRUCTURE_SPECS: dict[str, dict[str, Any]] = {
     'iron_condor': {'select': _legs_iron_condor, 'entry_guard': 'net_positive',
                     'hedge_mode': 'none', 'management': 'hold',
                     'defaults': {}, 'summary': _summary_iron_condor},
+    'strangle':    {'select': _legs_strangle, 'entry_guard': 'each_short_positive',
+                    'hedge_mode': 'combined', 'management': 'hold',   # straddle config, OTM
+                    'defaults': {'hedge_cost_bps': 0.5}, 'summary': _summary_strangle},
 }
 
 
@@ -466,6 +506,19 @@ def run_structure_via_spec(name: str, dates: list[str], prices: list[float],
         select=spec['select'], entry_guard=spec['entry_guard'],
         hedge_mode=spec['hedge_mode'], management=spec['management'])
     return spec['summary'](q, merged), trades, eq
+
+
+def run_real_strangle_overlay(
+    dates: list[str],
+    prices: list[float],
+    store: dict[str, dict[str, Any]],
+    params: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]], pd.DataFrame]:
+    """Real-chain OTM short-strangle overlay — short a +short_delta call + a -short_delta put,
+    combined-delta-hedged, held to expiry (the straddle's OTM cousin). The first grammar WIDENING:
+    a new structure that is purely a STRUCTURE_SPEC + delegate, no engine change — the payoff of
+    the Stage-B consolidation. Same VARIANCE leg math as the straddle."""
+    return run_structure_via_spec('strangle', dates, prices, store, params)
 
 
 def run_real_structure_overlay(

@@ -381,7 +381,8 @@ cost-fragile call-wing survivor, nulls and a blow-up everywhere else.
 
 ## The generic structure engine (toward a bigger menu)
 
-The three overlays above — short-vol, straddle, iron condor — are special cases of one
+The overlays above — short-vol, straddle, iron condor, and the OTM strangle (the first
+grammar widening, the straddle's wider cousin) — are special cases of one
 loop. `run_real_structure_overlay` factors out the shared skeleton (a single cash
 account, the per-day rf credit, the `gap ≤ 4` Saturday-expiry settlement, the mark
 `equity = cash + hedge·price + Σ sign·mid·shares`, and the `[date, equity, price,
@@ -392,8 +393,9 @@ overlay's config (incl. the one per-overlay default that differs — the straddl
 `hedge_cost_bps = 0.5` vs the others' 1.0), and `run_structure_via_spec` is the entry
 point.
 
-It is now **the sole engine (Stage B done)**: the three named overlays —
-`run_real_short_vol_overlay` / `run_real_straddle_overlay` / `run_real_iron_condor_overlay` — are
+It is now **the sole engine (Stage B done)**: the named overlays —
+`run_real_short_vol_overlay` / `run_real_straddle_overlay` / `run_real_iron_condor_overlay` /
+`run_real_strangle_overlay` — are
 thin **delegates** to this loop via `run_structure_via_spec`, and `run_registered_vrp` + the
 campaign run through them. The \~515 lines of hand-written bodies were retired after the equivalence
 oracle pinned every summary field + the rounded equity series **bit-for-bit**; the

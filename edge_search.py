@@ -604,6 +604,9 @@ STRUCTURE_GRAMMAR: dict[str, OverlayGrammar] = {
                                    'wing_delta': (0.05, 0.10)},
                                   PremiumFamily.VARIANCE,
                                   {'expirations': 1, 'legs': 4, 'net_gamma': 'short', 'net_vega': 'short'}),
+    'strangle':    OverlayGrammar({'dte': (21, 30, 45), 'short_delta': (0.20, 0.25, 0.30)},
+                                  PremiumFamily.VARIANCE,   # first widening: the straddle's OTM cousin
+                                  {'expirations': 1, 'legs': 2, 'net_gamma': 'short', 'net_vega': 'short'}),
 }
 
 # Flat lattice view of the grammar — byte-identical to the prior ALLOWED_GRID literal (SAME dict
@@ -707,6 +710,8 @@ STRUCTURE_TEMPLATES: tuple[StructureTemplate, ...] = (
     StructureTemplate('straddle', 'straddle', (('dte', 30),), +1),
     StructureTemplate('iron_condor', 'iron_condor',
                       (('dte', 30), ('short_delta', 0.25), ('wing_delta', 0.10)), +1),
+    StructureTemplate('strangle', 'strangle',         # first grammar widening (the OTM straddle)
+                      (('dte', 30), ('short_delta', 0.25)), +1),
 )
 
 
@@ -838,10 +843,12 @@ def structure_kill_gate(cand: StructureCandidate,
     difference from the re-tag gate)."""
     from vol_premium import (run_real_iron_condor_overlay,
                              run_real_short_vol_overlay,
-                             run_real_straddle_overlay, short_vol_statistics)
+                             run_real_straddle_overlay, run_real_strangle_overlay,
+                             short_vol_statistics)
     overlays = {'short_vol': run_real_short_vol_overlay,
                 'straddle': run_real_straddle_overlay,
-                'iron_condor': run_real_iron_condor_overlay}
+                'iron_condor': run_real_iron_condor_overlay,
+                'strangle': run_real_strangle_overlay}
     store, dates, prices = loaded
     summary, trades, eq = overlays[cand.overlay](dates, prices, store,
                                                  {**cand.params_dict(), 'capital': capital})

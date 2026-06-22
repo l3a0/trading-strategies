@@ -122,8 +122,9 @@ fixed cycles. It is **built** (`run_structure_campaign`), a parallel phase that
 does not bend the cheap re-tag gate:
 
 - **A second template class, on a closed grammar.** `STRUCTURE_TEMPLATES` — the
-  short call at 0.25Δ and ATM, the two-leg ATM straddle, and the defined-risk
-  iron condor — crossed with the search tickers (`enumerate_structure_candidates`).
+  short call at 0.25Δ and ATM, the two-leg ATM straddle, the defined-risk iron
+  condor, and the OTM short strangle (the first widening) — crossed with the search
+  tickers (`enumerate_structure_candidates`).
   Each cell runs its overlay on the live chains. Every template draws its params
   from a fixed menu (`ALLOWED_GRID`) enforced at construction: an off-menu value
   raises rather than running, so the reachable hypothesis space stays finite,
@@ -213,7 +214,7 @@ does not bend the cheap re-tag gate:
   now sets `elond_survivor` (the control flag); BY is retained as a reported *diagnostic*
   (`by_survivor`). The honest price: e-LOND is *less* powerful than BY (calibration is
   lossy), buying dependence-robustness + online validity rather than power — and it is
-  *stricter* here, so the verdict is unchanged: **0 / 28 cells flagged.** The strongest
+  *stricter* here, so the verdict is unchanged: **0 / 35 cells flagged.** The strongest
   cell (SPY short-call-25, t_NW ≈ +2.17) calibrates to e ≈ 4.1, far below the
   head-of-stream bar 1/(α·γ₁) ≈ 16.3. The machinery is oracle-tested against the
   `online-fdr` package; `TestStructureCampaign` now pins the e-LOND verdict on real
@@ -228,7 +229,7 @@ does not bend the cheap re-tag gate:
   rows and runs ONE e-LOND pass over the whole concatenation, recording each new row's
   lifetime-stream verdict. Because e-LOND is online (a cell's bar depends only on the cells
   before it), that verdict is fixed on arrival and never moves under later appends, so the
-  published 28-row ledger is unchanged (empty prior ⇒ lifetime == per-batch). This is the
+  published head-of-stream ledger is unchanged (empty prior ⇒ lifetime == per-batch). This is the
   cumulative-n control the future LLM proposer's judging path will reuse. Pinned by the
   always-run `TestLifetimeStreamJudge`.
 - **Graduation stays manual.** A survivor earns a pre-registration and a manual
@@ -312,23 +313,24 @@ both out of this MVP's scope, both the natural next phase.
 
 ---
 
-## Campaign 2 — structure class — EMPTY (2026-06-17; NVDA folded in 2026-06-20; SPY/MSFT/QQQ put chains merged 2026-06-22)
+## Campaign 2 — structure class — EMPTY (2026-06-17; NVDA folded in 2026-06-20; SPY/MSFT/QQQ put chains merged 2026-06-22; strangle widening 2026-06-22)
 
-**The batch.** Twenty-eight `(template, ticker)` cells — four structure templates
-(short call 0.25Δ, short call ATM, ATM straddle, 25Δ/10Δ iron condor) crossed
-with the seven search tickers (MSFT, SPY, QQQ, GLD, XLE, EEM, NVDA; **TLT sealed**) —
-each a full `run_real_*_overlay` engine pass scored by the Newey-West HAC t-stat
-against its asymptotic normal null (closed-form p, no permutation), then judged as a
-stream by **e-LOND** (the FDR control of record, #3b) — with Benjamini-Yekutieli at
-q = 0.10 retained as a diagnostic. The chains are era-clipped at the live
-`CHAIN_CLEAN_START` (exploratory sees the corrected SPY boundary).
+**The batch.** Thirty-five `(template, ticker)` cells — **five** structure templates
+(short call 0.25Δ, short call ATM, ATM straddle, 25Δ/10Δ iron condor, and the OTM
+short **strangle** — the first grammar widening, below) crossed with the seven search
+tickers (MSFT, SPY, QQQ, GLD, XLE, EEM, NVDA; **TLT sealed**) — each a full
+`run_real_*_overlay` engine pass scored by the Newey-West HAC t-stat against its
+asymptotic normal null (closed-form p, no permutation), then judged as a stream by
+**e-LOND** (the FDR control of record, #3b) — with Benjamini-Yekutieli at q = 0.10
+retained as a diagnostic. The chains are era-clipped at the live `CHAIN_CLEAN_START`
+(exploratory sees the corrected SPY boundary).
 
-**The result.** No cell is flagged by e-LOND, the control (`0 / 28`); none survives
+**The result.** No cell is flagged by e-LOND, the control (`0 / 35`); none survives
 the BY diagnostic either. The strongest is SPY short-call 0.25Δ at t = +2.17 (the
 exploratory cousin of the frozen +2.54 short-vol headline, now on the wider corrected
 SPY span): individually suggestive at p \~0.015, but it calibrates to an e-value of
 \~4.1 — far short of the e-LOND head-of-stream bar 1/(α·γ₁) \~16.3, and missing the BY
-diagnostic's rank-1 bar (\~0.0009 for 28 dependent tests) by an order of magnitude.
+diagnostic's rank-1 bar (\~0.0007 for 35 dependent tests) by an order of magnitude.
 The next cells trail off fast — SPY short-call ATM at +1.60, GLD's call wings near
 +1.15 — and every put-leg straddle/iron-condor cell is at most +0.72 (SPY straddle).
 
@@ -366,7 +368,7 @@ per-ticker `_data_lineage_hash` so the re-measured cells re-record honestly, and
 rather than scored as a real \~0.
 Re-measured, the six cells are real and distinct, and all still far from significance
 — SPY straddle +0.72 / iron-condor −1.08; MSFT −0.67 / +0.52; QQQ −0.10 / +0.14. The
-`0 / 28` verdict is unchanged; the cells are now honest measurements rather than
+`0 / 28` verdict was unchanged (the strangle widening later took the batch to 35); the cells are now honest measurements rather than
 flat-curve artifacts (the same class of bug as XLE — defective inputs, not a real
 edge — caught on the other side: missing data rather than mis-scaled).
 
@@ -377,11 +379,29 @@ cross-section's online-FDR bar. The next moves are a stronger sealed
 vault and the roll/stop/spread structure variants that carry their own engine
 parameters.
 
+### First grammar widening — the OTM short strangle
+
+The first structure added beyond the original three — the **Stage-B payoff**: now
+that the overlays are one generic engine, a new structure is a STRUCTURE_SPEC +
+selector + a typed grammar entry, with no engine change. The OTM short strangle is
+the straddle's wider cousin (short a 0.25Δ call + 0.25Δ put, combined-delta-hedged,
+held to expiry), same `VARIANCE` family and `{2 legs, 1 expiry, short γ/ν}`
+signature — so the dataset-gated `TestGrammarSignatureMatchesEngine` cross-checks it
+for free. It took the closed grammar `30 → 39` and the committed batch `4 × 7 = 28 →
+5 × 7 = 35`. Mechanically it is an **append**, not a correction: the seven new
+strangle cells are judged at the tail of the lifetime e-LOND stream (after the prior
+28) and recorded; the existing rows are byte-unchanged. The strangle is another null
+(MSFT +0.50 / SPY +1.06 / QQQ +0.34 / GLD +0.33 / XLE −1.34 / EEM −0.78 / NVDA
+−1.33 — all well short of significance), so the verdict stays `0 / 35`. A genuinely
+new *family* (SKEW risk-reversal, CARRY credit-spread) is the harder next widening:
+its edge is skew / direction, not a position greek, so it needs the typed signature
+extended past `{gamma, vega}` first.
+
 ### NVDA — the seventh ticker (live-onboarded, folded in)
 
 NVDA was onboarded after the original six tickers were frozen, and is now folded
 into `STRUCTURE_SEARCH` as the seventh — its four `(template, NVDA)` cells are part
-of the 28-cell batch above. It keeps its own callout here because NVDA's onboarding
+of the cross-section above. It keeps its own callout here because NVDA's onboarding
 was the worked example of the clean-gate; the verdict is unchanged.
 
 **The result.** No NVDA cell is flagged — every t-stat is negative, so each one is
