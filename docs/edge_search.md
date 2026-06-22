@@ -312,7 +312,7 @@ both out of this MVP's scope, both the natural next phase.
 
 ---
 
-## Campaign 2 — structure class — EMPTY (2026-06-17; NVDA folded in 2026-06-20)
+## Campaign 2 — structure class — EMPTY (2026-06-17; NVDA folded in 2026-06-20; SPY/MSFT/QQQ put chains merged 2026-06-22)
 
 **The batch.** Twenty-eight `(template, ticker)` cells — four structure templates
 (short call 0.25Δ, short call ATM, ATM straddle, 25Δ/10Δ iron condor) crossed
@@ -329,7 +329,8 @@ exploratory cousin of the frozen +2.54 short-vol headline, now on the wider corr
 SPY span): individually suggestive at p \~0.015, but it calibrates to an e-value of
 \~4.1 — far short of the e-LOND head-of-stream bar 1/(α·γ₁) \~16.3, and missing the BY
 diagnostic's rank-1 bar (\~0.0009 for 28 dependent tests) by an order of magnitude.
-Every other cell is t < +1.2.
+The next cells trail off fast — SPY short-call ATM at +1.60, GLD's call wings near
++1.15 — and every put-leg straddle/iron-condor cell is at most +0.72 (SPY straddle).
 
 **A data-hygiene catch that mattered.** The first run flagged two XLE "survivors"
 (short call t = +4.16 / +6.86) — entirely an artifact. XLE did a **2:1 split on
@@ -344,6 +345,30 @@ t. The chain data was clean all along (the entry-band validator was right) — t
 guard** (`validate_dailies.scale_ratio`, wired into the campaign) now precludes
 the class. Repaired, XLE shows no edge (short-call t \~−1.7) and the batch is
 empty.
+
+**A second data-completeness catch.** The early runs loaded each ticker's
+CANONICAL store, which for SPY/MSFT/QQQ is **calls-only** (their puts live in a
+separate `{ticker}_option_dailies_puts.csv`). So the two put-leg templates — the ATM
+straddle and the 25Δ/10Δ iron condor — never entered on those three tickers: six of
+the 28 cells were idle flat rf-credit curves recording a vacuous t \~ 0, the tell
+being that straddle and iron-condor came out *identical* per ticker (two different
+structures cannot). The fix merges the separate puts file at load
+(`_load_ticker_data` via `_put_chain_paths`, the way `run_registered_vrp` loads the
+SPY straddle). The merge is **window-additive**: a puts file can PREDATE the calls
+(QQQ's puts start 2011, its calls 2016, and QQQ has no era clip), so the load clips the
+merged window to CALL days — every structure needs a call leg, so this is exactly the
+calls-file span, and merging puts gives the put-leg structures a put to trade against
+WITHOUT stretching the window into a calls-free span (which would dilute the t-stat with
+idle rf days and re-measure even the call cells). So the call cells are byte-unchanged
+and only the put-leg cells become real. The fix also folds the puts checksum into the
+per-ticker `_data_lineage_hash` so the re-measured cells re-record honestly, and adds a
+0-trades → `measurement_invalid` guard so a future non-trading cell is flagged (e=0)
+rather than scored as a real \~0.
+Re-measured, the six cells are real and distinct, and all still far from significance
+— SPY straddle +0.72 / iron-condor −1.08; MSFT −0.67 / +0.52; QQQ −0.10 / +0.14. The
+`0 / 28` verdict is unchanged; the cells are now honest measurements rather than
+flat-curve artifacts (the same class of bug as XLE — defective inputs, not a real
+edge — caught on the other side: missing data rather than mis-scaled).
 
 **What this campaign settles.** The delta-neutral short-vol structure class on
 seven underlyings contains no cell flagged by e-LOND, its honest FDR control — the

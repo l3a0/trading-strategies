@@ -63,6 +63,7 @@ from edge_search import (
     kill_gate,
     propose_structure_candidates,
     run_proposer_round,
+    _load_ticker_data,
     load_idea_ledger,
     load_proposer_corpus,
     load_search_runs,
@@ -1117,6 +1118,31 @@ class TestStructureCampaign:
         assert xle['t_stat_newey_west'] < 0           # the fabricated +4.16 is gone
         assert not xle.get('measurement_invalid')     # scale-valid after the fix
         assert xle['by_survivor'] is False
+
+    def test_put_leg_cells_trade_on_calls_only_tickers(self, structure_campaign) -> None:
+        """Regression on the calls-only defect: the canonical SPY/MSFT/QQQ stores carry no puts,
+        so the put-leg structures (straddle, iron condor) USED to never enter — recording a vacuous
+        ~0 t-stat (straddle == iron_condor, the tell). With the separate puts file now merged at
+        load (_put_chain_paths), they trade: each cell is a real measurement (scored, not
+        measurement_invalid) and straddle != iron_condor (two different structures, two t-stats)."""
+        rows = structure_campaign
+        for tk in ('SPY', 'MSFT', 'QQQ'):
+            strad = self._cell(rows, 'straddle', tk)
+            ic = self._cell(rows, 'iron_condor', tk)
+            assert not strad.get('measurement_invalid') and not ic.get('measurement_invalid')
+            assert strad['t_stat_newey_west'] is not None and ic['t_stat_newey_west'] is not None
+            # the calls-only bug made these identical (both flat rf curves); now they differ
+            assert strad['t_stat_newey_west'] != ic['t_stat_newey_west']
+
+    @pytest.mark.skipif(not _have_dailies('QQQ'), reason='needs qqq_option_dailies.csv (+ _puts)')
+    def test_puts_merge_keeps_window_on_calls_span(self) -> None:
+        """The merge is purely ADDITIVE on the measurement window. QQQ's puts file starts 2011 but
+        its calls start 2016 (and QQQ has no era clip), so without the call-day clip the merged
+        window would stretch back to 2011 — a calls-free span that dilutes the t-stat with idle rf
+        days and re-measures even the call cells. The clip restricts the window to call days, so a
+        merged ticker's window still begins at its calls-file start (2016 for QQQ), not the puts'."""
+        _store, dates, _prices = _load_ticker_data('QQQ')
+        assert dates[0] >= '2016-01-01'   # the QQQ calls-file start, NOT the 2011 puts start
 
 
 # --------------------------------------------------------------------------- #
