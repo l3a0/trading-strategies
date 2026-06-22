@@ -381,8 +381,9 @@ cost-fragile call-wing survivor, nulls and a blow-up everywhere else.
 
 ## The generic structure engine (toward a bigger menu)
 
-The overlays above — short-vol, straddle, iron condor, and the OTM strangle (the first
-grammar widening, the straddle's wider cousin) — are special cases of one
+The overlays above — short-vol, straddle, iron condor, the OTM strangle (widening 1,
+the straddle's wider cousin), and the bullish risk reversal (widening 2, the first NEW
+family — SKEW) — are special cases of one
 loop. `run_real_structure_overlay` factors out the shared skeleton (a single cash
 account, the per-day rf credit, the `gap ≤ 4` Saturday-expiry settlement, the mark
 `equity = cash + hedge·price + Σ sign·mid·shares`, and the `[date, equity, price,
@@ -395,7 +396,7 @@ point.
 
 It is now **the sole engine (Stage B done)**: the named overlays —
 `run_real_short_vol_overlay` / `run_real_straddle_overlay` / `run_real_iron_condor_overlay` /
-`run_real_strangle_overlay` — are
+`run_real_strangle_overlay` / `run_real_risk_reversal_overlay` — are
 thin **delegates** to this loop via `run_structure_via_spec`, and `run_registered_vrp` + the
 campaign run through them. The \~515 lines of hand-written bodies were retired after the equivalence
 oracle pinned every summary field + the rounded equity series **bit-for-bit**; the
@@ -406,9 +407,11 @@ real chains. (The put-leg `straddle`/`iron_condor` run on **SPY** with the separ
 `spy_option_dailies_puts.csv` merged — the canonical file is calls-only — the same way
 `run_registered_vrp` loads the SPY straddle.) A second oracle pins **economic** fidelity:
 `TestGrammarSignatureMatchesEngine` backs the IV out of each entry leg's mid
-(`structure_greek_signature`, on the `bs_gamma` / `bs_vega` / `implied_vol` primitives) and asserts
-the engine's actual net gamma/vega/legs/expirations match the family signature the grammar
-*declares* — so a structure typed `VARIANCE` that the engine runs long-vega fails. The one check the
+(`structure_greek_signature`, on the `bs_vega` / `implied_vol` primitives) and asserts the engine's
+actual `{net_vega, net_delta, net_skew, legs, expirations}` match the family signature the grammar
+*declares* — so a structure typed `VARIANCE` that the engine runs long-vega, or `SKEW` that longs
+the rich wing instead of selling it, fails. (`net_gamma` is not a signature axis — it is un-pinnable
+for offset-leg structures, so `net_vega` carries the vol-selling claim.) The one check the
 equivalence oracle never covered, now the only Stage-B residual: the iron-condor's `net_positive`
 entry credit is left-folded with commission baked into each leg, a different float association than
 the old `(shorts)-(longs)-4*comm` — it rounds away in equity (verified to never flip the `> 0`

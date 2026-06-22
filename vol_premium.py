@@ -457,6 +457,32 @@ def _legs_strangle(day: dict[str, Any], params: dict[str, Any]) -> list[dict[str
     ]
 
 
+def _legs_risk_reversal(day: dict[str, Any], params: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Bullish risk reversal — SHORT a -short_delta put + LONG a +short_delta call at one expiry.
+    The SKEW family's first structure: it harvests the equity put-call skew (puts priced richer than
+    equidistant calls) by SELLING the rich put wing and BUYING the cheap call wing, combined-delta-
+    hedged so the residual is the skew, not direction. select_straddle picks the symmetric ±short_delta
+    legs; the short put fills at bid, the long call at ask. Unlike the all-short VARIANCE structures
+    this is MIXED-sign — net long delta (+~0.5), net ~0 vega, net short_rich skew."""
+    dte = int(params.get('dte', 30))
+    fill = str(params.get('fill', 'bid_ask'))
+    sd = float(params.get('short_delta', 0.25))
+    pick = select_straddle(day, dte, sd, -sd)
+    if pick is None:
+        return None
+    call, put = pick
+    p_sell = put[2] if fill == 'bid_ask' else put[4]      # short the rich put — collect the bid
+    c_buy = call[3] if fill == 'bid_ask' else call[4]     # long the cheap call — pay the ask
+    return [
+        {'sign': -1, 'right': 'put', 'strike': put[6], 'contract': put[7],
+         'entry_net': p_sell - COMMISSION_PER_SHARE, 'mid': put[4], 'delta': put[1],
+         'expiration': call[5]},
+        {'sign': +1, 'right': 'call', 'strike': call[6], 'contract': call[7],
+         'entry_net': c_buy + COMMISSION_PER_SHARE, 'mid': call[4], 'delta': call[1],
+         'expiration': call[5]},
+    ]
+
+
 def _summary_strangle(q: dict[str, Any], p: dict[str, Any]) -> dict[str, Any]:
     return {                                       # same field set as the straddle (its OTM cousin)
         'capital': q['capital'], 'num_contracts': q['num_contracts'],
@@ -470,7 +496,20 @@ def _summary_strangle(q: dict[str, Any], p: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-# The FOUR structures as their generic-engine configs (selector + the three knobs) plus
+def _summary_risk_reversal(q: dict[str, Any], p: dict[str, Any]) -> dict[str, Any]:
+    return {                              # hedged two-leg structure (same shape as the strangle);
+        'capital': q['capital'], 'num_contracts': q['num_contracts'],   # net premium can be a DEBIT
+        'final_equity': q['final_equity'], 'net_pnl': q['net_pnl'],     # (long call > short put)
+        'alpha_vs_cash': q['alpha_vs_cash'], 'interest_earned': q['interest_earned'],
+        'total_premium_collected': q['total_premium_collected'],
+        'total_hedge_cost': q['total_hedge_cost'], 'hedge_cost_bps': q['hedge_cost_bps'],
+        'num_risk_reversals_sold': q['num_sold'], 'wins': q['wins'], 'losses': q['losses'],
+        'win_rate': q['win_rate'], 'max_drawdown_pct': q['max_drawdown_pct'],
+        'risk_free_rate': q['risk_free_rate'], 'cash': q['cash'],
+    }
+
+
+# The FIVE structures as their generic-engine configs (selector + the three knobs) plus
 # `defaults` — the per-overlay parameter defaults that differ from the generic's own (only
 # the straddle's hedge_cost_bps=0.5 vs the generic/short-vol 1.0). Merged UNDER user params,
 # exactly reproducing each frozen overlay's `params.get(..., default)`. `summary` reassembles the
@@ -488,6 +527,9 @@ STRUCTURE_SPECS: dict[str, dict[str, Any]] = {
     'strangle':    {'select': _legs_strangle, 'entry_guard': 'each_short_positive',
                     'hedge_mode': 'combined', 'management': 'hold',   # straddle config, OTM
                     'defaults': {'hedge_cost_bps': 0.5}, 'summary': _summary_strangle},
+    'risk_reversal': {'select': _legs_risk_reversal, 'entry_guard': 'each_short_positive',
+                    'hedge_mode': 'combined', 'management': 'hold',   # SKEW: short put + long call
+                    'defaults': {'hedge_cost_bps': 0.5}, 'summary': _summary_risk_reversal},
 }
 
 
@@ -519,6 +561,20 @@ def run_real_strangle_overlay(
     a new structure that is purely a STRUCTURE_SPEC + delegate, no engine change — the payoff of
     the Stage-B consolidation. Same VARIANCE leg math as the straddle."""
     return run_structure_via_spec('strangle', dates, prices, store, params)
+
+
+def run_real_risk_reversal_overlay(
+    dates: list[str],
+    prices: list[float],
+    store: dict[str, dict[str, Any]],
+    params: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]], pd.DataFrame]:
+    """Real-chain bullish risk-reversal overlay — SHORT a -short_delta put + LONG a +short_delta
+    call, combined-delta-hedged, held to expiry. The first NEW-FAMILY widening (SKEW, not VARIANCE):
+    its edge is the put-call skew, harvested by selling the rich put wing and buying the cheap call
+    wing. Mixed-sign (the first hedged structure that isn't all-short), so it exercises the engine's
+    position-delta `combined` hedge in its general form."""
+    return run_structure_via_spec('risk_reversal', dates, prices, store, params)
 
 
 def run_real_structure_overlay(
@@ -672,8 +728,11 @@ def run_real_structure_overlay(
                 leg = legs[0]
                 lo, hi = (-1.0, 0.0) if leg['right'] == 'put' else (0.0, 1.0)
                 target_hedge = int(round(min(max(leg['delta'], lo), hi) * shares))
-            else:  # combined
-                combined = sum(leg['delta'] for leg in legs)
+            else:  # combined: neutralize the net POSITION delta (−Σ sign·delta). For an all-short
+                # structure this equals Σ delta (the old form) bit-for-bit, so the straddle/strangle
+                # pins are unchanged; for a MIXED-sign reversal (short put + long call) it is the only
+                # correct form — Σ delta would read ~0 and leave the +0.5 position delta unhedged.
+                combined = -sum(leg['sign'] * leg['delta'] for leg in legs)
                 target_hedge = int(round(min(max(combined, -1.0), 1.0) * shares))
         else:
             target_hedge = 0
@@ -798,31 +857,61 @@ def implied_vol(right: str, price: float, spot: float, strike: float, years: flo
 
 
 def structure_greek_signature(legs: list[dict[str, Any]], spot: float, years: float,
-                              rf: float = 0.045) -> dict[str, Any]:
-    """Derive a structure's net-greek SIGNATURE from the engine's entry legs — what the grammar's
-    declared signature is checked against. For each leg (a generic-engine leg dict: sign / right /
-    strike / mid / expiration) it backs the IV out of the mid and computes BS gamma/vega, then
-    sums `sign * greek` over the legs. Returns {legs, expirations, net_gamma, net_vega} where the
-    greek fields are 'short' (net < 0) or 'long' (net >= 0). Raises if any leg's IV can't be
-    implied (a stale mark) — the caller picks a clean entry. The net SIGN is robust to the exact
-    t/r since every leg shares the one expiration; for the committed VARIANCE overlays it is also
-    robust to skew (the short legs sit nearer the money than any long wing, so they dominate net
-    gamma/vega) — but that is a property of those structures' geometry, NOT of arbitrary leg sets,
-    and a future widening (e.g. a matched-gamma calendar) could put net at or near zero, where the
-    `>= 0 -> 'long'` tie-break is arbitrary. Such a structure must add a tolerance/degenerate
-    branch before it relies on this."""
-    net_gamma = net_vega = 0.0
+                              rf: float = 0.045, neutral_tol: float = 0.15,
+                              skew_tol: float = 0.05) -> dict[str, Any]:
+    """Derive a structure's SIGNATURE from the engine's entry legs — what the grammar's declared
+    signature is checked against. Three robust economic axes (NOT net_gamma — see below):
+
+      net_vega  (the VARIANCE axis): 'short' (net < 0) | 'long' (net > 0) | 'neutral'.
+      net_delta (the DIRECTION axis): 'short' | 'long' | 'neutral'. Uses the vendor delta the engine
+                hedges on (call +, put -).
+      net_skew  (the SKEW axis): 'short_rich' if the SHORT legs sit at higher IV than the LONG legs
+                (you SOLD the rich wing — what a risk reversal does, harvesting the put-call skew),
+                'long_rich' if the reverse (an iron-condor longs its richer OTM wings), 'flat' if
+                there are no short OR no long legs (an all-short straddle has no asymmetry to read).
+
+    net_vega/net_delta are classified 'neutral' when the legs OFFSET: |net| / Σ|per-leg| <
+    `neutral_tol`. The SCALE-INVARIANT ratio separates the families — ~1.0 for a VARIANCE structure's
+    reinforcing short legs, ~0 for an offsetting reversal. net_GAMMA is deliberately NOT a signature
+    field: for offset-leg structures it is irreducibly fragile — the iron-condor's net gamma (short)
+    and the risk-reversal's (long) overlap in MAGNITUDE (~0.26–0.37 vs ~0.17–0.34 of Σ|leg|) with
+    opposite signs, so no tolerance classifies both cleanly. net_vega carries the vol-selling claim
+    instead (gamma and vega align for these single-expiration structures). net_skew types the SKEW
+    family by the EDGE itself rather than that fragile greek.
+
+    Raises if any leg's IV can't be implied (a stale mark) — the caller picks a clean entry. Robust
+    to the exact t/r since every leg shares the one expiration."""
+    nets = {'net_vega': 0.0, 'net_delta': 0.0}
+    mags = {'net_vega': 0.0, 'net_delta': 0.0}
+    short_iv: list[float] = []
+    long_iv: list[float] = []
     for leg in legs:
         iv = implied_vol(leg['right'], leg['mid'], spot, leg['strike'], years, rf)
         if iv is None:
             raise ValueError(f"could not imply vol for leg {leg.get('contract')} "
                              f"(mid={leg['mid']}, K={leg['strike']}, S={spot})")
-        net_gamma += leg['sign'] * bs_gamma(spot, leg['strike'], years, rf, iv)
-        net_vega += leg['sign'] * bs_vega(spot, leg['strike'], years, rf, iv)
-    return {'legs': len(legs),
-            'expirations': len({leg['expiration'] for leg in legs}),
-            'net_gamma': 'short' if net_gamma < 0 else 'long',
-            'net_vega': 'short' if net_vega < 0 else 'long'}
+        per = {'net_vega': bs_vega(spot, leg['strike'], years, rf, iv),
+               'net_delta': leg['delta']}     # vendor delta (call +, put -) — what the engine hedges
+        for k in nets:
+            nets[k] += leg['sign'] * per[k]
+            mags[k] += abs(per[k])
+        (short_iv if leg['sign'] < 0 else long_iv).append(iv)
+
+    def _classify(net: float, mag: float) -> str:
+        if mag == 0 or abs(net) / mag < neutral_tol:
+            return 'neutral'                  # the legs offset (a risk reversal's vega)
+        return 'short' if net < 0 else 'long'
+
+    def _skew() -> str:
+        if not short_iv or not long_iv:
+            return 'flat'                     # all-short (or all-long) — no short-vs-long asymmetry
+        s, lo = sum(short_iv) / len(short_iv), sum(long_iv) / len(long_iv)
+        rel = (s - lo) / ((s + lo) / 2)
+        return 'short_rich' if rel > skew_tol else 'long_rich' if rel < -skew_tol else 'flat'
+    sig = {'legs': len(legs), 'expirations': len({leg['expiration'] for leg in legs})}
+    sig.update({k: _classify(nets[k], mags[k]) for k in nets})
+    sig['net_skew'] = _skew()
+    return sig
 
 
 def _cli() -> None:
