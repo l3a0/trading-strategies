@@ -488,12 +488,13 @@ class TestClosedGrammar:
     the precondition the FDR accounting rests on."""
 
     def test_grid_universe_size_pinned(self) -> None:
-        # short_vol 3x3=9, straddle 3, iron_condor 3x3x2=18 -> 30. Bump the grid,
-        # bump this pin — the universe size is on the record by design.
-        assert grid_universe_size() == 30
+        # short_vol 3x3=9, straddle 3, iron_condor 3x3x2=18, strangle 3x3=9 -> 39. Bump
+        # the grid, bump this pin — the universe size is on the record by design.
+        assert grid_universe_size() == 39
         by_hand = sum(
             len(grid['target_delta']) * len(grid['dte']) if ov == 'short_vol'
             else len(grid['dte']) if ov == 'straddle'
+            else len(grid['dte']) * len(grid['short_delta']) if ov == 'strangle'
             else len(grid['dte']) * len(grid['short_delta']) * len(grid['wing_delta'])
             for ov, grid in ALLOWED_GRID.items())
         assert by_hand == grid_universe_size()
@@ -502,7 +503,7 @@ class TestClosedGrammar:
         # Importing edge_search already constructed STRUCTURE_TEMPLATES; if any cell
         # were off-menu, __post_init__ would have raised at import. Re-affirm here:
         # every committed template's params match its overlay grid exactly, value-wise.
-        assert len(STRUCTURE_TEMPLATES) == 4
+        assert len(STRUCTURE_TEMPLATES) == 5   # + the strangle widening
         for t in STRUCTURE_TEMPLATES:
             grid = ALLOWED_GRID[t.overlay]
             params = dict(t.params)
@@ -555,11 +556,12 @@ class TestClosedGrammar:
     def test_committed_batch_is_the_by_denominator(self) -> None:
         # The cross-section size — the e-LOND stream length and the BY diagnostic's
         # denominator — is the run count, not the grammar universe, so pin it.
-        # 4 committed templates x 7 search tickers = 28 cells.
+        # 5 committed templates x 7 search tickers = 35 cells (the strangle widening
+        # took it 4->5 / 28->35).
         cands = enumerate_structure_candidates(STRUCTURE_CAMPAIGN)
-        assert len(cands) == 28
+        assert len(cands) == 35
         assert len(cands) == len(STRUCTURE_TEMPLATES) * len(STRUCTURE_SEARCH)
-        # and the committed menu is a subset of the reachable universe (4 <= 30),
+        # and the committed menu is a subset of the reachable universe (5 <= 39),
         # so widening either the templates or the grid is a deliberate, pinned edit.
         assert len(STRUCTURE_TEMPLATES) <= grid_universe_size()
 
@@ -581,11 +583,11 @@ class TestClosedGrammar:
             StructureCandidate('x', 'MSFT', 'straddle', (('dte', 30.0),), +1)
 
     def test_grammar_is_economically_typed(self) -> None:
-        # the scaffold (no widening here): every overlay carries a registered PremiumFamily +
-        # a complete net-greek signature. The committed three are all VARIANCE; SKEW/TERM/CARRY
-        # are registered for a future widening's productions.
+        # every overlay carries a registered PremiumFamily + a complete net-greek signature. The
+        # committed four (incl. the strangle, the first widening) are all VARIANCE; SKEW/TERM/CARRY
+        # are registered for a future widening that adds a genuinely new family.
         assert {f.name for f in PremiumFamily} == {'VARIANCE', 'SKEW', 'TERM', 'CARRY'}
-        assert set(STRUCTURE_GRAMMAR) == {'short_vol', 'straddle', 'iron_condor'}
+        assert set(STRUCTURE_GRAMMAR) == {'short_vol', 'straddle', 'iron_condor', 'strangle'}
         for name, og in STRUCTURE_GRAMMAR.items():
             assert og.family is PremiumFamily.VARIANCE
             assert structure_family(name) is og.family
@@ -712,7 +714,7 @@ class TestLifetimeStreamJudge:
 
     def test_empty_prior_equals_per_batch(self) -> None:
         """With no prior, the lifetime judge IS the per-batch judge — so the published first batch
-        (empty ledger before it) is unaffected and TestStructureCampaign's 0/28 head-of-stream pin
+        (empty ledger before it) is unaffected and TestStructureCampaign's 0/35 head-of-stream pin
         stands."""
         rows = [self._lrow(template=f't{i}', p=p) for i, p in enumerate([0.0001, 0.5, 0.5])]
         per_batch = [r['elond_survivor'] for r in online_fdr_survivors(rows)]
@@ -1083,7 +1085,7 @@ class TestStructureCampaign:
 
     def test_batch_all_scored_none_invalid(self, structure_campaign) -> None:
         rows = structure_campaign
-        assert len(rows) == len(STRUCTURE_TEMPLATES) * len(STRUCTURE_SEARCH)  # 28
+        assert len(rows) == len(STRUCTURE_TEMPLATES) * len(STRUCTURE_SEARCH)  # 35
         # after the split fix every search ticker is scale-valid -> nothing excluded
         assert sum(r.get('measurement_invalid', False) for r in rows) == 0
 
@@ -1170,7 +1172,7 @@ def nvda_structure_campaign():
 )
 class TestNvdaStructureCampaign:
     """Pin NVDA's structure cells as a focused per-ticker check — NVDA is also one
-    of the seven search tickers in the main 28-cell campaign, so this isolates it
+    of the seven search tickers in the main 35-cell campaign, so this isolates it
     on the published chain: short-vol / straddle / iron-condor run on NVDA alone,
     scored by the HAC-t asymptotic null; e-LOND is the control (BY a diagnostic)
     over the 4 template cells. EXPLORATORY, not a registered verdict. Deterministic
