@@ -863,21 +863,71 @@ def _legs_iron_condor(day: dict[str, Any], params: dict[str, Any]) -> list[dict[
     ]
 
 
+# --- per-overlay summary assembly (Stage B) ---------------------------------
+# The generic engine emits RICH quantities under generic keys; each overlay's frozen summary
+# has a DIFFERENT field set (short-vol echoes target_delta + carries total_hedge_cost/hedge_cost_bps;
+# straddle drops target_delta; the static iron-condor drops total_hedge_cost/hedge_cost_bps too) and
+# its own `num_*_sold` name. These builders reproduce each frozen dict EXACTLY from the quantities —
+# byte-identical (verified field-by-field by the dataset-gated equivalence test). `p` is the merged
+# params the engine ran with, so a param echo (target_delta) reads the same value the frozen did.
+def _summary_short_vol(q: dict[str, Any], p: dict[str, Any]) -> dict[str, Any]:
+    # The frozen overlay hardcodes 'num_calls_sold' even for the put wing (option_type='put'),
+    # so byte-identical reproduction does too. (run_registered_vrp reads it via a
+    # `.get('num_puts_sold', ...num_calls_sold)` fallback; the num_puts_sold branch is dead today.
+    # Renaming it for the put side is a behavior change, out of Stage B's byte-identical scope.)
+    return {
+        'capital': q['capital'], 'num_contracts': q['num_contracts'],
+        'target_delta': float(p.get('target_delta', 0.50)),
+        'final_equity': q['final_equity'], 'net_pnl': q['net_pnl'],
+        'alpha_vs_cash': q['alpha_vs_cash'], 'interest_earned': q['interest_earned'],
+        'total_premium_collected': q['total_premium_collected'],
+        'total_hedge_cost': q['total_hedge_cost'], 'hedge_cost_bps': q['hedge_cost_bps'],
+        'num_calls_sold': q['num_sold'], 'wins': q['wins'], 'losses': q['losses'],
+        'win_rate': q['win_rate'], 'max_drawdown_pct': q['max_drawdown_pct'],
+        'risk_free_rate': q['risk_free_rate'], 'cash': q['cash'],
+    }
+
+
+def _summary_straddle(q: dict[str, Any], p: dict[str, Any]) -> dict[str, Any]:
+    return {
+        'capital': q['capital'], 'num_contracts': q['num_contracts'],
+        'final_equity': q['final_equity'], 'net_pnl': q['net_pnl'],
+        'alpha_vs_cash': q['alpha_vs_cash'], 'interest_earned': q['interest_earned'],
+        'total_premium_collected': q['total_premium_collected'],
+        'total_hedge_cost': q['total_hedge_cost'], 'hedge_cost_bps': q['hedge_cost_bps'],
+        'num_straddles_sold': q['num_sold'], 'wins': q['wins'], 'losses': q['losses'],
+        'win_rate': q['win_rate'], 'max_drawdown_pct': q['max_drawdown_pct'],
+        'risk_free_rate': q['risk_free_rate'], 'cash': q['cash'],
+    }
+
+
+def _summary_iron_condor(q: dict[str, Any], p: dict[str, Any]) -> dict[str, Any]:
+    return {                                       # static: no total_hedge_cost / hedge_cost_bps
+        'capital': q['capital'], 'num_contracts': q['num_contracts'],
+        'final_equity': q['final_equity'], 'net_pnl': q['net_pnl'],
+        'alpha_vs_cash': q['alpha_vs_cash'], 'interest_earned': q['interest_earned'],
+        'total_premium_collected': q['total_premium_collected'],
+        'num_condors_sold': q['num_sold'], 'wins': q['wins'], 'losses': q['losses'],
+        'win_rate': q['win_rate'], 'max_drawdown_pct': q['max_drawdown_pct'],
+        'risk_free_rate': q['risk_free_rate'], 'cash': q['cash'],
+    }
+
+
 # The three structures as their generic-engine configs (selector + the three knobs) plus
 # `defaults` — the per-overlay parameter defaults that differ from the generic's own (only
 # the straddle's hedge_cost_bps=0.5 vs the generic/short-vol 1.0). Merged UNDER user params,
-# exactly reproducing each frozen overlay's `params.get(..., default)`. The equivalence test
-# (and the Stage-B dispatch) call run_real_structure_overlay({**spec['defaults'], **params}).
+# exactly reproducing each frozen overlay's `params.get(..., default)`. `summary` reassembles the
+# engine's rich quantities into the overlay's exact frozen field set (Stage B).
 STRUCTURE_SPECS: dict[str, dict[str, Any]] = {
     'short_vol':   {'select': _legs_short_vol, 'entry_guard': 'each_short_positive',
                     'hedge_mode': 'per_leg_sign', 'management': 'early_close_single',
-                    'defaults': {}},                              # hedge_cost_bps 1.0 = generic default
+                    'defaults': {}, 'summary': _summary_short_vol},   # bps 1.0 = generic default
     'straddle':    {'select': _legs_straddle, 'entry_guard': 'each_short_positive',
                     'hedge_mode': 'combined', 'management': 'hold',
-                    'defaults': {'hedge_cost_bps': 0.5}},          # straddle's frozen default
+                    'defaults': {'hedge_cost_bps': 0.5}, 'summary': _summary_straddle},
     'iron_condor': {'select': _legs_iron_condor, 'entry_guard': 'net_positive',
                     'hedge_mode': 'none', 'management': 'hold',
-                    'defaults': {}},                              # no hedge, so bps is irrelevant
+                    'defaults': {}, 'summary': _summary_iron_condor},
 }
 
 
@@ -885,13 +935,17 @@ def run_structure_via_spec(name: str, dates: list[str], prices: list[float],
                            store: dict[str, dict[str, Any]], params: dict[str, Any],
                            ) -> tuple[dict[str, Any], list[dict[str, Any]], pd.DataFrame]:
     """Run the generic engine under a named STRUCTURE_SPEC, merging the spec's per-overlay
-    defaults UNDER the caller's params (so an unspecified knob falls back to the frozen
-    overlay's default). The single call site the equivalence test and the Stage-B dispatch use."""
+    defaults UNDER the caller's params (so an unspecified knob falls back to the frozen overlay's
+    default), then reassemble the engine's rich quantities into the overlay's exact frozen summary
+    (Stage B). The single call site the frozen-overlay wrappers, the campaign, and the equivalence
+    test use."""
     spec = STRUCTURE_SPECS[name]
-    return run_real_structure_overlay(
-        dates, prices, store, {**spec['defaults'], **params},
+    merged = {**spec['defaults'], **params}
+    q, trades, eq = run_real_structure_overlay(
+        dates, prices, store, merged,
         select=spec['select'], entry_guard=spec['entry_guard'],
         hedge_mode=spec['hedge_mode'], management=spec['management'])
+    return spec['summary'](q, merged), trades, eq
 
 
 def run_real_structure_overlay(
@@ -925,16 +979,17 @@ def run_real_structure_overlay(
 
     Drive this via `run_structure_via_spec` / STRUCTURE_SPECS — a BARE call reverts an
     unspecified knob to the GENERIC default, which for hedge_cost_bps is 1.0 (the straddle's
-    frozen default is 0.5; the spec injects it). Stage-B caveats the equivalence oracle does
-    NOT cover: (1) the `net_positive` entry credit is left-folded with COMMISSION baked into
-    each leg's entry_net, a different float association than the frozen iron-condor's
-    `(shorts)-(longs)-4*comm` — harmless today (it rounds away in equity; verified to never
-    flip the `> 0` guard across the search tickers), but a swap must confirm it cannot flip at
-    a net-credit-near-zero boundary, or match the frozen association there; (2) this `summary`
-    is a SUBSET of each frozen overlay's (it carries capital + risk_free_rate + the equity
-    series — exactly what the FDR campaign reads — but drops alpha_vs_cash / win_rate /
-    num_*_sold / max_drawdown_pct), so a swap must NOT route run_registered_vrp.py /
-    run_backtest.py through it until the summary is enriched."""
+    frozen default is 0.5; the spec injects it). This `summary` carries the RICH quantities under
+    generic keys (`num_sold`, alpha_vs_cash, win_rate, max_drawdown_pct, wins/losses,
+    total_premium_collected); `run_structure_via_spec`'s per-overlay builder reassembles them into
+    each frozen overlay's EXACT field set — byte-identical, pinned field-for-field by the
+    equivalence oracle — so the Stage-B swap CAN route run_registered_vrp.py / the campaign through
+    `run_structure_via_spec` (the callers + the frozen-body deletion are the remaining mechanical
+    step). One caveat the oracle does NOT cover: the `net_positive` entry credit is left-folded with
+    COMMISSION baked into each leg's entry_net, a different float association than the frozen
+    iron-condor's `(shorts)-(longs)-4*comm` — harmless today (it rounds away in equity; verified to
+    never flip the `> 0` guard across the search tickers), but a swap must confirm it cannot flip at
+    a net-credit-near-zero boundary, or match the frozen association there."""
     fill = str(params.get('fill', 'bid_ask'))
     capital = float(params.get('capital', 100_000))
     rf = float(params.get('risk_free_rate', 0.045))
@@ -955,6 +1010,11 @@ def run_real_structure_overlay(
     expiration: str | None = None
     interest_earned = 0.0
     total_hedge_cost = 0.0
+    num_sold = 0
+    total_premium_collected = 0.0
+    wins = 0
+    losses = 0
+    entry_credit = 0.0           # the open structure's net credit per share (for its realized P&L)
     daily_rows: list[dict[str, Any]] = []
     prev_date: str | None = None
     prev_price: float | None = None
@@ -979,9 +1039,12 @@ def run_real_structure_overlay(
                     else:  # net_positive
                         ok = sum(-leg['sign'] * leg['entry_net'] for leg in picked) > 0
                     if ok:
-                        cash += sum(-leg['sign'] * leg['entry_net'] for leg in picked) * shares
+                        entry_credit = sum(-leg['sign'] * leg['entry_net'] for leg in picked)
+                        cash += entry_credit * shares
                         legs = picked
                         expiration = picked[0]['expiration']
+                        num_sold += 1
+                        total_premium_collected += entry_credit * shares
         elif date >= expiration:
             if date == expiration:
                 settle_price = price
@@ -991,7 +1054,10 @@ def run_real_structure_overlay(
                 assert gap <= 4, (f'{gap} days between {prev_date} and expiration '
                                   f'{expiration} — missing data?')
                 settle_price = prev_price
-            cash += sum(leg['sign'] * _leg_intrinsic(leg, settle_price) for leg in legs) * shares
+            settle_flow = sum(leg['sign'] * _leg_intrinsic(leg, settle_price) for leg in legs)
+            cash += settle_flow * shares
+            wins, losses = ((wins + 1, losses) if (entry_credit + settle_flow) * shares >= 0
+                            else (wins, losses + 1))      # realized P&L = entry credit + settlement
             legs = None
             expiration = None
         elif day is not None:
@@ -1009,7 +1075,10 @@ def run_real_structure_overlay(
                     deep = manage_deep_itm and (leg['delta'] < -0.70 if leg['right'] == 'put'
                                                 else leg['delta'] > 0.70)
                     if hit or deep:
-                        cash -= (short_buy + COMMISSION_PER_SHARE) * shares
+                        buyback = short_buy + COMMISSION_PER_SHARE
+                        cash -= buyback * shares
+                        wins, losses = ((wins + 1, losses) if (entry_credit - buyback) * shares >= 0
+                                        else (wins, losses + 1))   # closed early: credit - buyback
                         legs = None
                         expiration = None
 
@@ -1042,12 +1111,25 @@ def run_real_structure_overlay(
 
     daily_equity = pd.DataFrame(daily_rows, columns=['date', 'equity', 'price', 'rf_credit'])
     final_equity = float(daily_equity['equity'].iloc[-1])
+    net_pnl = final_equity - capital
+    eq = daily_equity['equity'].astype(float)
+    peak = eq.cummax().clip(lower=capital)
+    max_dd = float(((peak - eq) / peak * 100).max())
+    # RICH quantities (generic keys). run_structure_via_spec's per-overlay `summary` builder
+    # renames `num_sold` and trims/echoes to reproduce each frozen overlay's exact field set.
     summary = {
         'capital': round(capital, 2), 'num_contracts': num_contracts,
         'final_equity': round(final_equity, 2),
-        'net_pnl': round(final_equity - capital, 2),
+        'net_pnl': round(net_pnl, 2),
+        'alpha_vs_cash': round(net_pnl - interest_earned, 2),
         'interest_earned': round(interest_earned, 2),
+        'total_premium_collected': round(total_premium_collected, 2),
         'total_hedge_cost': round(total_hedge_cost, 2),
+        'hedge_cost_bps': hedge_cost_bps,
+        'num_sold': num_sold,
+        'wins': wins, 'losses': losses,
+        'win_rate': round(wins / (wins + losses) * 100, 1) if (wins + losses) else 0.0,
+        'max_drawdown_pct': round(max_dd, 2),
         'risk_free_rate': rf, 'cash': round(capital, 2),
     }
     return summary, [], daily_equity

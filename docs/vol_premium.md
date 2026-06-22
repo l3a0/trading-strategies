@@ -407,12 +407,14 @@ the IV out of each entry leg's mid (`structure_greek_signature`, on the `bs_gamm
 `implied_vol` primitives) and asserts the engine's actual net gamma/vega/legs/expirations match
 the family signature the grammar *declares* — so a structure typed `VARIANCE` that the engine
 runs long-vega fails. The bit-for-bit *equivalence* oracle (the first one, not this signature
-check) is what gates the eventual in-place swap — which is **deferred**, because the generic
-`summary` is a *subset* of each frozen overlay's (it carries the `capital` + `risk_free_rate`
-the FDR campaign reads, but drops `alpha_vs_cash` / `win_rate` / `num_*_sold` /
-`max_drawdown_pct`): a swap must enrich the summary before routing `run_registered_vrp.py` /
-`run_backtest.py` through it, and confirm the iron-condor's left-folded entry credit can't
-flip a net-credit-near-zero entry guard. The point of generalizing now is
+check) gates the in-place swap (Stage B). Its **first half is done**: the generic engine now emits
+the RICH quantities and `run_structure_via_spec` reassembles them into each frozen overlay's EXACT
+field set (`alpha_vs_cash` / `win_rate` / `num_*_sold` / `max_drawdown_pct` / `target_delta` /
+`total_premium_collected`, per-overlay), so the equivalence oracle pins the **full summary**
+field-for-field, not just the equity series. What remains is the mechanical swap — route
+`run_registered_vrp.py` + the campaign through `run_structure_via_spec` and delete the duplicated
+frozen bodies — plus the one open check the oracle does not cover: the iron-condor's left-folded
+entry credit can't flip a net-credit-near-zero entry guard. The point of generalizing now is
 to make an arbitrary grammar-reachable structure *runnable* — the precondition for a larger,
 mechanism-typed menu of short-vol structures (roll / stop / spread / calendar variants),
 each still scored by the same `short_vol_statistics` HAC-t and judged by the same FDR ledger.

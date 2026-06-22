@@ -1367,9 +1367,11 @@ _STRUCT_PARAMS = {'short_vol': {'target_delta': 0.25, 'dte': 30},
 
 
 def _assert_engine_equivalent(market, name: str, *, must_trade: bool = True) -> None:
-    """The generic engine (via spec) reproduces the frozen overlay: the rounded EQUITY
-    column (the pinned series) is BIT-IDENTICAL, the resulting HAC-t is identical, and
-    rf_credit matches to float-association noise (the unrounded 4-leg cash path). `must_trade`
+    """The generic engine (via spec) reproduces the frozen overlay: the FULL summary is equal
+    field-for-field (Stage B — every rich field: alpha_vs_cash / win_rate / num_*_sold /
+    max_drawdown_pct / target_delta / total_premium_collected, reassembled per overlay), the
+    rounded EQUITY column (the pinned series) is BIT-IDENTICAL, the resulting HAC-t is identical,
+    and rf_credit matches to float-association noise (the unrounded 4-leg cash path). `must_trade`
     asserts the structure actually ENTERED — it keys off the frozen overlay's TRADE LIST, not
     equity movement, because equity drifts every day from the rf credit on idle cash even when
     nothing trades (so equity.nunique() can't tell a real run from a CALLS-ONLY store fed a
@@ -1380,6 +1382,7 @@ def _assert_engine_equivalent(market, name: str, *, must_trade: bool = True) -> 
     sG, _, eqG = run_structure_via_spec(name, dates, prices, store, params)
     if must_trade:
         assert len(tradesF) > 0, f'{name} never traded on this store — vacuous equivalence'
+    assert sF == sG, f'{name} summary differs: {set(sF.items()) ^ set(sG.items())}'  # full field set (Stage B)
     assert eqF['equity'].equals(eqG['equity'])            # the pinned series, bit-for-bit
     assert eqF['price'].equals(eqG['price'])
     assert float((eqF['rf_credit'] - eqG['rf_credit']).abs().max()) < 1e-9   # float noise only
