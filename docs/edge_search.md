@@ -133,12 +133,19 @@ does not bend the cheap re-tag gate:
   the BY diagnostic still needs a count). The grammar is also **economically typed**
   (`STRUCTURE_GRAMMAR` — the typed source of truth, with `ALLOWED_GRID` its flat lattice
   view): each overlay declares a `PremiumFamily` (the committed three are all `VARIANCE`)
-  and a net-greek signature. No widening yet, and it is a *labeling* scaffold — not yet an
-  enforcement: `_assert_grammar_well_typed` (at import) gates that each overlay carries a
-  registered family + a complete signature, but the signature is author-declared and is NOT yet
-  cross-checked against the engine's computed greeks. The "mechanism by construction" guarantee —
-  a composition whose greeks contradict its claimed family being *unreachable* — is the next
-  interlock a widening adds (a signature-vs-engine consistency check).
+  and a net-greek signature. No widening yet. Enforcement is **two-layer**:
+  `_assert_grammar_well_typed` gates PRESENCE at import (a registered family + a complete
+  signature — it can't run the engine without data), and the dataset-gated
+  `TestGrammarSignatureMatchesEngine` cross-checks the declared signature against the engine's
+  ACTUAL greeks — it runs each overlay on real chains, backs the IV out of each entry leg's mid,
+  computes BS net gamma/vega (`vol_premium.structure_greek_signature`), and asserts the
+  engine-derived `{legs, expirations, net_gamma, net_vega}` matches what the grammar declares.
+  So for the committed overlays a composition whose greeks contradict its claimed family fails —
+  mechanism checked against the engine, not a post-hoc label. The guarantee is per-verified-overlay
+  (a dataset-gated test that must run with data, not a constructor invariant): a widening adds its
+  structure to that test (on a ticker that trades it — all three are verified on SPY, the put-leg
+  straddle/iron-condor by merging the separate SPY puts file at load since the canonical SPY store
+  is calls-only).
 - **A HAC-t kill-gate with a closed-form null.** The score is
   `short_vol_statistics`'s Newey-West (HAC) t-stat on the daily rate-netted P&L,
   whose asymptotic null is standard normal — so the p-value is closed-form
