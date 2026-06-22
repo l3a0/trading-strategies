@@ -201,13 +201,18 @@ does not bend the cheap re-tag gate:
   flag a cell BY does not, and the prereg is explicit that *only e-LOND flags* — so a
   BY-only cell is KILLED and stays in the corpus, while an e-LOND survivor the
   diagnostic missed is correctly dropped.) The corpus is the duds to avoid (KILLED)
-  plus unmeasurable tickers (INVALID, a per-ticker data-quality state). **Contingency, not yet an
-  interlock:** this is leak-proof only for a proposer that reads *through* it —
-  `idea_ledger.jsonl` is committed and carries the answer key, and nothing yet denies
-  a repo-aware agent from reading it directly, so "the proposer must never read the
-  ledger" is an honor-system convention today. The access boundary (a vault dir + a
-  scoped read-deny, or committing only the scrubbed projection to the proposer-visible
-  path) is the unbuilt interlock that makes the scoreboard meaningful; the tried-set
+  plus unmeasurable tickers (INVALID, a per-ticker data-quality state). **The scrub is airtight; a
+  file-hiding read-gate is NOT** (red-teamed and verified, [read_gate.md](read_gate.md)). The
+  obvious next move — vault the ledger + a scoped read-deny, or commit only the scrubbed projection —
+  is *theater*: the answer key is a deterministic RECOMPUTATION from committed engine code + chains,
+  so `python -c`, `git show HEAD:idea_ledger.jsonl`, the pinned-test t-stats, and the proposer's own
+  `run_proposer_round` return value each walk straight past any file-fence. You cannot deny-list the
+  engine without denying the proposer's own scoring step. The real interlock is a **process
+  boundary** (a sandboxed proposer with only the scrubbed corpus + grammar, no engine/data, plus a
+  trusted oracle that charges every score to the lifetime e-LOND stream before returning a one-bit
+  verdict — count every look rather than hide a number you cannot hide), which is infrastructure, not
+  config. It is moot today: the proposer is the DETERMINISTIC menu-walker (no model to peek) and
+  promotion stays CLOSED; the boundary is the precondition for activating an LLM author. Tried-set
   neutrality additionally rests on the grammar staying closed and fully enumerated.
 - **The FDR control of record is e-LOND (#3b) — registered AND now ACTIVATED.** The
   per-batch Benjamini-Yekutieli gate has been replaced as the control by the e-value
