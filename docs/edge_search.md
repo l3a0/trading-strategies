@@ -123,8 +123,9 @@ does not bend the cheap re-tag gate:
 
 - **A second template class, on a closed grammar.** `STRUCTURE_TEMPLATES` — the
   short call at 0.25Δ and ATM, the two-leg ATM straddle, the defined-risk iron
-  condor, the OTM short strangle (widening 1), and the bullish risk reversal
-  (widening 2 — the first new family) — crossed with the search tickers
+  condor, the OTM short strangle (widening 1), the bullish risk reversal
+  (widening 2 — the first new family), and the bull put credit spread (widening 3 —
+  the first CARRY structure) — crossed with the search tickers
   (`enumerate_structure_candidates`).
   Each cell runs its overlay on the live chains. Every template draws its params
   from a fixed menu (`ALLOWED_GRID`) enforced at construction: an off-menu value
@@ -134,12 +135,12 @@ does not bend the cheap re-tag gate:
   comparison count; the `Σγ_t ≤ 1` budget replaces the offline denominator — only
   the BY diagnostic still needs a count). The grammar is also **economically typed**
   (`STRUCTURE_GRAMMAR` — the typed source of truth, with `ALLOWED_GRID` its flat lattice
-  view): each overlay declares a `PremiumFamily` (the committed five are four `VARIANCE` + the
-  risk-reversal `SKEW`) and a `signature` of three ROBUST axes — `net_vega` (variance),
-  `net_delta` (direction), and `net_skew` (the SKEW edge: are the SHORT legs richer in IV than the
-  LONG legs?). `net_gamma` is deliberately absent — for offset-leg structures the iron-condor's
-  short gamma and the risk-reversal's long gamma overlap in magnitude, so no tolerance pins both;
-  `net_vega` carries the vol-selling claim. Enforcement is **two-layer**:
+  view): each overlay declares a `PremiumFamily` (the committed six are four `VARIANCE` + the
+  risk-reversal `SKEW` + the credit-spread `CARRY`) and a `signature` of three ROBUST axes —
+  `net_vega` (variance), `net_delta` (direction), and `net_skew` (the skew edge: are the SHORT legs
+  richer in IV than the LONG legs?). `net_gamma` is deliberately absent — for offset-leg structures
+  the iron-condor's short gamma and the risk-reversal's long gamma overlap in magnitude, so no
+  tolerance pins both; `net_vega` carries the vol-selling claim. Enforcement is **two-layer**:
   `_assert_grammar_well_typed` gates PRESENCE at import (a registered family + a complete
   signature — it can't run the engine without data), and the dataset-gated
   `TestGrammarSignatureMatchesEngine` cross-checks the declared signature against the engine's
@@ -149,9 +150,9 @@ does not bend the cheap re-tag gate:
   declares. So a composition whose greeks (or skew) contradict its claimed family fails —
   mechanism checked against the engine, not a post-hoc label. The guarantee is per-verified-overlay
   (a dataset-gated test that must run with data, not a constructor invariant): a widening adds its
-  structure to that test (on a ticker that trades it — all five are verified on SPY, the put-leg
-  straddle/iron-condor/risk-reversal by merging the separate SPY puts file at load since the
-  canonical SPY store is calls-only).
+  structure to that test (on a ticker that trades it — all six are verified on SPY, the put-leg
+  straddle/iron-condor/risk-reversal/credit-spread by merging the separate SPY puts file at load
+  since the canonical SPY store is calls-only).
 - **A HAC-t kill-gate with a closed-form null.** The score is
   `short_vol_statistics`'s Newey-West (HAC) t-stat on the daily rate-netted P&L,
   whose asymptotic null is standard normal — so the p-value is closed-form
@@ -224,7 +225,7 @@ does not bend the cheap re-tag gate:
   now sets `elond_survivor` (the control flag); BY is retained as a reported *diagnostic*
   (`by_survivor`). The honest price: e-LOND is *less* powerful than BY (calibration is
   lossy), buying dependence-robustness + online validity rather than power — and it is
-  *stricter* here, so the verdict is unchanged: **0 / 42 cells flagged.** The strongest
+  *stricter* here, so the verdict is unchanged: **0 / 49 cells flagged.** The strongest
   cell (SPY short-call-25, t_NW ≈ +2.17) calibrates to e ≈ 4.1, far below the
   head-of-stream bar 1/(α·γ₁) ≈ 16.3. The machinery is oracle-tested against the
   `online-fdr` package; `TestStructureCampaign` now pins the e-LOND verdict on real
@@ -249,7 +250,7 @@ does not bend the cheap re-tag gate:
   is the first consumer of the scrubbed scoreboard — and the smallest end-to-end slice
   of the loop a future LLM proposer plugs into, with a *dumb enumerator* standing in for
   the author. It **reads** only the scrubbed corpus, **proposes** every grammar template
-  (`enumerate_grammar_templates` — all `grid_universe_size()` of them, the committed six
+  (`enumerate_grammar_templates` — all `grid_universe_size()` of them, the committed seven
   keeping their names so a coincident cell dedups against the published ledger instead of
   re-counting under a new name) crossed with the **onboarded** search tickers minus what's
   already tried, **grammar-gates** each at `StructureCandidate` construction, **runs** the
@@ -323,12 +324,13 @@ both out of this MVP's scope, both the natural next phase.
 
 ---
 
-## Campaign 2 — structure class — EMPTY (2026-06-17; NVDA folded in 2026-06-20; SPY/MSFT/QQQ put chains merged 2026-06-22; strangle widening 2026-06-22; risk-reversal widening 2026-06-22)
+## Campaign 2 — structure class — EMPTY (2026-06-17; NVDA folded in 2026-06-20; SPY/MSFT/QQQ put chains merged 2026-06-22; strangle widening 2026-06-22; risk-reversal widening 2026-06-22; credit-spread widening 2026-06-22)
 
-**The batch.** Forty-two `(template, ticker)` cells — **six** structure templates
+**The batch.** Forty-nine `(template, ticker)` cells — **seven** structure templates
 (short call 0.25Δ, short call ATM, ATM straddle, 25Δ/10Δ iron condor, the OTM
-short **strangle** (widening 1), and the bullish **risk reversal** (widening 2 — the
-first new family, below)) crossed with the seven search
+short **strangle** (widening 1), the bullish **risk reversal** (widening 2 — the
+first new family), and the bull put **credit spread** (widening 3 — the first CARRY
+structure, below)) crossed with the seven search
 tickers (MSFT, SPY, QQQ, GLD, XLE, EEM, NVDA; **TLT sealed**) — each a full
 `run_real_*_overlay` engine pass scored by the Newey-West HAC t-stat against its
 asymptotic normal null (closed-form p, no permutation), then judged as a stream by
@@ -336,16 +338,16 @@ asymptotic normal null (closed-form p, no permutation), then judged as a stream 
 retained as a diagnostic. The chains are era-clipped at the live `CHAIN_CLEAN_START`
 (exploratory sees the corrected SPY boundary).
 
-**The result.** No cell is flagged by e-LOND, the control (`0 / 42`); none survives
+**The result.** No cell is flagged by e-LOND, the control (`0 / 49`); none survives
 the BY diagnostic either. The strongest is SPY short-call 0.25Δ at t = +2.17 (the
 exploratory cousin of the frozen +2.54 short-vol headline, now on the wider corrected
 SPY span): individually suggestive at p \~0.015, but it calibrates to an e-value of
 \~4.1 — far short of the e-LOND head-of-stream bar 1/(α·γ₁) \~16.3, and missing the BY
-diagnostic's rank-1 bar (\~0.0006 for 42 dependent tests) by an order of magnitude.
+diagnostic's rank-1 bar (\~0.0005 for 49 dependent tests) by an order of magnitude.
 The next cells trail off fast — SPY short-call ATM at +1.60, GLD's call wings near
 +1.15 — and every put-leg straddle/iron-condor cell is at most +0.72 (SPY straddle).
 The risk-reversal cells are all wrong-signed (negative alpha over cash on all seven
-tickers; see widening 2 below).
+tickers; see widening 2 below), and so are the credit-spread cells (widening 3).
 
 **A data-hygiene catch that mattered.** The first run flagged two XLE "survivors"
 (short call t = +4.16 / +6.86) — entirely an artifact. XLE did a **2:1 split on
@@ -381,7 +383,7 @@ per-ticker `_data_lineage_hash` so the re-measured cells re-record honestly, and
 rather than scored as a real \~0.
 Re-measured, the six cells are real and distinct, and all still far from significance
 — SPY straddle +0.72 / iron-condor −1.08; MSFT −0.67 / +0.52; QQQ −0.10 / +0.14. The
-`0 / 28` verdict was unchanged (the strangle and risk-reversal widenings later took the batch to 35, then 42); the cells are now honest measurements rather than
+`0 / 28` verdict was unchanged (the strangle, risk-reversal, and credit-spread widenings later took the batch to 35, then 42, then 49); the cells are now honest measurements rather than
 flat-curve artifacts (the same class of bug as XLE — defective inputs, not a real
 edge — caught on the other side: missing data rather than mis-scaled).
 
@@ -406,7 +408,7 @@ strangle cells are judged at the tail of the lifetime e-LOND stream (after the p
 28) and recorded; the existing rows are byte-unchanged. The strangle is another null
 (MSFT +0.50 / SPY +1.06 / QQQ +0.34 / GLD +0.33 / XLE −1.34 / EEM −0.78 / NVDA
 −1.33 — all well short of significance), so the verdict stays `0 / 35` (then `0 / 42`
-after widening 2, below).
+after widening 2, `0 / 49` after widening 3, below).
 
 ### Widening 2 — the risk reversal (the first NEW family, SKEW)
 
@@ -443,14 +445,52 @@ stream. The risk reversal is another null — in fact **wrong-signed on all seve
 tickers** (MSFT −2.09 / SPY −1.78 / QQQ −1.27 / GLD −3.30 / XLE −2.00 / EEM −2.64 /
 NVDA −0.19): there is no harvestable put-call skew premium at these names/era. (The
 overlay's large *raw* P&L is risk-free interest on the cash balance; the **alpha over
-cash** the campaign scores is negative.) The verdict stays `0 / 42`. The roll/stop/
-spread *variants* and a further new family (`CARRY` credit-spread, `TERM` calendar —
-which needs the typed signature extended past `{vega, delta, skew}`) remain next.
+cash** the campaign scores is negative.) The verdict stays `0 / 42` (then `0 / 49`
+after widening 3, below).
+
+### Widening 3 — the bull put credit spread (the first CARRY structure)
+
+The first widening into the **CARRY** family — a defined-risk, theta-positive
+structure. A bull put **credit spread** — SHORT a 0.25Δ put + LONG a 0.10Δ put (further
+OTM, the wing) at one expiry, combined-delta-hedged, held to expiry — collects a net
+credit and caps the downside with the long wing. It is the **put half of the iron
+condor**, so the selector (`select_credit_spread`) reuses that structure's put-side band
+and wing logic. Single-expiration, so the Stage-B engine handles it with **no engine
+change** — a pure STRUCTURE_SPEC + selector + delegate + typed grammar entry, the same
+clean shape as the strangle.
+
+**The signature — engine-verified, not assumed.** The declared signature is
+`{2 legs, 1 expiry, net_vega: short, net_delta: long, net_skew: long_rich}`, and the
+`net_skew` axis is where the engine **corrected the initial read**. The intuition "you
+sold the richer near-ATM put, bought the cheaper OTM wing → `short_rich`" is **wrong**:
+on the equity put skew the further-OTM put sits on the *steep* part of the smile, so the
+LONG wing carries the HIGHER implied vol. The dataset-gated
+`TestGrammarSignatureMatchesEngine` backs the IV out of each SPY entry leg and reads
+`long_rich` — the same read as the iron condor (which also longs its richer OTM wings).
+The declared signature was fixed to match the engine. The other two axes confirm the
+intuition: net `short` vega (the short leg sits nearer the money, where vega is larger)
+and net `long` delta (short a put is long the underlying — the one axis that makes the
+credit spread distinct from every other overlay; no other structure is short-vega AND
+long-delta).
+
+**The result.** It took the closed grammar `48 → 66` (its `dte × short_delta ×
+wing_delta` lattice mirrors the iron-condor's put side: `3 × 3 × 2 = 18` new templates)
+and the committed batch `6 × 7 = 42 → 7 × 7 = 49`, appending 7 credit-spread cells to
+the lifetime e-LOND stream. The credit spread is another null — **wrong-signed on all
+seven tickers** (MSFT −2.08 / SPY −0.91 / QQQ −0.72 / GLD −3.24 / XLE −2.74 / EEM −2.21 /
+NVDA −0.06): the defined-risk carry collects a credit, but the delta-hedged vol-P&L is
+negative at these names/era. (As with the risk reversal, the large *raw* P&L is rf
+interest on the cash balance; the **alpha over cash** the campaign scores is negative.)
+The put legs trade on the calls-only SPY/MSFT/QQQ stores via the merged puts file (175 /
+105 / 107 entries), and a 0-trades → `measurement_invalid` guard would flag a future
+non-trading cell rather than score a vacuous \~0. The verdict stays `0 / 49`. The
+roll/stop/spread *variants* and a further new family (`TERM` calendar — which needs the
+typed signature extended past `{vega, delta, skew}`) remain next.
 
 ### NVDA — the seventh ticker (live-onboarded, folded in)
 
 NVDA was onboarded after the original six tickers were frozen, and is now folded
-into `STRUCTURE_SEARCH` as the seventh — its six `(template, NVDA)` cells are part
+into `STRUCTURE_SEARCH` as the seventh — its seven `(template, NVDA)` cells are part
 of the cross-section above. It keeps its own callout here because NVDA's onboarding
 was the worked example of the clean-gate; the verdict is unchanged.
 
@@ -466,6 +506,7 @@ BY diagnostic) even applies:
 | iron_condor | −1.47 | 0.9292 | no | yes |
 | strangle | −1.33 | 0.9082 | no | yes |
 | risk_reversal | −0.19 | 0.5753 | no | yes |
+| credit_spread | −0.06 | 0.5239 | no | yes |
 
 **A clean data-hygiene read — for once.** Where XLE needed a split repair, NVDA
 passed every clean-gate check on the first try. `validate_dailies.py` streamed
