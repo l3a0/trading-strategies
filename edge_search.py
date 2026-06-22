@@ -786,18 +786,44 @@ def _asymptotic_p(t_nw: float, predicted_sign: int) -> float:
     return 0.5 * math.erfc(z / math.sqrt(2.0))
 
 
+def _put_chain_paths(ticker: str) -> list[str]:
+    """The separate put-chain file to merge for a ticker whose CANONICAL store is calls-only.
+    SPY/MSFT/QQQ keep puts in `{ticker}_option_dailies_puts.csv` (a separate published asset);
+    GLD/XLE/EEM/NVDA carry puts in the canonical file already. Merging the puts at load is what
+    lets the PUT-LEG structures (straddle, iron condor) actually enter — without it those campaign
+    cells never trade and record a vacuous ~0 t-stat (the calls-only defect). Returns [] when no
+    separate file exists (the bare name resolves to its .gz twin the same way the canonical does)."""
+    import os
+    base = f'{ticker.lower()}_option_dailies_puts.csv'
+    return [base] if (os.path.exists(base) or os.path.exists(base + '.gz')) else []
+
+
 def _load_ticker_data(ticker: str, end: str = STRUCTURE_END) -> tuple[Any, list[str], list[float]]:
     """Load one ticker's era-clipped chain store + matching unadjusted prices ONCE,
     reused across all that ticker's templates in a campaign — the store parse, not
     the overlay, is the per-cell cost, so caching it cuts the campaign from one load
     per (template, ticker) cell to one per ticker. LIVE CHAIN_CLEAN_START (exploratory
-    sees the corrected boundary). Engine deps imported lazily so re-tag-only use of
-    this module stays light."""
+    sees the corrected boundary). For SPY/MSFT/QQQ the separate puts file is MERGED
+    (_put_chain_paths) so the put-leg structures trade. Engine deps imported lazily so
+    re-tag-only use of this module stays light."""
     from real_cc_backtest import (CHAIN_CLEAN_START, load_chain_store,
                                    load_unadjusted_prices)
+    extra = _put_chain_paths(ticker)
     store = load_chain_store(f'{ticker.lower()}_option_dailies.csv',
+                             extra_paths=extra,
                              start=CHAIN_CLEAN_START.get(ticker))
     days = sorted(store)
+    if extra:
+        # A merged puts file can PREDATE the calls (QQQ puts go back to 2011, its calls to 2016)
+        # and the ticker may have no era clip — so without this the window would stretch into a
+        # calls-free span where no structure can enter (every template needs a CALL leg), diluting
+        # the t-stat with idle rf days and re-measuring even the call cells. Restrict the window to
+        # CALL days (a positive-delta candidate — puts are negative-delta), which is exactly the
+        # calls-file day set, so merging puts is purely ADDITIVE: it gives the put-leg structures a
+        # put to trade against WITHOUT moving the call-cell measurement window.
+        call_days = [d for d in days if any(c[1] > 0 for c in store[d]['candidates'])]
+        if call_days:
+            days = call_days
     dates, prices = load_unadjusted_prices(ticker, days[0], end)
     pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
     return store, [d for d, _ in pairs], [p for _, p in pairs]
@@ -817,8 +843,17 @@ def structure_kill_gate(cand: StructureCandidate,
                 'straddle': run_real_straddle_overlay,
                 'iron_condor': run_real_iron_condor_overlay}
     store, dates, prices = loaded
-    summary, _, eq = overlays[cand.overlay](dates, prices, store,
-                                            {**cand.params_dict(), 'capital': capital})
+    summary, trades, eq = overlays[cand.overlay](dates, prices, store,
+                                                 {**cand.params_dict(), 'capital': capital})
+    if not trades:
+        # The structure never ENTERED (e.g. a put-leg overlay on a calls-only store). No
+        # measurement happened, so flag measurement_invalid (p=None -> e=0: counts toward the
+        # stream, never flags) rather than scoring the idle flat rf-credit curve as a real ~0
+        # t-stat — the campaign analog of the equivalence test's must_trade guard.
+        return {'phase': 'structure', 'template': cand.template, 'ticker': cand.ticker,
+                'params': cand.params_dict(), 'predicted_sign': cand.predicted_sign,
+                'measurement_invalid': True, 'no_trades': True,
+                't_stat_newey_west': None, 'sign_ok': False, 'p_value': None}
     st = short_vol_statistics(eq, summary['capital'], rf=summary['risk_free_rate'])
     t_nw = float(st['t_stat_newey_west'])
     return {
@@ -1001,10 +1036,18 @@ def _data_lineage_hash(ticker: str, end: str, capital: float = STRUCTURE_CAPITAL
     from real_cc_backtest import CHAIN_CLEAN_START
     checks = _read_data_checksums() if checksums is None else checksums
     sha = checks.get(f'{ticker.lower()}_option_dailies.csv.gz', 'MISSING')
-    canon = json.dumps({'ticker': ticker, 'store_sha': sha,
-                        'clean_start': CHAIN_CLEAN_START.get(ticker, ''),
-                        'end': end, 'capital': capital,
-                        'engine': STRUCTURE_ENGINE_VERSION}, sort_keys=True)
+    payload = {'ticker': ticker, 'store_sha': sha,
+               'clean_start': CHAIN_CLEAN_START.get(ticker, ''),
+               'end': end, 'capital': capital,
+               'engine': STRUCTURE_ENGINE_VERSION}
+    # For a calls-only-canonical ticker (SPY/MSFT/QQQ) the loaded store is calls+puts
+    # MERGED (_load_ticker_data), so the store identity is BOTH files — fold the puts
+    # checksum too. Without this a put-leg result would change while the lineage stayed
+    # fixed (the stale-answer-key failure this hash exists to prevent). Only added when a
+    # separate puts file exists, so a no-puts ticker's lineage is byte-unchanged.
+    if _put_chain_paths(ticker):
+        payload['puts_sha'] = checks.get(f'{ticker.lower()}_option_dailies_puts.csv.gz', 'MISSING')
+    canon = json.dumps(payload, sort_keys=True)
     return hashlib.sha256(canon.encode()).hexdigest()[:16]
 
 
