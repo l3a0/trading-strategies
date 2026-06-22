@@ -32,7 +32,6 @@ from vol_premium import (
     run_real_iron_condor_overlay,
     run_real_short_vol_overlay,
     run_real_straddle_overlay,
-    run_structure_via_spec,
     select_iron_condor,
     select_put_entry,
     select_straddle,
