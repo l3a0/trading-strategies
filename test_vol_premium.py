@@ -32,7 +32,6 @@ from vol_premium import (
     run_real_iron_condor_overlay,
     run_real_short_vol_overlay,
     run_real_straddle_overlay,
-    run_structure_via_spec,
     select_iron_condor,
     select_put_entry,
     select_straddle,
@@ -1315,9 +1314,10 @@ class TestQqqStraddleExploratory:
 # Generic multi-leg structure engine (Ring 1 / Stage A of the "big idea desk")
 # --------------------------------------------------------------------------- #
 class TestGenericStructureEngineSpecs:
-    """ALWAYS-RUN: the generic engine's structure specs + leg math. The three frozen
-    overlays are special cases of run_real_structure_overlay under STRUCTURE_SPECS; the
-    dataset-gated TestGenericStructureEngineEquivalence proves the bit-equivalence."""
+    """ALWAYS-RUN: the generic engine's structure specs + leg math. Post-Stage-B the three named
+    overlays are thin DELEGATES to run_real_structure_overlay under STRUCTURE_SPECS; the
+    dataset-gated TestGenericStructureEngineEquivalence pins each delegate enters + emits its
+    complete rich summary (the byte-identical numbers carry through the registered regressions)."""
 
     def test_specs_are_well_formed(self) -> None:
         assert set(STRUCTURE_SPECS) == {'short_vol', 'straddle', 'iron_condor'}
@@ -1358,64 +1358,76 @@ def spy_merged_market():
     return _equiv_market('SPY', _SPY_DAILIES, extra_paths=[_SPY_PUTS])
 
 
-_FROZEN_OVERLAY = {'short_vol': run_real_short_vol_overlay,
-                   'straddle': run_real_straddle_overlay,
-                   'iron_condor': run_real_iron_condor_overlay}
+_NAMED_OVERLAY = {'short_vol': run_real_short_vol_overlay,    # post-Stage-B: thin delegates
+                  'straddle': run_real_straddle_overlay,     # to run_structure_via_spec
+                  'iron_condor': run_real_iron_condor_overlay}
 _STRUCT_PARAMS = {'short_vol': {'target_delta': 0.25, 'dte': 30},
                   'straddle': {'dte': 30},
                   'iron_condor': {'dte': 30, 'short_delta': 0.25, 'wing_delta': 0.10}}
 
+# The EXACT rich summary field set each named overlay produces — an INDEPENDENT reference (not the
+# engine), so a dropped/renamed field fails the check. Per-overlay: short-vol echoes target_delta +
+# carries the hedge fields; straddle drops target_delta; the static iron-condor drops the hedge
+# fields too; each its own num_*_sold key.
+_OVERLAY_SUMMARY_KEYS = {
+    'short_vol': {'capital', 'num_contracts', 'target_delta', 'final_equity', 'net_pnl',
+                  'alpha_vs_cash', 'interest_earned', 'total_premium_collected', 'total_hedge_cost',
+                  'hedge_cost_bps', 'num_calls_sold', 'wins', 'losses', 'win_rate',
+                  'max_drawdown_pct', 'risk_free_rate', 'cash'},
+    'straddle': {'capital', 'num_contracts', 'final_equity', 'net_pnl', 'alpha_vs_cash',
+                 'interest_earned', 'total_premium_collected', 'total_hedge_cost', 'hedge_cost_bps',
+                 'num_straddles_sold', 'wins', 'losses', 'win_rate', 'max_drawdown_pct',
+                 'risk_free_rate', 'cash'},
+    'iron_condor': {'capital', 'num_contracts', 'final_equity', 'net_pnl', 'alpha_vs_cash',
+                    'interest_earned', 'total_premium_collected', 'num_condors_sold', 'wins',
+                    'losses', 'win_rate', 'max_drawdown_pct', 'risk_free_rate', 'cash'},
+}
+
 
 def _assert_engine_equivalent(market, name: str, *, must_trade: bool = True) -> None:
-    """The generic engine (via spec) reproduces the frozen overlay: the FULL summary is equal
-    field-for-field (Stage B — every rich field: alpha_vs_cash / win_rate / num_*_sold /
-    max_drawdown_pct / target_delta / total_premium_collected, reassembled per overlay), the
-    rounded EQUITY column (the pinned series) is BIT-IDENTICAL, the resulting HAC-t is identical,
-    and rf_credit matches to float-association noise (the unrounded 4-leg cash path). `must_trade`
-    asserts the structure actually ENTERED — it keys off the frozen overlay's TRADE LIST, not
-    equity movement, because equity drifts every day from the rf credit on idle cash even when
-    nothing trades (so equity.nunique() can't tell a real run from a CALLS-ONLY store fed a
-    put-leg structure — the exact vacuous-equivalence case this guards)."""
+    """Post-Stage-B: each named overlay (run_real_*_overlay) is now a thin DELEGATE to the single
+    generic engine via run_structure_via_spec — there is no separate frozen body left to compare to.
+    This pins that the delegate ENTERS (`must_trade`, keyed off the trade list — rf-credit drift
+    makes equity move even with zero trades, so equity.nunique() can't tell a real run from a
+    non-trading one) and produces its COMPLETE rich summary: the exact per-overlay field set,
+    checked against the INDEPENDENT _OVERLAY_SUMMARY_KEYS reference so a dropped/renamed field fails
+    here. The byte-identical-to-frozen NUMERIC proof was the swap's gate (PR #64, consumed); the
+    registered/exploratory regressions carry the t-stat/equity VALUES forward through the delegates."""
     dates, prices, store = market
     params = {**_STRUCT_PARAMS[name], 'capital': 100_000}
-    sF, tradesF, eqF = _FROZEN_OVERLAY[name](dates, prices, store, params)
-    sG, _, eqG = run_structure_via_spec(name, dates, prices, store, params)
+    s, trades, eq = _NAMED_OVERLAY[name](dates, prices, store, params)
     if must_trade:
-        assert len(tradesF) > 0, f'{name} never traded on this store — vacuous equivalence'
-    assert sF == sG, f'{name} summary differs: {set(sF.items()) ^ set(sG.items())}'  # full field set (Stage B)
-    assert eqF['equity'].equals(eqG['equity'])            # the pinned series, bit-for-bit
-    assert eqF['price'].equals(eqG['price'])
-    assert float((eqF['rf_credit'] - eqG['rf_credit']).abs().max()) < 1e-9   # float noise only
-    tF = short_vol_statistics(eqF, sF['capital'], rf=sF['risk_free_rate'])['t_stat_newey_west']
-    tG = short_vol_statistics(eqG, sG['capital'], rf=sG['risk_free_rate'])['t_stat_newey_west']
-    assert tF == tG                                       # the pinned HAC-t is unchanged
+        assert len(trades) > 0, f'{name} never traded on this store'
+    assert set(s) == _OVERLAY_SUMMARY_KEYS[name], \
+        f'{name} summary keys drifted: {set(s) ^ _OVERLAY_SUMMARY_KEYS[name]}'
+    # the delegate yields a real equity series the downstream HAC-t can consume
+    assert short_vol_statistics(eq, s['capital'], rf=s['risk_free_rate'])['t_stat_newey_west'] is not None
 
 
 @pytest.mark.skipif(not (_HAVE_SPY and _HAVE_SPY_PUTS),
                     reason='needs spy_option_dailies.csv + spy_option_dailies_puts.csv (or .gz twins)')
 class TestGenericStructureEngineEquivalence:
-    """DATASET-GATED: run_real_structure_overlay reproduces each frozen overlay BIT-FOR-BIT on real
-    chains — the equality oracle gating the eventual in-place swap (Stage B). All three are verified
-    on SPY: the canonical spy_option_dailies.csv is CALLS-ONLY, so the put-leg straddle/iron-condor
-    need the separate spy_option_dailies_puts.csv MERGED at load (the `spy_merged_market` fixture,
-    the same way run_registered_vrp loads the SPY straddle); the `must_trade` guard turns a
-    missing-puts vacuity into a failure rather than a false pass. NVDA additionally pins the
-    iron-condor's 4-leg rf_credit float-association edge (~3e-14, < the 1e-9 tolerance) that SPY's
-    summation path happens to hit at exactly 0 — keeping that tolerance assertion non-vacuous."""
+    """DATASET-GATED: post-Stage-B, the three named overlays are thin DELEGATES to the single
+    generic engine (run_structure_via_spec). This pins that each delegate ENTERS and produces its
+    COMPLETE per-overlay rich summary on real chains. All three run on SPY: the canonical
+    spy_option_dailies.csv is CALLS-ONLY, so the put-leg straddle/iron-condor need the separate
+    spy_option_dailies_puts.csv MERGED at load (the `spy_merged_market` fixture, the same way
+    run_registered_vrp loads the SPY straddle); the `must_trade` guard turns a missing-puts vacuity
+    into a failure rather than a false pass. The byte-identical-to-the-old-frozen-bodies NUMBERS are
+    pinned by the registered/exploratory regressions (which now run through these delegates)."""
 
-    def test_short_vol_equivalent(self, spy_merged_market) -> None:
+    def test_short_vol_summary_complete(self, spy_merged_market) -> None:
         _assert_engine_equivalent(spy_merged_market, 'short_vol')
 
-    def test_straddle_equivalent(self, spy_merged_market) -> None:
+    def test_straddle_summary_complete(self, spy_merged_market) -> None:
         _assert_engine_equivalent(spy_merged_market, 'straddle')
 
-    def test_iron_condor_equivalent(self, spy_merged_market) -> None:
+    def test_iron_condor_summary_complete(self, spy_merged_market) -> None:
         _assert_engine_equivalent(spy_merged_market, 'iron_condor')
 
     @pytest.mark.skipif(not _HAVE_NVDA, reason='needs nvda_option_dailies.csv or its .gz twin')
-    def test_iron_condor_equivalent_nvda_floatnoise(self) -> None:
-        # NVDA's iron condor exercises the rf_credit float-association edge (~3e-14) that SPY's
-        # path hits at exactly 0 — keep it so the `< 1e-9` tolerance is actually exercised.
+    def test_iron_condor_summary_complete_nvda(self) -> None:
+        # the iron-condor delegate on a second ticker (NVDA): enters + emits the complete summary.
         _assert_engine_equivalent(_equiv_market('NVDA', _NVDA_DAILIES), 'iron_condor')
 
 

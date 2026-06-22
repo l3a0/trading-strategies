@@ -392,29 +392,26 @@ overlay's config (incl. the one per-overlay default that differs — the straddl
 `hedge_cost_bps = 0.5` vs the others' 1.0), and `run_structure_via_spec` is the entry
 point.
 
-It is **additive**: the three frozen overlays are untouched, and
-`TestGenericStructureEngineEquivalence` pins that the generic engine reproduces each one
-**bit-for-bit** on the real chains — the *rounded equity series* (the pinned quantity) and
-the Newey-West t are identical. All three are checked on **SPY**: the canonical
-`spy_option_dailies.csv` is *calls-only*, so the put-leg `straddle`/`iron_condor` merge the
-separate `spy_option_dailies_puts.csv` at load (the same way `run_registered_vrp` loads the SPY
-straddle), and a `must_trade` guard keyed off the trade list makes a missing-puts run a failure
-rather than a vacuous pass. On SPY every overlay matches to the last bit (`rf_credit` included);
-**NVDA** is retained only because its four-leg iron-condor exercises the `rf_credit`
-float-association edge (\~3 × 10⁻¹⁴, under the `< 1e-9` tolerance) that SPY's summation path hits
-at exactly 0. A second oracle pins **economic** fidelity: `TestGrammarSignatureMatchesEngine` backs
-the IV out of each entry leg's mid (`structure_greek_signature`, on the `bs_gamma` / `bs_vega` /
-`implied_vol` primitives) and asserts the engine's actual net gamma/vega/legs/expirations match
-the family signature the grammar *declares* — so a structure typed `VARIANCE` that the engine
-runs long-vega fails. The bit-for-bit *equivalence* oracle (the first one, not this signature
-check) gates the in-place swap (Stage B). Its **first half is done**: the generic engine now emits
-the RICH quantities and `run_structure_via_spec` reassembles them into each frozen overlay's EXACT
-field set (`alpha_vs_cash` / `win_rate` / `num_*_sold` / `max_drawdown_pct` / `target_delta` /
-`total_premium_collected`, per-overlay), so the equivalence oracle pins the **full summary**
-field-for-field, not just the equity series. What remains is the mechanical swap — route
-`run_registered_vrp.py` + the campaign through `run_structure_via_spec` and delete the duplicated
-frozen bodies — plus the one open check the oracle does not cover: the iron-condor's left-folded
-entry credit can't flip a net-credit-near-zero entry guard. The point of generalizing now is
+It is now **the sole engine (Stage B done)**: the three named overlays —
+`run_real_short_vol_overlay` / `run_real_straddle_overlay` / `run_real_iron_condor_overlay` — are
+thin **delegates** to this loop via `run_structure_via_spec`, and `run_registered_vrp` + the
+campaign run through them. The \~515 lines of hand-written bodies were retired after the equivalence
+oracle pinned every summary field + the rounded equity series **bit-for-bit**; the
+registered/exploratory regressions now carry those NUMBERS forward through the delegates (so a swap
+that drifted any pinned t-stat would fail there), and `TestGenericStructureEngineEquivalence` pins
+that each delegate **enters** (`must_trade`) and emits its **complete** per-overlay rich summary on
+real chains. (The put-leg `straddle`/`iron_condor` run on **SPY** with the separate
+`spy_option_dailies_puts.csv` merged — the canonical file is calls-only — the same way
+`run_registered_vrp` loads the SPY straddle.) A second oracle pins **economic** fidelity:
+`TestGrammarSignatureMatchesEngine` backs the IV out of each entry leg's mid
+(`structure_greek_signature`, on the `bs_gamma` / `bs_vega` / `implied_vol` primitives) and asserts
+the engine's actual net gamma/vega/legs/expirations match the family signature the grammar
+*declares* — so a structure typed `VARIANCE` that the engine runs long-vega fails. The one check the
+equivalence oracle never covered, now the only Stage-B residual: the iron-condor's `net_positive`
+entry credit is left-folded with commission baked into each leg, a different float association than
+the old `(shorts)-(longs)-4*comm` — it rounds away in equity (verified to never flip the `> 0`
+guard across the search tickers, and every pin is byte-identical), but a *future* structure with a
+net-credit-near-zero entry guard would need to confirm it can't flip there. The point of generalizing is
 to make an arbitrary grammar-reachable structure *runnable* — the precondition for a larger,
 mechanism-typed menu of short-vol structures (roll / stop / spread / calendar variants),
 each still scored by the same `short_vol_statistics` HAC-t and judged by the same FDR ledger.

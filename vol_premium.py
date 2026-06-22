@@ -126,216 +126,14 @@ def run_real_short_vol_overlay(
     store: dict[str, dict[str, Any]],
     params: dict[str, Any],
 ) -> tuple[dict[str, Any], list[dict[str, Any]], pd.DataFrame]:
-    """Daily delta-neutral short-call overlay on real option quotes.
+    """Real-chain short-vol overlay — short a delta-targeted call (or a put via option_type),
+    delta-hedged, with optional early management (close_at_pct / manage_deep_itm).
 
-    Differences from run_real_cc_overlay (the covered call), all deliberate:
-      - NO base long-stock leg. Capital is collateral; the only stock held is the
-        hedge that offsets the short call's delta. Net portfolio delta ~ 0.
-      - Default strike is ATM (target_delta=0.50), not 0.25 — ATM maximizes
-        gamma/vega, so it carries the most variance-premium signal.
-      - Default close is HOLD-TO-EXPIRY (close_at_pct=None, manage_deep_itm=False):
-        early profit-taking or deep-ITM management truncates the variance
-        exposure the position exists to measure. Set them to mirror the covered
-        call when you want an apples-to-apples comparison.
-      - The hedge targets NET-ZERO delta (there is no buy-and-hold leg to pin to).
-
-    Single cash account: starts at `capital`, RECEIVES the premium, PAYS buybacks /
-    assignment and hedge trades, and EARNS the risk-free rate daily. Equity is then
-    cash + hedge stock - the current value of the short call. This credits the idle
-    collateral with rf (the omission the buy-and-hold comparison exposed) and
-    charges the share-hedge bid/ask half-spread (Schwab: stock/ETF trades are
-    commission-free, so spread is the only share cost; the option leg keeps
-    COMMISSION_PER_SHARE).
-
-    params: target_delta (0.50), dte (30 calendar days), fill ('bid_ask'|'mid'),
-            capital (100_000), close_at_pct (None), manage_deep_itm (False),
-            option_type ('call' | 'put' — for 'put' pass a NEGATIVE target_delta,
-            e.g. -0.25; the short put hedges with SHORT stock),
-            risk_free_rate (0.045, earned daily on cash), hedge_cost_bps (1.0,
-            share-rebalance half-spread in bps of notional traded).
-
-    Returns (summary, trades, daily_equity). daily_equity has columns
-    date / equity / price / rf_credit, where rf_credit is the EXACT interest
-    credited at the start of each day (0 on day 0). short_vol_statistics nets that
-    series out so the VRP verdict is the pure gamma/vega vol-P&L — rf cancels on
-    the same (cash) base it was earned on, making the verdict rate-invariant.
-    summary['alpha_vs_cash'] is net_pnl minus the rf interest, i.e. that same vol
-    premium harvested net of hedge costs. It equals the daily excess that
-    short_vol_statistics sums UP TO the day-0 entry-spread mark: that series starts
-    from eq[0], which is already struck at the entry bid/ask mid, so it omits the
-    single day-0 entry cost that alpha_vs_cash carries (see short_vol_statistics for
-    the exact gap — it OMITS a cost, so the summed excess slightly flatters).
-    """
-    target_delta = float(params.get('target_delta', 0.50))
-    dte = int(params.get('dte', 30))
-    fill = str(params.get('fill', 'bid_ask'))
-    capital = float(params.get('capital', 100_000))
-    close_at_pct = params.get('close_at_pct')  # None => hold to expiry
-    manage_deep_itm = bool(params.get('manage_deep_itm', False))
-    # 'call' (default) or 'put'. A short put neutralizes with SHORT stock (its
-    # vendor delta is negative), so the only differences are the entry selector,
-    # the settlement intrinsic, and the sign of the hedge clamp; the call path is
-    # byte-identical (call deltas are >= 0, so its [0,1] clamp is unchanged).
-    # For puts the caller passes a NEGATIVE target_delta (e.g. -0.25).
-    is_put = str(params.get('option_type', 'call')) == 'put'
-    rf = float(params.get('risk_free_rate', 0.045))  # earned daily on the cash balance
-    # Schwab charges $0 commission on stock/ETF trades, so the only cost of a
-    # share-hedge rebalance is the bid/ask half-spread, modeled as bps of the
-    # share notional traded. (The option leg keeps COMMISSION_PER_SHARE.)
-    hedge_cost_bps = float(params.get('hedge_cost_bps', 1.0))
-    daily_rf = rf / 252.0
-
-    initial_price = prices[0]
-    contract_cost = initial_price * 100
-    num_contracts = int(capital // contract_cost)
-    if num_contracts < 1:
-        raise ValueError('capital insufficient for one contract')
-    shares = 100 * num_contracts  # option NOTIONAL (100/contract); NOT a long position
-
-    # ONE cash account: starts at capital, receives premium, pays buybacks /
-    # assignment and hedge trades, earns rf daily. Equity = cash + hedge stock -
-    # current value of the short call. One conservation law, easy to audit.
-    cash = capital
-    hedge_shares = 0  # long stock offsetting the short call delta -> net ~0
-
-    position: dict[str, Any] | None = None
-    num_calls_sold = 0
-    total_premium_collected = 0.0
-    total_hedge_cost = 0.0
-    interest_earned = 0.0
-    wins = losses = 0
-    trades: list[dict[str, Any]] = []
-    daily_rows: list[dict[str, Any]] = []
-    prev_date: str | None = None
-    prev_price: float | None = None
-
-    for i, (date, price) in enumerate(zip(dates, prices)):
-        day = store.get(date)
-
-        # 1. Interest on the cash carried over from yesterday (rf when positive,
-        #    financing when the hedge drove cash negative). Record the EXACT
-        #    per-day credit so short_vol_statistics can net rf out on the SAME
-        #    base the engine accrued it on (cash) — not a flat rf on capital or
-        #    grown equity, which over-removes interest the account never earned.
-        day_rf_credit = 0.0
-        if i > 0:
-            day_rf_credit = cash * daily_rf
-            cash += day_rf_credit
-            interest_earned += day_rf_credit
-
-        # 2. Entry / close / settlement -- all cash flows.
-        if position is None:
-            if day is not None:
-                pick = (select_put_entry if is_put else select_entry)(day, dte, target_delta)
-                if pick is not None:
-                    _dte, _delta, bid, _ask, mid, expiration, strike, cid = pick
-                    sell_px = bid if fill == 'bid_ask' else mid
-                    premium = sell_px - COMMISSION_PER_SHARE
-                    if premium > 0:
-                        cash += premium * shares  # RECEIVE the premium
-                        position = {
-                            'strike': strike, 'entry_premium': premium,
-                            'expiration': expiration, 'contract': cid,
-                            'entry_date': date, 'last_mid': mid, 'real_delta': _delta,
-                        }
-                        num_calls_sold += 1
-                        total_premium_collected += premium * shares
-                        trades.append({'date': date, 'price': price, 'action': 'sell',
-                                       'premium': premium, 'strike': strike, 'contract': cid,
-                                       'dte': _dte, 'delta': _delta})
-        else:
-            if date >= position['expiration']:
-                # Settle on the last close on/before expiration (today's for modern
-                # trading-day expiries; gap<=4 guard catches corrupt data).
-                if date == position['expiration']:
-                    settle_price = price
-                else:
-                    assert prev_date is not None and prev_price is not None
-                    gap = (pd.Timestamp(position['expiration']) - pd.Timestamp(prev_date)).days
-                    assert gap <= 4, (f'{gap} days between {prev_date} and '
-                                      f'expiration {position["expiration"]} — missing data?')
-                    settle_price = prev_price
-                intrinsic = max(0.0, (position['strike'] - settle_price) if is_put
-                                else (settle_price - position['strike']))
-                cash -= intrinsic * shares  # PAY assignment (premium already received)
-                option_pnl = (position['entry_premium'] - intrinsic) * shares
-                wins, losses = (wins + 1, losses) if option_pnl >= 0 else (wins, losses + 1)
-                position = None
-                trades.append({'date': date, 'price': settle_price, 'action': 'expiration',
-                               'pnl': option_pnl})
-            else:
-                quote = day['marks'].get(position['contract']) if day else None
-                if quote is not None:
-                    bid_q, ask_q, mid_q, delta_q = quote
-                    position['last_mid'] = mid_q
-                    position['real_delta'] = delta_q
-                    short_buy = ask_q if fill == 'bid_ask' else mid_q
-                    hit_target = (close_at_pct is not None
-                                  and short_buy <= position['entry_premium'] * (1 - close_at_pct))
-                    deep_itm = manage_deep_itm and (delta_q < -0.70 if is_put else delta_q > 0.70)
-                    if hit_target or deep_itm:
-                        buyback = short_buy + COMMISSION_PER_SHARE
-                        cash -= buyback * shares  # PAY to close
-                        option_pnl = (position['entry_premium'] - buyback) * shares
-                        wins, losses = (wins + 1, losses) if option_pnl >= 0 else (wins, losses + 1)
-                        position = None
-                        trades.append({'date': date, 'price': price,
-                                       'action': 'close' if hit_target else 'close_itm',
-                                       'call_value': ask_q, 'pnl': option_pnl})
-
-        # 3. Delta-NEUTRAL rebalance: hold (signed vendor delta)*shares of stock
-        #    so net delta (short option -delta*shares + hedge) ~ 0 — LONG stock for
-        #    a short call (delta>0), SHORT stock for a short put (delta<0). Clamp to
-        #    the option's delta range ([0,1] call / [-1,0] put) to guard noisy
-        #    vendor rows. Shares fill at the close, commission-free, half-spread cost.
-        _lo, _hi = (-1.0, 0.0) if is_put else (0.0, 1.0)
-        target_hedge = (int(round(min(max(position['real_delta'], _lo), _hi) * shares))
-                        if position is not None else 0)
-        hedge_trade = target_hedge - hedge_shares
-        if hedge_trade != 0:
-            cash -= hedge_trade * price
-            cost = abs(hedge_trade) * price * (hedge_cost_bps / 10_000.0)
-            cash -= cost
-            total_hedge_cost += cost
-            hedge_shares = target_hedge
-
-        # 4. Mark to market: cash + hedge stock - current value of the short call.
-        equity = cash + price * hedge_shares
-        if position is not None:
-            equity -= position['last_mid'] * shares
-        daily_rows.append({'date': date, 'equity': round(equity, 2), 'price': price,
-                           'rf_credit': day_rf_credit})
-        prev_date, prev_price = date, price
-
-    daily_equity = pd.DataFrame(daily_rows, columns=['date', 'equity', 'price', 'rf_credit'])
-    final_equity = float(daily_equity['equity'].iloc[-1])
-    net_pnl = final_equity - capital            # includes rf interest on collateral
-    alpha_vs_cash = net_pnl - interest_earned   # the part above the risk-free rate
-
-    eq = daily_equity['equity'].astype(float)
-    peak = eq.cummax().clip(lower=capital)
-    max_dd = float(((peak - eq) / peak * 100).max())
-
-    summary = {
-        'capital': round(capital, 2),
-        'num_contracts': num_contracts,
-        'target_delta': target_delta,
-        'final_equity': round(final_equity, 2),
-        'net_pnl': round(net_pnl, 2),               # total $ incl. rf on collateral
-        'alpha_vs_cash': round(alpha_vs_cash, 2),   # net of rf -- the vol premium harvested
-        'interest_earned': round(interest_earned, 2),
-        'total_premium_collected': round(total_premium_collected, 2),
-        'total_hedge_cost': round(total_hedge_cost, 2),
-        'hedge_cost_bps': hedge_cost_bps,
-        'num_calls_sold': num_calls_sold,
-        'wins': wins,
-        'losses': losses,
-        'win_rate': round(wins / (wins + losses) * 100, 1) if (wins + losses) else 0.0,
-        'max_drawdown_pct': round(max_dd, 2),
-        'risk_free_rate': rf,
-        'cash': round(capital, 2),  # initial collateral (short_vol_statistics convention)
-    }
-    return summary, trades, daily_equity
+    Stage B: a thin delegate to the single generic engine — run_real_structure_overlay
+    under the 'short_vol' STRUCTURE_SPEC. Retained as the named entry point (run_registered_vrp,
+    the campaign, the CLI); bit-identical to the prior hand-written loop, which the
+    equivalence oracle pinned field-for-field before the swap."""
+    return run_structure_via_spec('short_vol', dates, prices, store, params)
 
 
 def short_vol_statistics(
@@ -435,168 +233,14 @@ def run_real_straddle_overlay(
     store: dict[str, dict[str, Any]],
     params: dict[str, Any],
 ) -> tuple[dict[str, Any], list[dict[str, Any]], pd.DataFrame]:
-    """Daily delta-neutral short ATM STRADDLE — short ~0.50d call + short ~-0.50d
-    put at the SAME expiration, hold-to-expiry, the COMBINED net delta hedged to ~0
-    with stock rebalanced daily on the signed vendor deltas.
+    """Real-chain ATM short-straddle overlay — short an ATM call + put, combined-delta-hedged,
+    held to expiry.
 
-    A pre-registered §7 SECONDARY of docs/prereg_vol_premium.md: REPORTED, NEVER
-    PROMOTED — it cannot change the §5 primary (short-put) verdict; it is the one
-    two-leg piece §2.2/§9 deferred. A SEPARATE loop, so the frozen single-leg
-    run_real_short_vol_overlay path (and every pin on it) stays byte-identical
-    (prereg §9). Same single cash account, recorded per-day rf credit, signed hedge,
-    and daily_equity schema (date/equity/price/rf_credit), so short_vol_statistics
-    consumes it unchanged — the same rate-invariant delta-hedged-gain verdict.
-
-    A short straddle's combined position delta is -(call_delta + put_delta); holding
-    (call_delta + put_delta)*shares of stock neutralizes it — ~0 at the money, LONG
-    as spot rises and the call dominates, SHORT as it falls and the put dominates.
-    The half-spread cost applies to |hedge_trade|; each leg is sold at its own bid
-    and keeps COMMISSION_PER_SHARE.
-
-    params: dte (30), capital (100_000), fill ('bid_ask'|'mid'), risk_free_rate
-            (0.045), hedge_cost_bps (0.5), call_delta (0.50), put_delta (-0.50).
-    """
-    dte = int(params.get('dte', 30))
-    fill = str(params.get('fill', 'bid_ask'))
-    capital = float(params.get('capital', 100_000))
-    call_delta = float(params.get('call_delta', 0.50))
-    put_delta = float(params.get('put_delta', -0.50))
-    rf = float(params.get('risk_free_rate', 0.045))
-    hedge_cost_bps = float(params.get('hedge_cost_bps', 0.5))
-    daily_rf = rf / 252.0
-
-    initial_price = prices[0]
-    num_contracts = int(capital // (initial_price * 100))
-    if num_contracts < 1:
-        raise ValueError('capital insufficient for one contract')
-    shares = 100 * num_contracts  # notional of EACH leg
-
-    cash = capital
-    hedge_shares = 0
-    position: dict[str, Any] | None = None
-    num_straddles_sold = 0
-    total_premium_collected = 0.0
-    total_hedge_cost = 0.0
-    interest_earned = 0.0
-    wins = losses = 0
-    trades: list[dict[str, Any]] = []
-    daily_rows: list[dict[str, Any]] = []
-    prev_date: str | None = None
-    prev_price: float | None = None
-
-    for i, (date, price) in enumerate(zip(dates, prices)):
-        day = store.get(date)
-
-        # 1. Interest on cash carried from yesterday (recorded for rf-netting).
-        day_rf_credit = 0.0
-        if i > 0:
-            day_rf_credit = cash * daily_rf
-            cash += day_rf_credit
-            interest_earned += day_rf_credit
-
-        # 2. Entry (BOTH legs) / settlement (BOTH legs at expiry).
-        if position is None:
-            if day is not None:
-                pick = select_straddle(day, dte, call_delta, put_delta)
-                if pick is not None:
-                    call, put = pick
-                    c_sell = call[2] if fill == 'bid_ask' else call[4]
-                    p_sell = put[2] if fill == 'bid_ask' else put[4]
-                    c_prem = c_sell - COMMISSION_PER_SHARE
-                    p_prem = p_sell - COMMISSION_PER_SHARE
-                    if c_prem > 0 and p_prem > 0:
-                        cash += (c_prem + p_prem) * shares  # RECEIVE both premiums
-                        position = {
-                            'expiration': call[5],
-                            'call': {'strike': call[6], 'premium': c_prem,
-                                     'contract': call[7], 'last_mid': call[4], 'delta': call[1]},
-                            'put': {'strike': put[6], 'premium': p_prem,
-                                    'contract': put[7], 'last_mid': put[4], 'delta': put[1]},
-                        }
-                        num_straddles_sold += 1
-                        total_premium_collected += (c_prem + p_prem) * shares
-                        trades.append({'date': date, 'price': price, 'action': 'sell',
-                                       'call_strike': call[6], 'put_strike': put[6],
-                                       'call_premium': c_prem, 'put_premium': p_prem,
-                                       'expiration': call[5]})
-        elif date >= position['expiration']:
-            if date == position['expiration']:
-                settle_price = price
-            else:
-                assert prev_date is not None and prev_price is not None
-                gap = (pd.Timestamp(position['expiration']) - pd.Timestamp(prev_date)).days
-                assert gap <= 4, (f'{gap} days between {prev_date} and expiration '
-                                  f'{position["expiration"]} — missing data?')
-                settle_price = prev_price
-            c_intr = max(0.0, settle_price - position['call']['strike'])
-            p_intr = max(0.0, position['put']['strike'] - settle_price)
-            cash -= (c_intr + p_intr) * shares  # PAY both intrinsics (premiums received)
-            pnl = (position['call']['premium'] + position['put']['premium']
-                   - c_intr - p_intr) * shares
-            wins, losses = (wins + 1, losses) if pnl >= 0 else (wins, losses + 1)
-            position = None
-            trades.append({'date': date, 'price': settle_price, 'action': 'expiration', 'pnl': pnl})
-        elif day is not None:
-            # Mark both legs to market (hold-to-expiry: no early close).
-            cq = day['marks'].get(position['call']['contract'])
-            pq = day['marks'].get(position['put']['contract'])
-            if cq is not None:
-                position['call']['last_mid'], position['call']['delta'] = cq[2], cq[3]
-            if pq is not None:
-                position['put']['last_mid'], position['put']['delta'] = pq[2], pq[3]
-
-        # 3. Delta-neutral rebalance on the COMBINED delta. Hold
-        #    (call_delta + put_delta)*shares of stock (clamped to [-1, 1]) to
-        #    neutralize the short straddle's -(call_delta + put_delta) position delta.
-        if position is not None:
-            combined = position['call']['delta'] + position['put']['delta']
-            target_hedge = int(round(min(max(combined, -1.0), 1.0) * shares))
-        else:
-            target_hedge = 0
-        hedge_trade = target_hedge - hedge_shares
-        if hedge_trade != 0:
-            cash -= hedge_trade * price
-            cost = abs(hedge_trade) * price * (hedge_cost_bps / 10_000.0)
-            cash -= cost
-            total_hedge_cost += cost
-            hedge_shares = target_hedge
-
-        # 4. Mark to market: cash + hedge stock - value of BOTH short legs.
-        equity = cash + price * hedge_shares
-        if position is not None:
-            equity -= (position['call']['last_mid'] + position['put']['last_mid']) * shares
-        daily_rows.append({'date': date, 'equity': round(equity, 2), 'price': price,
-                           'rf_credit': day_rf_credit})
-        prev_date, prev_price = date, price
-
-    daily_equity = pd.DataFrame(daily_rows, columns=['date', 'equity', 'price', 'rf_credit'])
-    final_equity = float(daily_equity['equity'].iloc[-1])
-    net_pnl = final_equity - capital
-    alpha_vs_cash = net_pnl - interest_earned
-
-    eq = daily_equity['equity'].astype(float)
-    peak = eq.cummax().clip(lower=capital)
-    max_dd = float(((peak - eq) / peak * 100).max())
-
-    summary = {
-        'capital': round(capital, 2),
-        'num_contracts': num_contracts,
-        'final_equity': round(final_equity, 2),
-        'net_pnl': round(net_pnl, 2),
-        'alpha_vs_cash': round(alpha_vs_cash, 2),
-        'interest_earned': round(interest_earned, 2),
-        'total_premium_collected': round(total_premium_collected, 2),
-        'total_hedge_cost': round(total_hedge_cost, 2),
-        'hedge_cost_bps': hedge_cost_bps,
-        'num_straddles_sold': num_straddles_sold,
-        'wins': wins,
-        'losses': losses,
-        'win_rate': round(wins / (wins + losses) * 100, 1) if (wins + losses) else 0.0,
-        'max_drawdown_pct': round(max_dd, 2),
-        'risk_free_rate': rf,
-        'cash': round(capital, 2),
-    }
-    return summary, trades, daily_equity
+    Stage B: a thin delegate to the single generic engine — run_real_structure_overlay
+    under the 'straddle' STRUCTURE_SPEC. Retained as the named entry point (run_registered_vrp,
+    the campaign, the CLI); bit-identical to the prior hand-written loop, which the
+    equivalence oracle pinned field-for-field before the swap."""
+    return run_structure_via_spec('straddle', dates, prices, store, params)
 
 
 def select_iron_condor(
@@ -639,156 +283,32 @@ def run_real_iron_condor_overlay(
     store: dict[str, dict[str, Any]],
     params: dict[str, Any],
 ) -> tuple[dict[str, Any], list[dict[str, Any]], pd.DataFrame]:
-    """Daily short IRON CONDOR — short ~0.25d strangle + long ~0.10d wings, same
-    expiry, hold-to-expiry, NO stock hedge. The defined-risk, practical retail
-    short-vol structure: the long wings cap the tail the naked straddle leaves open,
-    at the cost of premium plus four legs of bid/ask.
+    """Real-chain iron-condor overlay — short a 0.25d strangle + long 0.10d wings, static
+    (unhedged), held to expiry.
 
-    EXPLORATORY, not registered. There is NO delta hedge (a static, defined-risk
-    position — delta-neutral only at entry, then it rides between the strikes), so the
-    verdict is a PRACTICAL-strategy excess-over-cash Newey-West t / Sharpe via
-    short_vol_statistics, NOT the rate-invariant delta-hedged-gain measure the put/call
-    wings and straddle use. A separate loop, so the frozen hedged engines (and every
-    pin on them) stay byte-identical. Shorts fill at the bid and longs at the ask
-    (`bid_ask`) or both at the mid (`mid`, frictionless); each leg keeps
-    COMMISSION_PER_SHARE. params: dte (30), capital (100_000), fill, short_delta
-    (0.25), wing_delta (0.10), risk_free_rate (0.045).
-    """
-    dte = int(params.get('dte', 30))
-    fill = str(params.get('fill', 'bid_ask'))
-    capital = float(params.get('capital', 100_000))
-    short_delta = float(params.get('short_delta', 0.25))
-    wing_delta = float(params.get('wing_delta', 0.10))
-    rf = float(params.get('risk_free_rate', 0.045))
-    daily_rf = rf / 252.0
-
-    initial_price = prices[0]
-    num_contracts = int(capital // (initial_price * 100))
-    if num_contracts < 1:
-        raise ValueError('capital insufficient for one contract')
-    shares = 100 * num_contracts
-
-    cash = capital
-    position: dict[str, Any] | None = None
-    num_condors_sold = 0
-    total_premium_collected = 0.0  # net credit collected
-    interest_earned = 0.0
-    wins = losses = 0
-    trades: list[dict[str, Any]] = []
-    daily_rows: list[dict[str, Any]] = []
-    prev_date: str | None = None
-    prev_price: float | None = None
-
-    for i, (date, price) in enumerate(zip(dates, prices)):
-        day = store.get(date)
-        day_rf_credit = 0.0
-        if i > 0:
-            day_rf_credit = cash * daily_rf
-            cash += day_rf_credit
-            interest_earned += day_rf_credit
-
-        if position is None:
-            if day is not None:
-                pick = select_iron_condor(day, dte, short_delta, wing_delta)
-                if pick is not None:
-                    sc, lc, sp, lp = pick
-                    sc_in = sc[2] if fill == 'bid_ask' else sc[4]  # sell shorts at bid
-                    sp_in = sp[2] if fill == 'bid_ask' else sp[4]
-                    lc_in = lc[3] if fill == 'bid_ask' else lc[4]  # buy longs at ask
-                    lp_in = lp[3] if fill == 'bid_ask' else lp[4]
-                    net_credit = (sc_in + sp_in) - (lc_in + lp_in) - 4 * COMMISSION_PER_SHARE
-                    if net_credit > 0:
-                        cash += net_credit * shares  # RECEIVE the net credit
-                        position = {
-                            'expiration': sc[5], 'credit': net_credit,
-                            'sc': {'k': sc[6], 'cid': sc[7], 'mid': sc[4]},
-                            'lc': {'k': lc[6], 'cid': lc[7], 'mid': lc[4]},
-                            'sp': {'k': sp[6], 'cid': sp[7], 'mid': sp[4]},
-                            'lp': {'k': lp[6], 'cid': lp[7], 'mid': lp[4]},
-                        }
-                        num_condors_sold += 1
-                        total_premium_collected += net_credit * shares
-                        trades.append({'date': date, 'action': 'sell', 'net_credit': net_credit,
-                                       'short_call_k': sc[6], 'long_call_k': lc[6],
-                                       'short_put_k': sp[6], 'long_put_k': lp[6], 'expiration': sc[5]})
-        elif date >= position['expiration']:
-            if date == position['expiration']:
-                settle = price
-            else:
-                assert prev_date is not None and prev_price is not None
-                gap = (pd.Timestamp(position['expiration']) - pd.Timestamp(prev_date)).days
-                assert gap <= 4, (f'{gap} days between {prev_date} and expiration '
-                                  f'{position["expiration"]} — missing data?')
-                settle = prev_price
-            sc_i = max(0.0, settle - position['sc']['k'])   # short call: we PAY
-            lc_i = max(0.0, settle - position['lc']['k'])   # long call: we RECEIVE
-            sp_i = max(0.0, position['sp']['k'] - settle)   # short put: we PAY
-            lp_i = max(0.0, position['lp']['k'] - settle)   # long put: we RECEIVE
-            net_settle = (-sc_i + lc_i - sp_i + lp_i)
-            cash += net_settle * shares
-            pnl = (position['credit'] + net_settle) * shares
-            wins, losses = (wins + 1, losses) if pnl >= 0 else (wins, losses + 1)
-            position = None
-            trades.append({'date': date, 'price': settle, 'action': 'expiration', 'pnl': pnl})
-        elif day is not None:
-            for leg in ('sc', 'lc', 'sp', 'lp'):
-                q = day['marks'].get(position[leg]['cid'])
-                if q is not None:
-                    position[leg]['mid'] = q[2]
-
-        # Mark to market: cash - SHORT legs (liabilities) + LONG legs (assets).
-        equity = cash
-        if position is not None:
-            equity -= (position['sc']['mid'] + position['sp']['mid']) * shares
-            equity += (position['lc']['mid'] + position['lp']['mid']) * shares
-        daily_rows.append({'date': date, 'equity': round(equity, 2), 'price': price,
-                           'rf_credit': day_rf_credit})
-        prev_date, prev_price = date, price
-
-    daily_equity = pd.DataFrame(daily_rows, columns=['date', 'equity', 'price', 'rf_credit'])
-    final_equity = float(daily_equity['equity'].iloc[-1])
-    net_pnl = final_equity - capital
-    alpha_vs_cash = net_pnl - interest_earned
-
-    eq = daily_equity['equity'].astype(float)
-    peak = eq.cummax().clip(lower=capital)
-    max_dd = float(((peak - eq) / peak * 100).max())
-
-    summary = {
-        'capital': round(capital, 2),
-        'num_contracts': num_contracts,
-        'final_equity': round(final_equity, 2),
-        'net_pnl': round(net_pnl, 2),
-        'alpha_vs_cash': round(alpha_vs_cash, 2),
-        'interest_earned': round(interest_earned, 2),
-        'total_premium_collected': round(total_premium_collected, 2),
-        'num_condors_sold': num_condors_sold,
-        'wins': wins,
-        'losses': losses,
-        'win_rate': round(wins / (wins + losses) * 100, 1) if (wins + losses) else 0.0,
-        'max_drawdown_pct': round(max_dd, 2),
-        'risk_free_rate': rf,
-        'cash': round(capital, 2),
-    }
-    return summary, trades, daily_equity
+    Stage B: a thin delegate to the single generic engine — run_real_structure_overlay
+    under the 'iron_condor' STRUCTURE_SPEC. Retained as the named entry point (run_registered_vrp,
+    the campaign, the CLI); bit-identical to the prior hand-written loop, which the
+    equivalence oracle pinned field-for-field before the swap."""
+    return run_structure_via_spec('iron_condor', dates, prices, store, params)
 
 
 # ============================================================================
 # Generic multi-leg structure engine (Ring 1 / Stage A of the "big idea desk").
 #
-# The three overlays above (short_vol / straddle / iron_condor) are SPECIAL CASES
-# of one loop: a single cash account, the per-day rf credit, the gap<=4 settlement,
-# the mark equity = cash + hedge*price + sum(sign*mid)*shares, and the
-# [date, equity, price, rf_credit] schema short_vol_statistics consumes. They differ
-# only in three parameterized knobs: the entry guard, the hedge mode, and management.
-# The unifying leg math (verified per overlay):
+# The three named overlays above (short_vol / straddle / iron_condor) are SPECIAL CASES
+# of this one loop and, post-Stage-B, thin DELEGATES to it (run_structure_via_spec): a single
+# cash account, the per-day rf credit, the gap<=4 settlement, the mark
+# equity = cash + hedge*price + sum(sign*mid)*shares, and the [date, equity, price, rf_credit]
+# schema short_vol_statistics consumes. They differ only in three parameterized knobs: the entry
+# guard, the hedge mode, and management. The unifying leg math (verified per overlay):
 #   entry credit  = sum over legs of (-sign * entry_net)   [short: sell-comm; long: buy+comm]
 #   settle cash   = sum over legs of ( sign * intrinsic)
 #   mark          = cash + hedge*price + sum over legs of (sign * mid) * shares
 #
-# This runner is ADDITIVE — it does NOT replace the three frozen overlays. The
-# dataset-gated equivalence test pins that it reproduces each one's daily_equity on
-# the real chains; the in-place swap (Stage B) only follows once that holds.
+# This is now THE engine (Stage B done): the prior ~515 lines of hand-written bodies were retired
+# after the equivalence oracle pinned every summary field + the daily_equity series bit-for-bit;
+# the registered/exploratory regressions carry those numbers forward through the delegates.
 # ============================================================================
 
 def _leg_intrinsic(leg: dict[str, Any], settle_price: float) -> float:
@@ -962,8 +482,10 @@ def run_real_structure_overlay(
     """Generic multi-leg short-vol structure runner — the single loop the three frozen
     overlays are special cases of. A structure is a list of LEGS produced at entry by
     `select(day, params)`, each {sign(+1 long/-1 short), right, strike, contract,
-    entry_net, mid, delta, expiration}. Returns (summary, trades=[], daily_equity) with
-    the same daily_equity schema short_vol_statistics consumes.
+    entry_net, mid, delta, expiration}. Returns (summary, trades, daily_equity): `trades` is one
+    record per enter/settle/close (non-empty iff the structure traded — what a caller's must_trade
+    / measurement_invalid guard keys off), and daily_equity uses the schema short_vol_statistics
+    consumes.
 
     Parameterized differences from the shared skeleton:
       entry_guard  'each_short_positive' (every short leg's net premium > 0; short_vol /
@@ -974,18 +496,20 @@ def run_real_structure_overlay(
       management   'hold' (mark to expiry) | 'early_close_single' (short_vol's
                    close_at_pct / manage_deep_itm on the single leg)
 
-    ADDITIVE: does not replace the frozen overlays; pinned bit-equivalent to each by the
-    dataset-gated equivalence test before any in-place swap.
+    THE SOLE ENGINE (Stage B done): the three named overlays — run_real_short_vol_overlay /
+    run_real_straddle_overlay / run_real_iron_condor_overlay — are now thin delegates to this loop
+    via run_structure_via_spec, and run_registered_vrp + the campaign run through them. The prior
+    hand-written bodies were retired after the equivalence oracle pinned every summary field +
+    the equity series bit-for-bit; the registered/exploratory regressions now carry those numbers
+    forward through the delegates.
 
     Drive this via `run_structure_via_spec` / STRUCTURE_SPECS — a BARE call reverts an
     unspecified knob to the GENERIC default, which for hedge_cost_bps is 1.0 (the straddle's
     frozen default is 0.5; the spec injects it). This `summary` carries the RICH quantities under
     generic keys (`num_sold`, alpha_vs_cash, win_rate, max_drawdown_pct, wins/losses,
     total_premium_collected); `run_structure_via_spec`'s per-overlay builder reassembles them into
-    each frozen overlay's EXACT field set — byte-identical, pinned field-for-field by the
-    equivalence oracle — so the Stage-B swap CAN route run_registered_vrp.py / the campaign through
-    `run_structure_via_spec` (the callers + the frozen-body deletion are the remaining mechanical
-    step). One caveat the oracle does NOT cover: the `net_positive` entry credit is left-folded with
+    each named overlay's EXACT field set — byte-identical, pinned field-for-field by the equivalence
+    oracle. One caveat the oracle does NOT cover: the `net_positive` entry credit is left-folded with
     COMMISSION baked into each leg's entry_net, a different float association than the frozen
     iron-condor's `(shorts)-(longs)-4*comm` — harmless today (it rounds away in equity; verified to
     never flip the `> 0` guard across the search tickers), but a swap must confirm it cannot flip at
@@ -1016,6 +540,7 @@ def run_real_structure_overlay(
     losses = 0
     entry_credit = 0.0           # the open structure's net credit per share (for its realized P&L)
     daily_rows: list[dict[str, Any]] = []
+    trades: list[dict[str, Any]] = []   # one record per entry/settle/close — non-empty iff it traded
     prev_date: str | None = None
     prev_price: float | None = None
 
@@ -1045,6 +570,8 @@ def run_real_structure_overlay(
                         expiration = picked[0]['expiration']
                         num_sold += 1
                         total_premium_collected += entry_credit * shares
+                        trades.append({'date': date, 'action': 'enter',
+                                       'legs': len(picked), 'credit': round(entry_credit, 4)})
         elif date >= expiration:
             if date == expiration:
                 settle_price = price
@@ -1058,6 +585,8 @@ def run_real_structure_overlay(
             cash += settle_flow * shares
             wins, losses = ((wins + 1, losses) if (entry_credit + settle_flow) * shares >= 0
                             else (wins, losses + 1))      # realized P&L = entry credit + settlement
+            trades.append({'date': date, 'action': 'settle',
+                           'pnl': round((entry_credit + settle_flow) * shares, 2)})
             legs = None
             expiration = None
         elif day is not None:
@@ -1079,6 +608,8 @@ def run_real_structure_overlay(
                         cash -= buyback * shares
                         wins, losses = ((wins + 1, losses) if (entry_credit - buyback) * shares >= 0
                                         else (wins, losses + 1))   # closed early: credit - buyback
+                        trades.append({'date': date, 'action': 'close',
+                                       'pnl': round((entry_credit - buyback) * shares, 2)})
                         legs = None
                         expiration = None
 
@@ -1132,7 +663,7 @@ def run_real_structure_overlay(
         'max_drawdown_pct': round(max_dd, 2),
         'risk_free_rate': rf, 'cash': round(capital, 2),
     }
-    return summary, [], daily_equity
+    return summary, trades, daily_equity
 
 
 # ============================================================================
