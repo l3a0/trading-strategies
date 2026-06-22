@@ -30,6 +30,7 @@ from vol_premium import (
     bs_vega,
     implied_vol,
     run_real_iron_condor_overlay,
+    run_real_risk_reversal_overlay,
     run_real_short_vol_overlay,
     run_real_straddle_overlay,
     run_real_strangle_overlay,
@@ -1321,7 +1322,8 @@ class TestGenericStructureEngineSpecs:
     complete rich summary (the byte-identical numbers carry through the registered regressions)."""
 
     def test_specs_are_well_formed(self) -> None:
-        assert set(STRUCTURE_SPECS) == {'short_vol', 'straddle', 'iron_condor', 'strangle'}
+        assert set(STRUCTURE_SPECS) == {'short_vol', 'straddle', 'iron_condor', 'strangle',
+                                        'risk_reversal'}
         for name, spec in STRUCTURE_SPECS.items():
             assert callable(spec['select'])
             assert spec['entry_guard'] in ('each_short_positive', 'net_positive')
@@ -1362,11 +1364,13 @@ def spy_merged_market():
 _NAMED_OVERLAY = {'short_vol': run_real_short_vol_overlay,    # post-Stage-B: thin delegates
                   'straddle': run_real_straddle_overlay,     # to run_structure_via_spec
                   'iron_condor': run_real_iron_condor_overlay,
-                  'strangle': run_real_strangle_overlay}     # the first grammar widening
+                  'strangle': run_real_strangle_overlay,     # widening 1 (the OTM straddle)
+                  'risk_reversal': run_real_risk_reversal_overlay}  # widening 2 (SKEW)
 _STRUCT_PARAMS = {'short_vol': {'target_delta': 0.25, 'dte': 30},
                   'straddle': {'dte': 30},
                   'iron_condor': {'dte': 30, 'short_delta': 0.25, 'wing_delta': 0.10},
-                  'strangle': {'dte': 30, 'short_delta': 0.25}}
+                  'strangle': {'dte': 30, 'short_delta': 0.25},
+                  'risk_reversal': {'dte': 30, 'short_delta': 0.25}}
 
 # The EXACT rich summary field set each named overlay produces — an INDEPENDENT reference (not the
 # engine), so a dropped/renamed field fails the check. Per-overlay: short-vol echoes target_delta +
@@ -1388,6 +1392,10 @@ _OVERLAY_SUMMARY_KEYS = {
                  'interest_earned', 'total_premium_collected', 'total_hedge_cost', 'hedge_cost_bps',
                  'num_strangles_sold', 'wins', 'losses', 'win_rate', 'max_drawdown_pct',
                  'risk_free_rate', 'cash'},   # same shape as the straddle (its OTM cousin)
+    'risk_reversal': {'capital', 'num_contracts', 'final_equity', 'net_pnl', 'alpha_vs_cash',
+                      'interest_earned', 'total_premium_collected', 'total_hedge_cost',
+                      'hedge_cost_bps', 'num_risk_reversals_sold', 'wins', 'losses', 'win_rate',
+                      'max_drawdown_pct', 'risk_free_rate', 'cash'},   # hedged 2-leg, SKEW
 }
 
 
@@ -1433,7 +1441,10 @@ class TestGenericStructureEngineEquivalence:
         _assert_engine_equivalent(spy_merged_market, 'iron_condor')
 
     def test_strangle_summary_complete(self, spy_merged_market) -> None:
-        _assert_engine_equivalent(spy_merged_market, 'strangle')   # the first grammar widening
+        _assert_engine_equivalent(spy_merged_market, 'strangle')   # widening 1 (the OTM straddle)
+
+    def test_risk_reversal_summary_complete(self, spy_merged_market) -> None:
+        _assert_engine_equivalent(spy_merged_market, 'risk_reversal')  # widening 2 (SKEW, mixed-sign)
 
     @pytest.mark.skipif(not _HAVE_NVDA, reason='needs nvda_option_dailies.csv or its .gz twin')
     def test_iron_condor_summary_complete_nvda(self) -> None:
@@ -1490,19 +1501,32 @@ class TestGreeks:
     def test_structure_greek_signature_synthetic(self) -> None:
         S, yrs = 100.0, 0.1
         short_straddle = [
-            {'sign': -1, 'right': 'call', 'strike': 100.0, 'mid': 5.0, 'expiration': 'E', 'contract': 'c'},
-            {'sign': -1, 'right': 'put', 'strike': 100.0, 'mid': 5.0, 'expiration': 'E', 'contract': 'p'},
+            {'sign': -1, 'right': 'call', 'strike': 100.0, 'mid': 5.0, 'delta': 0.50,
+             'expiration': 'E', 'contract': 'c'},
+            {'sign': -1, 'right': 'put', 'strike': 100.0, 'mid': 5.0, 'delta': -0.50,
+             'expiration': 'E', 'contract': 'p'},
         ]
         assert structure_greek_signature(short_straddle, S, yrs) == {
-            'legs': 2, 'expirations': 1, 'net_gamma': 'short', 'net_vega': 'short'}
-        # a single LONG option flips both signs to 'long'
-        long_call = [{'sign': +1, 'right': 'call', 'strike': 100.0, 'mid': 5.0,
+            'legs': 2, 'expirations': 1, 'net_vega': 'short', 'net_delta': 'neutral',
+            'net_skew': 'flat'}                  # all-short -> no short-vs-long IV asymmetry
+        # a single LONG option is long vega and (delta +0.5) long direction
+        long_call = [{'sign': +1, 'right': 'call', 'strike': 100.0, 'mid': 5.0, 'delta': 0.50,
                       'expiration': 'E', 'contract': 'c'}]
         s = structure_greek_signature(long_call, S, yrs)
-        assert s['net_gamma'] == 'long' and s['net_vega'] == 'long'
+        assert s['net_vega'] == 'long' and s['net_delta'] == 'long' and s['net_skew'] == 'flat'
+        # a risk reversal — SHORT the rich put (mid 8) + LONG the cheap call (mid 3): net_skew reads
+        # the short-vs-long IV asymmetry ('short_rich'), net_delta is long, net_vega offsets to neutral
+        rr = [{'sign': -1, 'right': 'put', 'strike': 95.0, 'mid': 8.0, 'delta': -0.25,
+               'expiration': 'E', 'contract': 'p'},
+              {'sign': +1, 'right': 'call', 'strike': 105.0, 'mid': 3.0, 'delta': 0.25,
+               'expiration': 'E', 'contract': 'c'}]
+        rs = structure_greek_signature(rr, S, yrs)
+        assert rs['net_skew'] == 'short_rich' and rs['net_delta'] == 'long'
         # distinct expirations are counted (a calendar would be expirations=2)
-        cal = [{'sign': -1, 'right': 'call', 'strike': 100.0, 'mid': 3.0, 'expiration': 'E1', 'contract': 'a'},
-               {'sign': +1, 'right': 'call', 'strike': 100.0, 'mid': 5.0, 'expiration': 'E2', 'contract': 'b'}]
+        cal = [{'sign': -1, 'right': 'call', 'strike': 100.0, 'mid': 3.0, 'delta': 0.50,
+                'expiration': 'E1', 'contract': 'a'},
+               {'sign': +1, 'right': 'call', 'strike': 100.0, 'mid': 5.0, 'delta': 0.50,
+                'expiration': 'E2', 'contract': 'b'}]
         assert structure_greek_signature(cal, S, yrs)['expirations'] == 2
 
     def test_structure_greek_signature_raises_on_uninvertible_leg(self) -> None:
@@ -1518,10 +1542,11 @@ class TestGrammarSignatureMatchesEngine:
     """DATASET-GATED: the grammar's DECLARED economic signature (edge_search.STRUCTURE_GRAMMAR) is
     VERIFIED against the engine's actual entry legs — the consistency check that turns the typing
     from a label into an enforcement. For each structure, run its selector on SPY (calls + the
-    separate puts file merged at load, so the put-leg straddle/iron-condor trade), back the IV out
-    of each leg's mid, compute BS net gamma/vega, and assert the engine-derived
-    {legs, expirations, net_gamma, net_vega} matches the declared signature. A future overlay that
-    DECLARES short gamma/vega while the engine runs something long-vega fails here."""
+    separate puts file merged at load, so the put-leg straddle/iron-condor/risk-reversal trade), back
+    the IV out of each leg's mid, compute the three robust axes (net_vega, net_delta, net_skew), and
+    assert the engine-derived {legs, expirations, net_vega, net_delta, net_skew} matches the declared
+    signature. A future overlay that DECLARES short vega while the engine runs something long-vega —
+    or a SKEW structure that declares short_rich while the engine longs the rich wing — fails here."""
 
     def test_each_overlay_signature_matches_engine(self, spy_merged_market) -> None:
         dates, prices, store = spy_merged_market
@@ -1542,6 +1567,6 @@ class TestGrammarSignatureMatchesEngine:
                     continue   # a stale-mark entry; try the next
             assert derived is not None, f'{name}: found no clean SPY entry to verify'
             declared = STRUCTURE_GRAMMAR[name].signature
-            for k in ('legs', 'expirations', 'net_gamma', 'net_vega'):
+            for k in ('legs', 'expirations', 'net_vega', 'net_delta', 'net_skew'):
                 assert derived[k] == declared[k], (
                     f'{name}.{k}: engine-derived {derived[k]!r} != declared {declared[k]!r}')
