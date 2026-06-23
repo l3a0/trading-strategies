@@ -1301,19 +1301,18 @@ class TestStructureCampaign:
     def _cell(rows, template, ticker):
         return next(r for r in rows if r['template'] == template and r['ticker'] == ticker)
 
-    def test_batch_all_scored_one_invalid(self, structure_campaign) -> None:
+    def test_batch_all_scored_none_invalid(self, structure_campaign) -> None:
         rows = structure_campaign
         assert len(rows) == len(STRUCTURE_TEMPLATES) * len(STRUCTURE_SEARCH)  # 56 (credit-spread + calendar)
-        # Exactly ONE cell is measurement-invalid: the MSFT calendar. MSFT's listed chains carry no
-        # far-dated call at the near leg's exact strike (a same-strike calendar needs the strike
-        # quoted >=30 DTE beyond the near, which MSFT's grid doesn't list), so the structure never
-        # enters and the no_trades guard flags it. It still COUNTS toward the e-LOND/BY denominator
-        # (n stays 56) but can never be flagged — the campaign analog of must_trade. Every other
-        # search-ticker cell is scale-valid and traded.
+        # EVERY cell is now scale-valid and traded — zero measurement-invalid. The MSFT calendar
+        # USED to be the lone invalid cell: on the canonical 1-60 DTE store its same-strike far call
+        # (DTE >= near + 30 = 60) was at the exact data edge and unlisted at the near's strike, so
+        # the structure never entered. The far-DTE backfill (_far_chain_paths, merged ONLY into the
+        # TERM calendar's data path) lists calls out to 180 DTE, so the far_dte=90 far leg is now
+        # reachable on every search ticker — MSFT included. Every single-expiration cell still loads
+        # the byte-identical canonical store (include_far=False).
         invalid = [r for r in rows if r.get('measurement_invalid')]
-        assert len(invalid) == 1
-        assert invalid[0]['template'] == 'calendar' and invalid[0]['ticker'] == 'MSFT'
-        assert invalid[0].get('no_trades') is True
+        assert len(invalid) == 0
 
     def test_no_survivor(self, structure_campaign) -> None:
         """The decisive output: no structure candidate is flagged by e-LOND (the FDR
@@ -1395,25 +1394,32 @@ class TestStructureCampaign:
         # not measurement_invalid: the put legs trade on calls-only SPY/MSFT/QQQ (merged puts)
         assert all(not r.get('measurement_invalid') for r in cs)
 
-    def test_calendar_all_wrong_signed_or_invalid(self, structure_campaign) -> None:
-        """Widening 4 (the first TERM family, the long calendar): six of seven calendar cells trade
-        and are wrong-signed (negative alpha — a long-vega calendar pays for term-structure exposure
-        these names/era don't reward), and the seventh (MSFT) is measurement-invalid because MSFT's
-        chains don't list a far call at the near's strike. So the TERM family enters the lifetime
-        stream as six more nulls plus one invalid — none flagged, and 0/56 holds."""
+    def test_calendar_far_dte_90_all_trade_none_flagged(self, structure_campaign) -> None:
+        """Widening 4 (the first TERM family, the long calendar) re-measured on the far-DTE backfill
+        at far_dte=90. ALL SEVEN calendar cells now trade — MSFT included (it was measurement-invalid
+        on the canonical 1-60 DTE store, whose same-strike ~90-DTE far call simply wasn't listed; the
+        far backfill lists it). Six of the seven are wrong-signed (negative alpha — a long-vega
+        calendar pays for term-structure exposure these names/era don't reward); NVDA is mildly
+        right-signed (+0.67) but nowhere near the bar (p~0.25). None is flagged by e-LOND or BY, so
+        the TERM family enters the lifetime stream as seven more nulls and 0/56 holds. Per-ticker
+        HAC-t: MSFT -0.45 / SPY -3.02 / QQQ -1.80 / GLD -4.24 / XLE -0.12 / EEM -2.47 / NVDA +0.67."""
         rows = structure_campaign
         cal = [r for r in rows if r['template'] == 'calendar']
         assert len(cal) == len(STRUCTURE_SEARCH)        # 7 tickers
-        traded = [r for r in cal if not r.get('measurement_invalid')]
-        invalid = [r for r in cal if r.get('measurement_invalid')]
-        assert len(traded) == 6 and len(invalid) == 1
-        assert invalid[0]['ticker'] == 'MSFT'           # the listed-strike gap
-        assert all(r['t_stat_newey_west'] < 0 for r in traded)   # all six traded cells wrong-signed
-        assert all(r['sign_ok'] is False for r in traded)
-        assert all(not r['elond_survivor'] and not r['by_survivor'] for r in cal)
+        assert all(not r.get('measurement_invalid') for r in cal)   # all trade — MSFT no longer invalid
+        assert all(r['t_stat_newey_west'] is not None for r in cal)
+        assert all(r['params']['far_dte'] == 90 for r in cal)       # off the old 60-DTE data edge
+        wrong = [r for r in cal if r['t_stat_newey_west'] < 0]
+        right = [r for r in cal if r['t_stat_newey_west'] > 0]
+        assert len(wrong) == 6 and len(right) == 1
+        assert right[0]['ticker'] == 'NVDA'             # the lone right-signed cell
+        assert all(not r['elond_survivor'] and not r['by_survivor'] for r in cal)   # 0/56 holds
         # the SPY calendar is the strongest-wrong-signed (a clean two-expiration measurement)
         spy = self._cell(rows, 'calendar', 'SPY')
-        assert spy['t_stat_newey_west'] == pytest.approx(-2.44, abs=0.10)
+        assert spy['t_stat_newey_west'] == pytest.approx(-3.02, abs=0.10)
+        # MSFT now trades, mildly wrong-signed (was None/invalid before the backfill)
+        msft = self._cell(rows, 'calendar', 'MSFT')
+        assert msft['t_stat_newey_west'] == pytest.approx(-0.45, abs=0.10)
 
     @pytest.mark.skipif(not _have_dailies('QQQ'), reason='needs qqq_option_dailies.csv (+ _puts)')
     def test_puts_merge_keeps_window_on_calls_span(self) -> None:
@@ -1479,13 +1485,18 @@ class TestNvdaStructureCampaign:
         assert sum(r['by_survivor'] for r in rows) == 0
 
     def test_every_cell_wrong_signed(self, nvda_structure_campaign) -> None:
-        """Every template predicts positive premium (t_NW>0); on NVDA every cell —
-        short-vol, straddle, iron-condor, strangle, the SKEW risk reversal, the CARRY credit
-        spread, AND the TERM calendar — is wrong-signed (t_NW<0). No structure carries an edge
-        on NVDA's runaway chain."""
+        """Every template predicts positive premium (t_NW>0); on NVDA every cell EXCEPT the
+        far-DTE calendar is wrong-signed (t_NW<0) — short-vol, straddle, iron-condor, strangle,
+        the SKEW risk reversal, and the CARRY credit spread. The TERM calendar (far_dte=90 on the
+        far-DTE backfill) reads mildly POSITIVE (t_NW ~+0.67) but is far from significant (p~0.25),
+        so no structure carries a real edge on NVDA's runaway chain."""
         rows = nvda_structure_campaign
-        assert all(r['t_stat_newey_west'] < 0 for r in rows)
-        assert all(r['sign_ok'] is False for r in rows)
+        noncal = [r for r in rows if r['template'] != 'calendar']
+        assert all(r['t_stat_newey_west'] < 0 for r in noncal)
+        assert all(r['sign_ok'] is False for r in noncal)
+        cal = self._cell(rows, 'calendar')
+        assert cal['t_stat_newey_west'] > 0 and cal['sign_ok'] is True   # the one correctly-signed cell
+        assert not cal['elond_survivor'] and not cal['by_survivor']      # but no edge (insignificant)
 
     def test_cell_t_nw_and_p_values(self, nvda_structure_campaign) -> None:
         """Pin each cell's HAC-t and its asymptotic (one-sided upper-tail) p."""
@@ -1511,9 +1522,9 @@ class TestNvdaStructureCampaign:
         cs = self._cell(rows, 'credit_spread')                     # widening 3 (CARRY)
         assert cs['t_stat_newey_west'] == pytest.approx(-0.06, abs=0.05)
         assert cs['p_value'] == pytest.approx(0.5239, abs=0.01)
-        cal = self._cell(rows, 'calendar')                         # widening 4 (TERM)
-        assert cal['t_stat_newey_west'] == pytest.approx(-1.88, abs=0.05)
-        assert cal['p_value'] == pytest.approx(0.9699, abs=0.01)
+        cal = self._cell(rows, 'calendar')                         # widening 4 (TERM, far_dte=90 backfill)
+        assert cal['t_stat_newey_west'] == pytest.approx(0.67, abs=0.05)
+        assert cal['p_value'] == pytest.approx(0.2514, abs=0.01)
 
 
 class TestLlmCliRefusal:

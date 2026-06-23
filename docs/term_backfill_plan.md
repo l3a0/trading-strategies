@@ -1,6 +1,13 @@
 # Far-DTE backfill plan — measuring the TERM family off the data edge
 
-**Status: proposed, not executed.** The Alpha Vantage fetch is the costed, account-touching, human-gated step and waits on an explicit go-ahead. This document is the plan of record so the limitation and the path forward ship with the calendar widening (Widening 4).
+**Status: EXECUTED 2026-06-23.** The fetch ran, the backfill is published to the `data-2026-06` release, and the calendar was re-measured at `far_dte=90`. This document is the original plan of record — the **Why** and **What gets fetched** sections below describe the *pre-backfill* state and the *intended* approach (a couple of details changed at build time; see Outcome). For the live result see [`docs/edge_search.md`](edge_search.md) (Widening 4) and the Outcome section immediately below.
+
+## Outcome (executed 2026-06-23)
+
+- **Fetched:** `download_option_dailies.py --max-dte 180 --keep call` for all 8 tickers (MSFT/SPY/QQQ/GLD/XLE/EEM/NVDA + sealed TLT) into `{ticker}_option_dailies_180dte.csv`. Calls only, the **full** `1 <= DTE <= 180` band — a superset of the canonical `<= 60`, not the `60 < DTE <= 180` slice this plan first sketched. \~23M rows / 2.1 GB raw, 480 MB gzipped.
+- **Published:** gzip → 8 sha256s appended to `data_checksums.sha256` → uploaded to the `data-2026-06` release → added to both `ci.yml` cache lists → round-trip verified → copied to cold storage. CI fetches them through the same `*_option_dailies*.csv.gz` glob as every canonical store.
+- **Wired (pin-safe):** `_far_chain_paths` / `_load_ticker_data(include_far=True)` merge the far store ONLY into the TERM (calendar) data path; `_far_store_sha` folds its `.gz` checksum into the calendar lineage and only the calendar's. The committed calendar template moved `far_dte=60 -> 90`. Regenerating the ledger moved exactly the 7 calendar `data_lineage_hash`es; all 49 single-expiration cells stayed byte-identical, and the full suite (207 tests) passed.
+- **Result:** all 7 calendar cells now trade (MSFT is no longer `measurement_invalid`): MSFT −0.45 / SPY −3.02 / QQQ −1.80 / GLD −4.24 / XLE −0.12 / EEM −2.47 / NVDA +0.67 (the lone positive, p\~0.25). Verdict unchanged: **0/56**. The honest expectation below held — better-measured, still a clean null.
 
 ## Why
 
@@ -33,7 +40,7 @@ The canonical `{ticker}_option_dailies.csv` files are pin-protected — **never 
 - Every far leg is DTE > 60 and every near-band selector targets \~21–45 DTE, so even a merge-for-all would leave near selections byte-identical in *value*. Isolating the merge to TERM overlays also keeps their *lineage* clean. The exact mechanism (a TERM-only second store vs. a conditional merge) is settled at build time and verified by the full suite asserting nothing but the calendar moves.
 - **What re-measures (expected, human-signed):** the 7 calendar cells. The 6 currently-trading cells get better/longer far legs; **MSFT becomes a real measurement** instead of `measurement_invalid`. Re-pin `TestStructureCampaign`'s calendar rows + the ledger's calendar rows.
 
-## Build + re-pin steps (after the fetch lands)
+## Build + re-pin steps (after the fetch lands) — all completed 2026-06-23 (see Outcome)
 
 1. `_far_chain_paths` (analog of `_put_chain_paths`) + the TERM-only merge in the data path.
 2. Optionally move the committed calendar template `far_dte=60 -> 90` to sit off the data edge — a grammar/template decision (re-measures the calendar; decide after seeing the fetched data).

@@ -537,24 +537,30 @@ near-adjacent far leg reads vega-neutral, not the long-vega calendar the family 
 
 **The result.** It took the closed grammar `66 → 70` (the calendar lattice is
 `near_dte × far_dte = 2 × 2 = 4`) and the committed batch `7 × 7 = 49 → 8 × 7 = 56`,
-appending 7 calendar cells to the lifetime e-LOND stream. Six of the seven traded and are
-**wrong-signed** (SPY −2.44 / QQQ −0.11 / GLD −0.66 / XLE −1.25 / EEM −0.49 / NVDA −1.88):
+appending 7 calendar cells to the lifetime e-LOND stream. The committed template runs at
+**`far_dte = 90`** on the far-DTE backfill (below), so all seven cells trade — six are
+**wrong-signed** (SPY −3.02 / QQQ −1.80 / GLD −4.24 / XLE −0.12 / EEM −2.47 / MSFT −0.45):
 a long-vega calendar pays for term-structure exposure these names/era don't reward. The
-seventh, **MSFT, is measurement-invalid** — MSFT's listed chains carry no far call at the
-near leg's exact strike (a same-strike calendar needs the strike quoted ≥30 DTE past the
-near, which MSFT's grid doesn't list), so the structure never enters; the no-trades guard
-flags it (e = 0, counts toward n = 56, never flagged), exactly as designed. The verdict
-stays `0 / 56`. The roll/stop/spread *variants* and the **diagonal** (a calendar with
-different strikes) remain next.
+seventh, **NVDA (+0.67)**, is mildly right-signed but nowhere near the bar (one-sided
+p \~0.25). None is flagged by e-LOND or the BY diagnostic, so the verdict stays `0 / 56`.
+The roll/stop/spread *variants* and the **diagonal** (a calendar with different strikes)
+remain next.
 
-**A measurement caveat — the TERM family is data-limited.** The chains are fetched at
-`--max-dte 60`, so the calendar's far leg (DTE ≥ near + 30 = 60) sits at the exact data
-edge: a 60-DTE expiry exists on only \~4–6% of days, and the grammar's `far_dte=90` is
-unreachable. The six traded cells scrape that thin tail, and MSFT's \~30-day roll cadence
-never lands on enough 60-DTE-expiry days to complete an entry — hence its
-`measurement_invalid`. So this `0 / 56` is a *clean null on thin data*, not a fully-powered
-TERM test; a proper measurement needs a far-DTE backfill (60 < DTE ≤ 180), a separate
-pin-safe data project ([term_backfill_plan.md](term_backfill_plan.md)).
+**The far-DTE backfill — and why MSFT now trades.** The original calendar was measured at
+`far_dte = 60` on the canonical 1–60 DTE chains, where the far leg (DTE ≥ near + 30 = 60)
+sat at the exact data edge — a 60-DTE expiry existed on only \~4–6% of days, and `far_dte=90`
+was unreachable. **MSFT** was the sharpest casualty: its \~30-day roll cadence never landed
+on enough days that listed a same-strike call ≥30 DTE past the near, so the structure never
+entered and the cell was **measurement-invalid**. An overnight Alpha Vantage fetch produced
+`{ticker}_option_dailies_180dte.csv` — calls out to 180 DTE on every search ticker, 100% of
+days carrying a ≥90-DTE call. That backfill is merged **only into the TERM calendar's data
+path** (`_far_chain_paths` / `_load_ticker_data(include_far=True)`, window-clipped to the
+canonical day set), so the committed `far_dte = 90` far leg is now reachable on all seven
+tickers — MSFT included. The merge is family-conditional by design: every single-expiration
+overlay loads the byte-identical canonical store, and only TERM lineages fold the far file's
+checksum, so no short-vol / straddle / strangle / iron-condor / risk-reversal / credit-spread
+pin moved (in value OR lineage). The backfill is fetched but **not yet published** — that is a
+separate human-gated finalization step ([term_backfill_plan.md](term_backfill_plan.md)).
 
 ### NVDA — the seventh ticker (live-onboarded, folded in)
 
@@ -563,9 +569,10 @@ into `STRUCTURE_SEARCH` as the seventh — its seven `(template, NVDA)` cells ar
 of the cross-section above. It keeps its own callout here because NVDA's onboarding
 was the worked example of the clean-gate; the verdict is unchanged.
 
-**The result.** No NVDA cell is flagged — every t-stat is negative, so each one is
-on the wrong side of the predicted positive premium before any FDR bar (e-LOND or the
-BY diagnostic) even applies:
+**The result.** No NVDA cell is flagged. Seven of the eight t-stats are negative — on the
+wrong side of the predicted positive premium before any FDR bar (e-LOND or the BY diagnostic)
+applies. The lone exception, the calendar at `far_dte = 90` on the far-DTE backfill, is mildly
+right-signed (+0.67) but clears the bar by a wide margin (one-sided p \~0.25):
 
 | Template | t (NW) | One-sided p | Flagged? | Measurement valid? |
 | --- | --- | --- | --- | --- |
@@ -576,7 +583,7 @@ BY diagnostic) even applies:
 | strangle | −1.33 | 0.9082 | no | yes |
 | risk_reversal | −0.19 | 0.5753 | no | yes |
 | credit_spread | −0.06 | 0.5239 | no | yes |
-| calendar | −1.88 | 0.9699 | no | yes |
+| calendar | +0.67 | 0.2514 | no | yes |
 
 **A clean data-hygiene read — for once.** Where XLE needed a split repair, NVDA
 passed every clean-gate check on the first try. `validate_dailies.py` streamed

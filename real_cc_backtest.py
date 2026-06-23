@@ -154,7 +154,8 @@ def load_unadjusted_prices(ticker: str, start: str, end: str) -> tuple[list[str]
 
 
 def load_chain_store(
-    path: str, extra_paths: Sequence[str] = (), start: str | None = None
+    path: str, extra_paths: Sequence[str] = (), start: str | None = None,
+    min_dte: int | None = None,
 ) -> dict[str, dict[str, Any]]:
     """One pass over the dailies CSV(s) -> per-date entry candidates + mark index.
 
@@ -164,6 +165,12 @@ def load_chain_store(
     `extra_paths` merge additional dailies CSVs into the same store (e.g. the
     2008-2016 MSFT backfill alongside the canonical 2016-2026 file); the
     per-date setdefault makes the merge order-independent.
+
+    `min_dte` drops every row with DTE below it during the parse (never stored).
+    It loads ONLY the far legs (DTE >= 60) of the `_180dte` calendar backfill:
+    the canonical store already holds DTE <= 60, so the far file's near-term rows
+    are duplicates, and loading the file whole (the dense near-term bulk) OOMs the
+    structure campaign on a CI-sized (~7GB) runner. None = load every row.
 
     `start` drops every row dated before it. This is how the 2008 ->
     mid/late-2010 placeholder-greeks era is handled (see CHAIN_CLEAN_START):
@@ -196,6 +203,8 @@ def load_chain_store(
                     mid = float(r['mark'])
                     strike = float(r['strike'])
                 except (TypeError, ValueError):
+                    continue
+                if min_dte is not None and dte < min_dte:
                     continue
                 if not (bid <= mid <= ask):
                     mid = (bid + ask) / 2
