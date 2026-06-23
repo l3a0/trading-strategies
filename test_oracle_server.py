@@ -404,12 +404,20 @@ class TestScrubbedEnv:
     precisely BECAUSE it was never allow-listed (not because someone remembered to deny it)."""
 
     def test_allowlisted_vars_pass_through(self, monkeypatch) -> None:
-        # PATH/HOME are on the allow-list, so a parent value reaches the child env verbatim.
+        # PATH/TMPDIR are on the allow-list, so a parent value reaches the child env verbatim.
         monkeypatch.setenv('PATH', '/usr/bin:/bin')
-        monkeypatch.setenv('HOME', '/home/proposer')
+        monkeypatch.setenv('TMPDIR', '/var/tmp/proposer')
         env = _scrubbed_env()
         assert env['PATH'] == '/usr/bin:/bin'
-        assert env['HOME'] == '/home/proposer'
+        assert env['TMPDIR'] == '/var/tmp/proposer'
+
+    def test_home_is_dropped(self, monkeypatch) -> None:
+        # HOME is deliberately NOT allow-listed: the stdlib-only proposer never ~-expands or reads
+        # a config dir, and HOME roots at the home tree that CONTAINS the repo + answer-key ledger,
+        # so it's a gratuitous breadcrumb. (It isn't the answer key's protection — the container's
+        # mount namespace is — but a minimal allow-list shouldn't carry it.)
+        monkeypatch.setenv('HOME', '/Users/someone')
+        assert 'HOME' not in _scrubbed_env()
 
     def test_unanticipated_secret_vars_are_dropped(self, monkeypatch) -> None:
         # The deny-list-can't-keep-up failure the allow-list fixes: inject vars a deny-list
