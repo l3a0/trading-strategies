@@ -33,6 +33,7 @@ import os
 import shutil
 import signal
 import subprocess
+import time
 
 import pytest
 
@@ -226,3 +227,49 @@ class TestContainerRoundTrip:
         assert code == 0, f'the container proposer exited {code}'
         assert len(load_idea_ledger(led)) == 1, (
             'the oracle did not record exactly one comparison from the container round-trip')
+
+
+class TestContainerRoundTimeout:
+    """The wall-clock round TIMEOUT (item 4): a wedged-but-alive container that never writes a reply
+    line must NOT block `serve`'s blocking `readline` forever. `launch_in_container(..., timeout=t)`
+    arms a `threading.Timer` that kills the docker process after `t` seconds, so `readline` gets EOF
+    and the loop ends FAIL-CLOSED — non-zero exit, nothing left hanging.
+
+    A SIGALRM(20s) outer guard fails the test FAST instead of hanging CI if the watchdog ever
+    regresses (without it a broken timeout would hang the whole suite, the very failure this pins)."""
+
+    def test_hanging_container_is_killed_by_the_timeout(self, proposer_image, tmp_path) -> None:
+        # A proposer that HANGS forever (sleeps, never writes a line). Under a 3s round timeout,
+        # `launch_in_container` must return within a few seconds with a NON-ZERO code (the killed
+        # docker process), proving the watchdog unwedged the blocking readline.
+        sandbox = str(tmp_path / 'sandbox')
+        led = str(tmp_path / 'idea_ledger.jsonl')
+
+        def _bark(signum, frame):
+            raise TimeoutError(
+                'read-gate container timeout test exceeded 20s — the round TIMEOUT did not fire '
+                '(a regression: a wedged container would hang serve forever)')
+        old = signal.signal(signal.SIGALRM, _bark)
+        signal.alarm(20)
+        try:
+            start = time.monotonic()
+            code = launch_in_container(
+                proposer_image,
+                ['python', '-c', 'import time; time.sleep(999)'],
+                sandbox_dir=sandbox, path=led, timeout=3.0)
+            elapsed = time.monotonic() - start
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old)
+
+        assert code != 0, (
+            f'a hanging container returned exit code {code} — the round did NOT fail closed; '
+            f'a timed-out (killed) docker run must exit non-zero')
+        # The 3s timeout + the docker kill/reap must complete well inside the 20s SIGALRM guard;
+        # ~8s is generous headroom for `proc.kill()` to propagate and `docker run --rm` to tear down.
+        assert elapsed < 8.0, (
+            f'the timeout fired but took {elapsed:.1f}s to return — far beyond the 3s round budget')
+        # FAIL-CLOSED also means nothing recorded: a wedged proposer never produced a scorable
+        # request, so the ledger stays empty (the seam records only what it actually scored).
+        assert load_idea_ledger(led) == [], (
+            'a timed-out round recorded a comparison — it should record nothing')

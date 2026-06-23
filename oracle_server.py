@@ -45,6 +45,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 from typing import Any, Callable
 
 from edge_search import (
@@ -135,6 +136,12 @@ _SANDBOX_SEED_FILES: frozenset[str] = frozenset(
 #   --pids-limit 128                 bound process creation (anti fork-bomb).
 #   --memory 512m                    bound memory (anti OOM-the-host).
 #   --cpus 1                         bound CPU.
+#   --user 10001:10001               run as a fixed NON-root uid:gid, belt-and-suspenders behind
+#                                    the image's `USER proposer` — so an image regression to root
+#                                    (a dropped/edited USER line) is still caught by the run flags,
+#                                    independent of the Dockerfile. The seeds are world-readable
+#                                    and /tmp is a tmpfs, so uid 10001 (no host account needed)
+#                                    runs fine; CI verifies.
 CONTAINER_SEAL_FLAGS: tuple[str, ...] = (
     '--network', 'none',
     '--read-only',
@@ -145,6 +152,7 @@ CONTAINER_SEAL_FLAGS: tuple[str, ...] = (
     '--pids-limit', '128',
     '--memory', '512m',
     '--cpus', '1',
+    '--user', '10001:10001',
 )
 
 
@@ -426,6 +434,7 @@ def launch_in_container(
     campaign: Campaign = STRUCTURE_CAMPAIGN,
     capital: float = STRUCTURE_CAPITAL,
     scorer: Callable[[StructureCandidate], dict[str, Any]] | None = None,
+    timeout: float | None = 300.0,
 ) -> int:
     """Spawn the untrusted proposer INSIDE the sealed #77 image and run the oracle loop against
     it over the container's stdio. This is the REAL seal `launch` could not provide.
@@ -469,18 +478,36 @@ def launch_in_container(
         `/var/run/docker.sock` (which would let the container spawn sibling containers / escape) and
         NOT the repo root.
 
+    THE WALL-CLOCK ROUND TIMEOUT (`timeout`, default 300s; pass None to disable). A wedged-but-alive
+    container that NEVER writes a reply line would block `serve`'s blocking `readline` forever — in
+    PRODUCTION nothing would unwedge it (the tests guard themselves with SIGALRM, but that is the
+    test harness, not this function). So a watchdog `threading.Timer` is armed before the loop: after
+    `timeout` seconds it `proc.kill()`s the `docker run` process, which closes the child's stdout, so
+    `serve`'s `readline` returns '' (EOF) and the loop ENDS rather than hanging. The timer is
+    CANCELLED in the `finally` on normal completion, so a fast round never trips it. FAIL-CLOSED: a
+    timeout means the round did NOT complete — `proc.kill()` makes `docker run` exit non-zero, this
+    function returns that non-zero code, the timer is cancelled, and nothing is left hanging (no
+    partial reply is fabricated; the seam only records what it actually scored before the kill).
+
     REQUIRES docker + the #77 image built (`docker build -f Dockerfile.proposer -t <image> .`). The
     dev box has no docker, so the container tests skip locally and run in CI; this function is
     authored against the documented `docker run` CLI, not exercised here.
 
     STILL OWED BEFORE A REAL MODEL IS WIRED (item 4 — the seal holds, but an untrusted LLM needs
-    these too): a wall-clock round TIMEOUT (a wedged-but-alive container that never writes a line
-    would block `serve`'s `readline` forever — only the tests guard this today, via SIGALRM); a
-    DIGEST pin on the base image (`FROM …@sha256:…`, so audited bytes == built bytes); making the
-    `read-gate-container` CI job a REQUIRED check (so a Dockerfile regression that re-bakes the
-    engine or drops `--network none` BLOCKS merge); and a seccomp profile + an explicit `--user`
-    (belt-and-suspenders behind the image's non-root USER). None are needed for the seal itself —
-    they are the gate before `launch_in_container` carries an actual model author."""
+    these too):
+      * the wall-clock round TIMEOUT — DONE (the `timeout` watchdog above; a wedged container no
+        longer blocks `serve` forever in production, not just under the tests' SIGALRM);
+      * an explicit `--user` — DONE (`CONTAINER_SEAL_FLAGS` now pins `--user 10001:10001`,
+        belt-and-suspenders behind the image's non-root `USER proposer`, so an image regression to
+        root is caught by the run flags);
+      * a DIGEST pin on the base image (`FROM …@sha256:…`, so audited bytes == built bytes) — still
+        owed; needs a docker surface to resolve the sha;
+      * making the `read-gate-container` CI job a REQUIRED check (so a Dockerfile regression that
+        re-bakes the engine or drops `--network none` BLOCKS merge) — still owed; a ruleset/admin
+        action, not a code change;
+      * a custom seccomp profile — still owed.
+    None are needed for the seal itself — they are the gate before `launch_in_container` carries an
+    actual model author."""
     # Validate the bind path FIRST (fail fast, before seeding): `--mount` is a comma/`=`-delimited
     # spec, so a sandbox path containing ',' or '=' would silently corrupt it (split a truncated
     # src, or drop the `readonly` flag — failing OPEN). The path is caller-controlled (not proposer
@@ -524,12 +551,27 @@ def launch_in_container(
         child_in.write(s)
         child_in.flush()
 
+    # Wall-clock round watchdog: a wedged-but-alive container that never writes a reply line would
+    # block `serve`'s blocking `readline` forever, with nothing in production to unwedge it. Arm a
+    # `threading.Timer` that, after `timeout` seconds, kills the docker process — closing the child's
+    # stdout, so `readline` returns '' (EOF) and the loop ENDS. The timer is cancelled in the
+    # `finally` on normal completion, so a fast round never trips it. `timeout=None` disables it.
+    watchdog = threading.Timer(timeout, proc.kill) if timeout is not None else None
+    if watchdog is not None:
+        watchdog.daemon = True             # never keep the process alive on its own account
+        watchdog.start()
+
     try:
         serve(read_line, write_line, campaign=campaign, path=path,
               capital=capital, scorer=scorer)
     finally:
-        # The proposer signals "done" by closing its stdout (EOF -> serve returns); close our
-        # write end so it sees EOF too if it's still reading, then reap the docker process.
+        # Cancel the watchdog FIRST so a normal-completion path can't be killed in the reap window
+        # (cancel is a no-op if it already fired). The proposer signals "done" by closing its stdout
+        # (EOF -> serve returns); close our write end so it sees EOF too if it's still reading, then
+        # reap. On a timeout the kill already closed stdout, so this reap returns the killed (non-zero)
+        # exit code — FAIL-CLOSED: the round did not complete and nothing is left hanging.
+        if watchdog is not None:
+            watchdog.cancel()
         try:
             child_in.close()
         except (OSError, ValueError):
