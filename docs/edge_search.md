@@ -531,6 +531,15 @@ flags it (e = 0, counts toward n = 56, never flagged), exactly as designed. The 
 stays `0 / 56`. The roll/stop/spread *variants* and the **diagonal** (a calendar with
 different strikes) remain next.
 
+**A measurement caveat — the TERM family is data-limited.** The chains are fetched at
+`--max-dte 60`, so the calendar's far leg (DTE ≥ near + 30 = 60) sits at the exact data
+edge: a 60-DTE expiry exists on only \~4–6% of days, and the grammar's `far_dte=90` is
+unreachable. The six traded cells scrape that thin tail, and MSFT's \~30-day roll cadence
+never lands on enough 60-DTE-expiry days to complete an entry — hence its
+`measurement_invalid`. So this `0 / 56` is a *clean null on thin data*, not a fully-powered
+TERM test; a proper measurement needs a far-DTE backfill (60 < DTE ≤ 180), a separate
+pin-safe data project ([term_backfill_plan.md](term_backfill_plan.md)).
+
 ### NVDA — the seventh ticker (live-onboarded, folded in)
 
 NVDA was onboarded after the original six tickers were frozen, and is now folded
