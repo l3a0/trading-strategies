@@ -2,26 +2,30 @@
 
 ## Status (built so far)
 
-**The in-process seam (#72), the transport, and the import-vector closure (C-1) are BUILT; the
-container hardening and the real LLM author remain.** `edge_search.score_and_record` is the oracle
-seam (score → lifetime-judge → record → return only the one-bit scoreboard). `oracle_server.py`
-(`serve` / `launch` / `prepare_sandbox`, fail-closed via `assert_sandbox_clean`) + `proposer_client.py`
-(`run_proposer_loop`, imports only `read_gate_wire`) are the NDJSON transport + the
-**supervised-operator** sandbox — pinned by `test_oracle_server.py` / `test_proposer_client.py`,
-including a real `launch`↔`proposer_client` end-to-end. This is HONEST about being supervised, not
-airtight: a same-machine `cwd` is not a kernel jail (the repo-root engine + answer-key ledger stay
-reachable by absolute path). The IMPORT recompute vector is now CLOSED (track C-1): `prepare_sandbox`
-copies the proposer's engine-free code into the sandbox and `launch` runs it with `cwd=sandbox`, so
-`sys.path[0]` holds no engine and `import edge_search` raises (pinned by
-`test_oracle_server.py::TestImportVectorClosed`). What STAYS open is the absolute-path read + the
-subprocess — closing those is the **container**. Its first half now exists: a **sealed proposer
-image** (`Dockerfile.proposer`) that bakes in only the engine-free code, plus a docker-gated CI
-seal test (`test_read_gate_container.py::TestProposerImageSeal`, run under the hardened `_SEAL_FLAGS`)
-proving the engine + answer-key ledger are absent and the network is dead inside it. What remains is
-the **integration** — wiring `launch` to actually run the proposer inside that image (today it still
-spawns a bare subprocess) — and then the **real model author** (a temperature-0
-Claude call behind the boundary). An LLM author must NOT be activated until the container exists. The
-residual analysis below is unchanged.
+**The in-process seam (#72), the transport, the import-vector closure (C-1), AND the container
+integration (C-2) are BUILT; only the real LLM author remains.** `edge_search.score_and_record` is
+the oracle seam (score → lifetime-judge → record → return only the one-bit scoreboard).
+`oracle_server.py` (`serve` / `launch` / `launch_in_container` / `prepare_sandbox`, fail-closed via
+`assert_sandbox_clean`) + `proposer_client.py` (`run_proposer_loop`, imports only `read_gate_wire`)
+are the NDJSON transport + the sandbox — pinned by `test_oracle_server.py` / `test_proposer_client.py`,
+including a real `launch`↔`proposer_client` end-to-end. The soft `launch` (the supervised-operator
+MVP) is HONEST about not being airtight: a same-machine `cwd` is not a kernel jail (the repo-root
+engine + answer-key ledger stay reachable by absolute path). The IMPORT recompute vector is CLOSED
+(track C-1): `prepare_sandbox` copies the proposer's engine-free code into the sandbox and `launch`
+runs it with `cwd=sandbox`, so `sys.path[0]` holds no engine and `import edge_search` raises (pinned
+by `test_oracle_server.py::TestImportVectorClosed`). What `launch` left open — the absolute-path read
++ the subprocess — is now CLOSED by the **container** (track C-2): `launch_in_container` spawns the
+proposer INSIDE the sealed image (`Dockerfile.proposer`, which bakes in only the engine-free code)
+under `CONTAINER_SEAL_FLAGS` — the single shared flag set the seal test imports — with the per-run
+seed dir bind-mounted READ-ONLY at `/sandbox` (cwd), NO host env forwarded (`docker run` starts a
+fresh env, so no token / PYTHONPATH / `-e` rides in), and NO other host mount (notably not
+`/var/run/docker.sock`). The engine + answer-key ledger are then kernel-unreachable (mount namespace)
+and the network is dead (`--network none`). Pinned by `test_read_gate_container.py` (docker-gated, CI):
+`TestProposerImageSeal` (engine absent by import AND by abspath, network dead, proposer code still
+runs) plus `TestContainerRoundTrip` (a live `launch_in_container`↔`proposer_client` round-trip that
+records exactly one comparison + read-only-mount / no-docker-socket hardening pins). What remains is
+the **real model author** (a temperature-0 Claude call behind the boundary). An LLM author must NOT
+be activated until that lands. The residual analysis below is unchanged.
 
 ## Why this doc exists
 

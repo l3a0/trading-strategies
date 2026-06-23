@@ -18,15 +18,26 @@ What is pinned — the kernel-enforced absence the supervised MVP could not prov
   * the proposer's OWN engine-free code IS present and imports cleanly, dragging in no engine —
     so the sealed image is still a working proposer, not a brick.
 
+`TestContainerRoundTrip` adds the live COMPOSITION: `oracle_server.launch_in_container` spawns a
+real `proposer_client` INSIDE the sealed image (under `CONTAINER_SEAL_FLAGS`, a read-only seed
+mount, no host env), round-trips one request, and the oracle scores+records it — proving the
+proposer reaches the engine ONLY through the recording oracle while running engine-free in a
+kernel-sealed box. Plus two hardening pins: the seed mount is READ-ONLY (a write fails) and the
+docker socket is absent (no container escape).
+
 The image is built once per module (a session-expensive `docker build`) and removed in teardown.
 """
 from __future__ import annotations
 
 import os
 import shutil
+import signal
 import subprocess
 
 import pytest
+
+from edge_search import Campaign, load_idea_ledger
+from oracle_server import CONTAINER_SEAL_FLAGS, launch_in_container
 
 pytestmark = pytest.mark.skipif(
     shutil.which('docker') is None,
@@ -35,22 +46,13 @@ pytestmark = pytest.mark.skipif(
 _REPO = os.path.dirname(os.path.abspath(__file__))
 _TAG = 'read-gate-proposer-pytest:latest'
 
-# The HARDENED run config for an untrusted workload — the seal is more than "engine absent".
-# The integration PR's `launch` MUST spawn the proposer with EXACTLY these flags (promote this
-# constant to the launch path and add a test that launch uses it); the seal test runs the
-# container under them, so it certifies the HARDENED config, not a softer one a real
-# untrusted-LLM deployment would never use.
-_SEAL_FLAGS = (
-    '--network', 'none',                     # no egress: a recomputed/scraped number can't leave
-    '--read-only',                           # immutable image filesystem
-    '--tmpfs', '/tmp',                       # the only writable surface (per-container memory)
-    '--cap-drop', 'ALL',                     # zero Linux capabilities (no NET_RAW / SETUID / MKNOD)
-    '--security-opt', 'no-new-privileges',   # no setuid privilege escalation
-    '--ipc', 'none',                         # no shared IPC namespace
-    '--pids-limit', '128',                   # bound process creation (anti fork-bomb)
-    '--memory', '512m',                      # bound memory (anti OOM-the-host)
-    '--cpus', '1',                           # bound CPU
-)
+# The HARDENED run config for an untrusted workload — the seal is more than "engine absent". This
+# PR PROMOTED the flag set to `oracle_server.CONTAINER_SEAL_FLAGS`, the SINGLE definition the launch
+# path (`launch_in_container`) AND this seal test now share — so the seal test certifies EXACTLY the
+# flags `launch_in_container` spawns the proposer under, not a softer set a real untrusted-LLM
+# deployment would never run. (The launch-uses-the-container composition is pinned by
+# `TestContainerRoundTrip` below.)
+_SEAL_FLAGS = CONTAINER_SEAL_FLAGS
 
 
 @pytest.fixture(scope='module')
@@ -137,3 +139,84 @@ class TestProposerImageSeal:
         proc = _run(proposer_image, code)
         assert proc.returncode == 0, f'proposer_client did not import in the container:\n{proc.stderr}'
         assert proc.stdout.strip() == 'LEAKED:', f'an engine module leaked in: {proc.stdout!r}'
+
+    def test_seed_mount_is_read_only(self, proposer_image, tmp_path) -> None:
+        # `launch_in_container` mounts the seed dir READ-ONLY (type=bind,...,readonly), so an
+        # untrusted proposer cannot write into the dir the host seeds. Run the image with the same
+        # mount shape and assert a write to /sandbox fails (OSError); /tmp is the only writable
+        # surface (the --tmpfs).
+        seed = tmp_path / 'seed'
+        seed.mkdir()
+        proc = subprocess.run(
+            ['docker', 'run', '--rm', *_SEAL_FLAGS,
+             '--mount', f'type=bind,src={seed},dst=/sandbox,readonly', '-w', '/sandbox',
+             proposer_image, 'python', '-c', "open('/sandbox/x', 'w').write('nope')"],
+            capture_output=True, text=True, timeout=60)
+        assert proc.returncode != 0, 'a write to the READ-ONLY seed mount SUCCEEDED'
+        assert 'OSError' in proc.stderr or 'Read-only' in proc.stderr, proc.stderr
+
+    def test_docker_socket_absent(self, proposer_image) -> None:
+        # `launch_in_container` mounts ONLY the read-only seed dir — never /var/run/docker.sock.
+        # Without the socket the container cannot spawn sibling containers / escape; assert the
+        # socket path does not exist inside the container.
+        proc = _run(proposer_image,
+                    "import os, sys; sys.exit(0 if not os.path.exists('/var/run/docker.sock') else 1)")
+        assert proc.returncode == 0, 'the docker socket /var/run/docker.sock WAS present in the container'
+
+
+# A synthetic per-candidate scorer mirroring test_oracle_server._scorer: a KILLED verdict (t=0.5
+# is nowhere near the e-LOND bar) carrying the banned result keys, so the oracle's scrub/numberless
+# guards are genuinely exercised while the engine is NOT run inside the container.
+def _scorer(cand):
+    return {'phase': 'structure', 'template': cand.template, 'ticker': cand.ticker,
+            'params': cand.params_dict(), 'predicted_sign': cand.predicted_sign,
+            't_stat_newey_west': 0.5, 'sign_ok': True, 'p_value': 0.3}
+
+
+class TestContainerRoundTrip:
+    """The live COMPOSITION the soft `launch` can't reach: `launch_in_container` spawns a real
+    `proposer_client` INSIDE the sealed image (under `CONTAINER_SEAL_FLAGS`, a read-only seed mount,
+    NO host env), round-trips one request over the container's stdio, and the oracle scores+records
+    the comparison. This proves the proposer reaches the engine ONLY through the recording oracle
+    while running ENGINE-FREE in a kernel-sealed box — the whole point of the integration.
+
+    A SIGALRM(30s) guard fails fast on a transport deadlock (a missing-newline hang), mirroring
+    test_oracle_server.TestLaunchEndToEnd. The engine is NOT run inside the container: the synthetic
+    `_scorer` stands in for the overlay, so this pins the COMPOSITION (spawn -> wire -> record), not
+    a real backtest."""
+
+    def test_real_proposer_client_round_trips_in_container(self, proposer_image, tmp_path) -> None:
+        led = str(tmp_path / 'idea_ledger.jsonl')
+        sandbox = str(tmp_path / 'sandbox')
+        # A real proposer running PURELY from the read-only seed mount (cwd=/sandbox). It proposes
+        # one COMMITTED grammar cell (short_call_25 on AAA) via a stub author and drives one round.
+        # `import proposer_client` resolves to the COPY launch_in_container seeded into the mount
+        # (sys.path[0] = cwd = /sandbox); `import edge_search` would fail (no engine in the box).
+        stub = (
+            "import sys\n"
+            "import proposer_client as pc\n"
+            "author = lambda menu, corpus, onboarded: (\n"
+            "    [{'overlay': 'short_vol', 'ticker': 'AAA',\n"
+            "      'params': {'target_delta': 0.25, 'dte': 30}, 'predicted_sign': 1}],\n"
+            "    {'model_requested': 'stub', 'model_served': 'stub',\n"
+            "     'temperature': 0.0, 'prompt_sha': 'x'})\n"
+            "def w(s):\n"
+            "    sys.stdout.write(s); sys.stdout.flush()\n"
+            "pc.run_proposer_loop(sys.stdin.readline, w, author, rounds=1)\n"
+        )
+
+        def _bark(signum, frame):
+            raise TimeoutError('read-gate container e2e exceeded 30s — likely a transport deadlock')
+        old = signal.signal(signal.SIGALRM, _bark)
+        signal.alarm(30)
+        try:
+            code = launch_in_container(
+                proposer_image, ['python', '-c', stub], sandbox_dir=sandbox, path=led,
+                campaign=Campaign(search=('AAA',)), scorer=_scorer)
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old)
+
+        assert code == 0, f'the container proposer exited {code}'
+        assert len(load_idea_ledger(led)) == 1, (
+            'the oracle did not record exactly one comparison from the container round-trip')

@@ -120,6 +120,33 @@ _PROPOSER_CODE_FILES: tuple[str, ...] = ('proposer_client.py', 'read_gate_wire.p
 _SANDBOX_SEED_FILES: frozenset[str] = frozenset(
     {'menu.json', 'corpus.json'}) | frozenset(_PROPOSER_CODE_FILES)
 
+# The HARDENED `docker run` flags the CONTAINER path (`launch_in_container`) spawns the proposer
+# under — the SINGLE definition shared by the launch path and the docker-gated seal test
+# (`test_read_gate_container.py` imports this constant), so the test certifies EXACTLY the config
+# launch uses, not a softer one a real untrusted-LLM deployment would never run. This is what makes
+# the wall real: under these flags the answer key is kernel-unreachable and a recomputed number
+# can't be exfiltrated. Each flag and why it earns its place:
+#   --network none                   no egress: a recomputed/scraped number can't leave the box.
+#   --read-only                      immutable image filesystem (only an explicit tmpfs is writable).
+#   --tmpfs /tmp                      the one writable surface, per-container memory.
+#   --cap-drop ALL                   zero Linux capabilities (no NET_RAW / SETUID / MKNOD).
+#   --security-opt no-new-privileges no setuid privilege escalation.
+#   --ipc none                       no shared IPC namespace.
+#   --pids-limit 128                 bound process creation (anti fork-bomb).
+#   --memory 512m                    bound memory (anti OOM-the-host).
+#   --cpus 1                         bound CPU.
+CONTAINER_SEAL_FLAGS: tuple[str, ...] = (
+    '--network', 'none',
+    '--read-only',
+    '--tmpfs', '/tmp',
+    '--cap-drop', 'ALL',
+    '--security-opt', 'no-new-privileges',
+    '--ipc', 'none',
+    '--pids-limit', '128',
+    '--memory', '512m',
+    '--cpus', '1',
+)
+
 
 def _error_reply(reason: str) -> dict[str, Any]:
     """A malformed-request reply: stamped with the wire version, typed `error`, carrying a
@@ -382,6 +409,108 @@ def launch(
     finally:
         # The proposer signals "done" by closing its stdout (EOF -> serve returns); close our
         # write end so it sees EOF too if it's still reading, then reap it.
+        try:
+            child_in.close()
+        except (OSError, ValueError):
+            pass
+        proc.wait()
+    return proc.returncode
+
+
+def launch_in_container(
+    image: str,
+    proposer_argv: list[str],
+    *,
+    sandbox_dir: str,
+    path: str = IDEA_LEDGER_PATH,
+    campaign: Campaign = STRUCTURE_CAMPAIGN,
+    capital: float = STRUCTURE_CAPITAL,
+    scorer: Callable[[StructureCandidate], dict[str, Any]] | None = None,
+) -> int:
+    """Spawn the untrusted proposer INSIDE the sealed #77 image and run the oracle loop against
+    it over the container's stdio. This is the REAL seal `launch` could not provide.
+
+    THE DIFFERENCE FROM `launch` (the soft MVP). `launch` spawns a BARE same-machine subprocess
+    with `cwd=sandbox` — which closes the IMPORT vector (sys.path[0] holds no engine) but leaves
+    the repo-root engine + answer-key ledger reachable by ABSOLUTE path, and leaves the network
+    live. Here the proposer runs in a docker container whose filesystem view is a MOUNT NAMESPACE:
+    the engine source, the chains, and the answer-key ledger are NOT in the container at all, so
+    NO absolute path resolves to them (`open('/repo/idea_ledger.jsonl')` raises FileNotFoundError),
+    no subprocess can `python /repo/edge_search.py`, and `--network none` means a recomputed number
+    can't be exfiltrated. Kernel-enforced absence, not a cwd convention. (Pinned by
+    test_read_gate_container.py's `TestProposerImageSeal` — the seal — and `TestContainerRoundTrip`
+    — the live composition.)
+
+    Order MIRRORS `launch` — the wall is built BEFORE the mechanism:
+
+      1. FAIL CLOSED on a dirty sandbox (`_assert_sandbox_clean`): never bind-mount a dir that
+         carries the engine, a chain CSV, `.git`, or a `test_*.py` into the container.
+      2. Seed the sandbox with exactly the four files (`prepare_sandbox`): menu.json + corpus.json
+         (data) plus proposer_client.py + read_gate_wire.py (the proposer's engine-free code).
+      3. Spawn `docker run -i --rm *CONTAINER_SEAL_FLAGS --mount type=bind,src=<abspath>,
+         dst=/sandbox,readonly -w /sandbox <image> *proposer_argv`. The container runs with
+         cwd=/sandbox — the READ-ONLY-mounted seed dir holding the proposer's engine-free code +
+         the seeds — so the proposer imports proposer_client/read_gate_wire from the mount and reads
+         menu/corpus from cwd, while `import edge_search` fails (no engine in the mount OR the image).
+      4. Drive `serve` with `read_line`/`write_line` bound to the docker process's stdout/stdin
+         (the same NDJSON loop `launch` runs) — the proposer reaches the engine ONLY through the
+         oracle's `score_fn` (the lifetime-recording seam), exactly as in the soft path.
+
+    Returns the proposer's exit code (`docker run`'s, which is the container command's).
+
+    THE HARDENING (the review must-dos, all enforced here):
+      * the bind is `readonly` — the proposer cannot write the seed dir (it has --tmpfs /tmp for
+        any scratch);
+      * NO host env / NO `-e` is forwarded — `docker run` starts the container with a FRESH minimal
+        env, so unlike `launch` there is no `_scrubbed_env` to get right: ANTHROPIC_API_KEY, every
+        token, PYTHONPATH, every host var is absent by construction (the container env subsumes the
+        `_ENV_ALLOWLIST` the soft path needs);
+      * NO host path other than the read-only seed dir is mounted — in particular NOT
+        `/var/run/docker.sock` (which would let the container spawn sibling containers / escape) and
+        NOT the repo root.
+
+    REQUIRES docker + the #77 image built (`docker build -f Dockerfile.proposer -t <image> .`). The
+    dev box has no docker, so the container tests skip locally and run in CI; this function is
+    authored against the documented `docker run` CLI, not exercised here."""
+    _assert_sandbox_clean(sandbox_dir)
+    prepare_sandbox(sandbox_dir, path=path)
+
+    # type=bind,...,readonly => the seed dir is immutable to the proposer. No -e / no env passes
+    # through: docker run starts a fresh container env, so no host secret can ride in (the wall
+    # the soft path's _scrubbed_env can only approximate). dst is the cwd via -w, so sys.path[0]
+    # is /sandbox (the mount) — the proposer's own code is reachable, the engine is not.
+    src = os.path.abspath(sandbox_dir)
+    docker_argv = [
+        'docker', 'run', '-i', '--rm',
+        *CONTAINER_SEAL_FLAGS,
+        '--mount', f'type=bind,src={src},dst=/sandbox,readonly',
+        '-w', '/sandbox',
+        image,
+        *proposer_argv,
+    ]
+    proc = subprocess.Popen(
+        docker_argv,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+        bufsize=1,                         # line-buffered: a reply flushes per line
+    )
+    assert proc.stdin is not None and proc.stdout is not None  # PIPE => present (narrows type)
+    child_in, child_out = proc.stdin, proc.stdout
+
+    def read_line() -> str | None:
+        return child_out.readline() or None   # '' at EOF -> None ends serve
+
+    def write_line(s: str) -> None:
+        child_in.write(s)
+        child_in.flush()
+
+    try:
+        serve(read_line, write_line, campaign=campaign, path=path,
+              capital=capital, scorer=scorer)
+    finally:
+        # The proposer signals "done" by closing its stdout (EOF -> serve returns); close our
+        # write end so it sees EOF too if it's still reading, then reap the docker process.
         try:
             child_in.close()
         except (OSError, ValueError):
