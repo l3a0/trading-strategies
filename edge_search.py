@@ -1647,6 +1647,89 @@ def score_and_record(
     return reply
 
 
+# --- the read-gate CLI refusal (interlock #5: an LLM author can't run from the engine) ---
+# An LLM proposer must be PHYSICALLY UNABLE to run from this checkout — the only sanctioned
+# home is `proposer_client` inside the oracle_server sandbox, where C-1 closed the import
+# vector so `import edge_search` raises. `--llm` is the switch that WOULD select the LLM
+# author; this guard makes activating it from the engine FAIL CLOSED. It does NOT replace the
+# process boundary (docs/read_gate.md, "The architecture that works") — it is the runtime
+# tripwire that refuses to even start an author outside that boundary.
+def _resolve_llm_author() -> LLMProposer | None:
+    """The configured LLM author, or None if none is wired. Item 4 (the real Claude client)
+    is a LATER PR: there is no model yet, so this returns None and `--llm` fails closed on
+    precondition (b). When item 4 lands it returns the gated `LLMProposer`, and the import
+    precondition (a) keeps enforcing — wiring a model never unlocks running it from the repo."""
+    return None
+
+
+def _engine_importable_from_cwd() -> bool:
+    """True iff `import edge_search` SUCCEEDS in a fresh interpreter rooted at the current
+    working directory — i.e. cwd is (or reaches, via sys.path[0]=cwd) the engine checkout.
+    Spawns the probe the same way `oracle_server.launch` spawns the proposer: cwd=getcwd()
+    with `oracle_server._scrubbed_env()` (no PYTHONPATH that could re-expose the engine), so
+    this measures EXACTLY what the sandboxed proposer would see. From the engine checkout the
+    probe succeeds (returncode 0) -> True; from the C-1 sandbox it raises ModuleNotFoundError
+    (non-zero) -> False."""
+    import os
+    import subprocess
+    import sys
+
+    import oracle_server  # local: oracle_server imports edge_search, so import only at call time
+    proc = subprocess.run(
+        [sys.executable, '-c', 'import edge_search'],
+        cwd=os.getcwd(),
+        env=oracle_server._scrubbed_env(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    return proc.returncode == 0
+
+
+def _assert_llm_boundary(author: LLMProposer | None = None) -> LLMProposer:
+    """FAIL CLOSED unless an LLM author may run HERE, returning the author when it may.
+
+    Two independent preconditions, BOTH required (refuse if either fails):
+
+      (a) THE ENGINE IS NOT IMPORTABLE FROM CWD. Checked via `_engine_importable_from_cwd`
+          (a scrubbed-env subprocess probe). From the engine checkout `import edge_search`
+          SUCCEEDS, so the guard REFUSES — correct: you cannot launch an LLM author from the
+          repo. It passes only inside the oracle_server sandbox (C-1's closed import vector),
+          where the proposer runs as `proposer_client` and the engine is absent.
+      (b) A MODEL AUTHOR IS ACTUALLY CONFIGURED. `author` (or `_resolve_llm_author()` when not
+          supplied) must be a real `LLMProposer`. Item 4 (the Claude client) is a later PR, so
+          today there is no model and `--llm` ALSO fails closed here — the current backstop.
+
+    On either failure: print a message naming BOTH preconditions (pointing at docs/read_gate.md
+    + oracle_server) to stderr and `raise SystemExit(2)`. The two are independent: from a dir
+    where the engine is absent (a) passes but (b) still refuses until item 4 wires the client."""
+    import sys
+    resolved = author if author is not None else _resolve_llm_author()
+    importable = _engine_importable_from_cwd()
+    if importable or resolved is None:
+        reasons = []
+        if importable:
+            reasons.append(
+                '  (a) the engine IS importable from the current directory — an LLM author '
+                'must NOT run from the engine checkout')
+        if resolved is None:
+            reasons.append(
+                '  (b) no model author is configured (the LLM client is a later PR)')
+        print(
+            'REFUSED: --llm cannot activate an LLM proposer here. Both preconditions must '
+            'hold; the following failed:\n'
+            + '\n'.join(reasons)
+            + '\n  (a) requires the engine to be UNIMPORTABLE from cwd (true only inside the '
+            'oracle_server sandbox, where the import vector is closed);\n'
+            '  (b) requires a configured model author.\n'
+            'Run the proposer THROUGH the read-gate boundary, never bare: launch it as '
+            'proposer_client inside the oracle_server sandbox (oracle_server.launch / '
+            'prepare_sandbox). See docs/read_gate.md ("The architecture that works").',
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    return resolved
+
+
 def main() -> None:
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == 'structure':
@@ -1668,6 +1751,14 @@ def main() -> None:
         # PREVIEW (propose untried cells, run nothing); --run scores them; --record records.
         record = '--record' in sys.argv
         run = record or '--run' in sys.argv
+        if '--llm' in sys.argv:
+            # The switch that WOULD select the LLM author over the menu-walker. It is
+            # FAIL-CLOSED: `_assert_llm_boundary` refuses (exits non-zero) unless the engine
+            # is unimportable from cwd AND a model author is configured — neither holds from
+            # the engine checkout, and item 4 (the model client) is a later PR. So this raises
+            # SystemExit before any author runs; reaching run_proposer_round below means the
+            # menu-walker path (author=None).
+            _assert_llm_boundary()
         print(f'Menu-walker proposer (deterministic, no LLM); grammar = '
               f'{grid_universe_size()} templates'
               f'{" — running engine, a while cold ..." if run else " (preview)"}', flush=True)
