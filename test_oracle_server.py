@@ -40,6 +40,7 @@ from read_gate_wire import WIRE_VERSION, assert_numberless
 from oracle_server import (
     PROPOSER_CODE_FILES,
     SANDBOX_SEED_FILES,
+    assert_sandbox_clean,
     launch,
     prepare_sandbox,
     serve,
@@ -194,6 +195,16 @@ class TestPrepareSandbox:
         with pytest.raises(ValueError, match='stray.txt'):
             prepare_sandbox(str(sandbox), path=led)
 
+    def test_clean_gate_passes_a_seeded_sandbox(self, tmp_path) -> None:
+        # The fail-closed gate forbids the ENGINE, not the proposer's own code: a SEEDED sandbox
+        # (the four files, incl. the copied-in proposer_client.py + read_gate_wire.py) still
+        # passes assert_sandbox_clean. Pins the launch docstring's claim that the clean gate
+        # tolerates the proposer code — matters if track C-2 (the container) re-checks a populated
+        # sandbox rather than the pre-seed dir launch checks today.
+        sandbox = tmp_path / 'sbx'
+        prepare_sandbox(str(sandbox), path=str(tmp_path / 'idea_ledger.jsonl'))
+        assert_sandbox_clean(str(sandbox))                 # must not raise on the proposer code
+
     def test_corpus_reflects_the_ledger_and_stays_numberless(self, tmp_path) -> None:
         # seed a real (numberless-by-construction) ledger via the seam, then assert the
         # sandbox corpus is exactly its scrubbed projection.
@@ -345,8 +356,13 @@ class TestImportVectorClosed:
         assert proc.returncode != 0, (
             f'edge_search WAS importable from the sandbox — the import vector is OPEN.\n'
             f'stdout={proc.stdout!r} stderr={proc.stderr!r}')
-        assert 'ModuleNotFoundError' in proc.stderr
-        assert 'edge_search' in proc.stderr
+        # Assert the SPECIFIC missing-module message, not a loose 'ModuleNotFoundError' +
+        # 'edge_search' substring pair: if the fix were reverted (engine present in the sandbox)
+        # on a bare interpreter, `import edge_search` raises "No module named 'numpy'" FROM INSIDE
+        # edge_search.py — whose traceback path still contains "edge_search" — so the loose pair
+        # would pass vacuously. "No module named 'edge_search'" appears only when the engine
+        # MODULE itself is absent, which is exactly what the closed vector guarantees.
+        assert "No module named 'edge_search'" in proc.stderr, proc.stderr
 
     def test_other_engine_modules_not_importable_from_sandbox(self, tmp_path) -> None:
         # the same vector for the rest of the engine surface a proposer might recompute through
@@ -354,12 +370,17 @@ class TestImportVectorClosed:
         prepare_sandbox(str(sandbox), path=str(tmp_path / 'idea_ledger.jsonl'))
         for mod in ('edge_search', 'vol_premium', 'cc_backtest', 'real_cc_backtest'):
             proc = self._spawn_in_sandbox(sandbox, f'import {mod}')
-            assert proc.returncode != 0 and 'ModuleNotFoundError' in proc.stderr, (
+            # the SPECIFIC missing-module message (see test_engine_not_importable_from_sandbox):
+            # "No module named '<mod>'" only appears when <mod> ITSELF is absent, not when a
+            # present <mod>'s dependency is missing — so this stays non-vacuous on any interpreter.
+            assert proc.returncode != 0 and f"No module named '{mod}'" in proc.stderr, (
                 f'{mod} WAS importable from the sandbox.\nstderr={proc.stderr!r}')
 
     def test_proposer_client_is_importable_from_sandbox(self, tmp_path) -> None:
         # the proposer's OWN engine-free code is reachable (copied in) — and it does NOT drag
-        # the engine in transitively (it imports only read_gate_wire + the stdlib).
+        # the engine in transitively (it imports only read_gate_wire + the stdlib). The leak
+        # denylist below is fixed; if a new engine module is added, extend BOTH it and
+        # test_other_engine_modules_not_importable_from_sandbox's tuple.
         sandbox = tmp_path / 'sbx'
         prepare_sandbox(str(sandbox), path=str(tmp_path / 'idea_ledger.jsonl'))
         code = (
