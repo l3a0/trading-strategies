@@ -76,18 +76,22 @@ from read_gate_wire import (
 # needs almost nothing (empirically it starts and imports the stdlib under an EMPTY env). What's
 # kept, and why each earns its place:
 #   * PATH                     — a legitimate stdlib subprocess can resolve system tools.
-#   * HOME                     — some stdlib paths (`~` expansion, default config dirs) read it.
 #   * TMPDIR / TMP / TEMP      — tempfile honors these; a stripped temp dir breaks file writes.
 #   * LANG / LC_ALL / LC_CTYPE — locale/encoding, so text I/O doesn't fall to a surprising default.
 #   * TZ                       — stable local-time for any datetime the proposer formats.
 # Notably ABSENT (and they STAY absent): PYTHONPATH / PYTHONHOME / PYTHONSTARTUP (any could
 # re-expose the engine on the import path — the whole point of the sandbox is that it CAN'T
 # import it), every token / API key / cloud credential, and proxy vars (HTTP(S)_PROXY, etc.).
+# Also dropped: HOME — the stdlib-only proposer never `~`-expands or reads a config dir, so it
+# isn't needed, and HOME roots at the user's home tree (which CONTAINS the repo + answer-key
+# ledger), so it's a gratuitous breadcrumb. It is NOT what protects the answer key (the key is
+# abspath-reachable in the soft sandbox regardless — only the C-2 container's mount namespace
+# closes that); dropping it just keeps the allow-list honestly minimal.
 #
 # Track C-2 (the container, docs/read_gate.md) replaces process-env control entirely with a
 # fresh minimal image env — at which point the container's env subsumes this allow-list.
 _ENV_ALLOWLIST: frozenset[str] = frozenset({
-    'PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP',
+    'PATH', 'TMPDIR', 'TMP', 'TEMP',
     'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ',
 })
 
