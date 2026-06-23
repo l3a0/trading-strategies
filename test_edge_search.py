@@ -39,7 +39,6 @@ from edge_search import (
     STRUCTURE_TEMPLATES,
     TREND_WINDOWS,
     WIRE_VERSION,
-    BANNED_RESULT_FIELDS,
     Campaign,
     Candidate,
     CycleData,
@@ -83,6 +82,7 @@ from edge_search import (
     structure_ledger_rows,
 )
 from evalue_fdr import online_fdr_survivors
+from read_gate_wire import BANNED_RESULT_FIELDS
 from test_real_cc_backtest import _HAVE_MSFT_DAILIES, _HAVE_SPY_DAILIES
 
 _HAVE_SEARCH = _HAVE_MSFT_DAILIES and _HAVE_SPY_DAILIES

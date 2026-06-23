@@ -79,7 +79,6 @@ from explorations import (
     post_rip_mask,
 )
 from read_gate_wire import (   # the dependency-free read-gate contract (shared w/ the proposer)
-    BANNED_RESULT_FIELDS,
     PROPOSAL_FIELDS,
     REQUIRED_MODEL_FIELDS,
     WIRE_VERSION,
