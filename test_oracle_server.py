@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import json
 import os
+import signal
+import sys
 
 import pytest
 
@@ -236,3 +238,51 @@ class TestLaunchFailClosed:
                       path=str(tmp_path / 'l.jsonl'))
         assert code == 0
         assert sorted(os.listdir(sandbox)) == ['corpus.json', 'menu.json']
+
+
+class TestLaunchEndToEnd:
+    """The REAL composition the in-process fakes can't reach: `launch` spawns an actual
+    `proposer_client`-based child over real pipes, round-trips one request, the oracle
+    scores+records, and the one-bit reply reaches the proposer. This is the regression pin for
+    the missing-newline DEADLOCK (a request without a trailing newline hangs `readline` forever)
+    — a SIGALRM guard fails fast instead of hanging CI if it ever regresses. It proves
+    COMPOSITION (the happy path), NOT the seal: in this MVP the engine is still abspath-reachable."""
+
+    def test_real_proposer_client_round_trips(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setattr('edge_search._is_onboarded', lambda tk: True)
+        led = str(tmp_path / 'idea_ledger.jsonl')
+        sandbox = str(tmp_path / 'sandbox')
+        repo = os.path.dirname(os.path.abspath(__file__))   # proposer_client + read_gate_wire live here
+        # A real proposer: cwd is the sandbox and PYTHONPATH is scrubbed, so add `repo` to import
+        # proposer_client; propose one committed cell via a stub author; write the reply to cwd.
+        src = (
+            "import sys, json\n"
+            f"sys.path.insert(0, {repo!r})\n"
+            "import proposer_client as pc\n"
+            "author = lambda menu, corpus, onboarded: (\n"
+            "    [{'overlay': 'short_vol', 'ticker': 'AAA',\n"
+            "      'params': {'target_delta': 0.25, 'dte': 30}, 'predicted_sign': 1}],\n"
+            "    {'model_requested': 'stub', 'model_served': 'stub',\n"
+            "     'temperature': 0.0, 'prompt_sha': 'x'})\n"
+            "def w(s):\n"
+            "    sys.stdout.write(s); sys.stdout.flush()\n"
+            "replies = pc.run_proposer_loop(sys.stdin.readline, w, author, rounds=1)\n"
+            "open('verdicts.json', 'w').write(json.dumps(replies))\n"
+        )
+
+        def _bark(signum, frame):
+            raise TimeoutError('read-gate e2e exceeded 20s — likely a transport deadlock')
+        old = signal.signal(signal.SIGALRM, _bark)
+        signal.alarm(20)
+        try:
+            code = launch([sys.executable, '-c', src], sandbox_dir=sandbox, path=led,
+                          campaign=Campaign(search=('AAA',)), scorer=_scorer)
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old)
+
+        assert code == 0
+        assert len(load_idea_ledger(led)) == 1                       # the oracle recorded the comparison
+        replies = json.loads((tmp_path / 'sandbox' / 'verdicts.json').read_text())
+        assert replies[0]['wire_version'] == WIRE_VERSION
+        assert [r['verdict'] for r in replies[0]['corpus']] == ['KILLED']  # the one-bit reply reached the child

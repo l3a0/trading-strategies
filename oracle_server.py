@@ -6,7 +6,11 @@ engine, no chains) reaches the engine ONLY through a trusted ORACLE that charges
 score to the lifetime e-LOND stream BEFORE returning a one-bit verdict — "count every look;
 don't hide a number you can't hide." `edge_search.score_and_record` is the in-process seam
 (PR #72) that already does the score -> lifetime-judge -> record -> scrub chain; this module
-is the transport + sandbox that puts the real wall around it.
+is the transport + the SUPERVISED-OPERATOR sandbox around that seam. NOTE: the wall here is a
+same-machine `cwd` + a scrubbed env, NOT a kernel filesystem jail — a malicious proposer could
+still read the engine or the answer-key ledger by absolute path. The load-bearing control at
+this stage is that the SANCTIONED proposer code (`proposer_client`) imports no engine (pinned
+by `test_import_is_engine_free`); kernel-enforced absence is the container PR (docs/read_gate.md).
 
 THE TWO SIDES:
 
@@ -51,7 +55,10 @@ from read_gate_wire import (
 # Environment variables stripped before spawning the untrusted proposer. PYTHONPATH could
 # re-expose the engine on the proposer's import path (the whole point of the sandbox is that
 # it CAN'T import it); the credential vars are belt-and-suspenders so a compromised proposer
-# can't exfiltrate via the network even though it shouldn't have one.
+# can't exfiltrate via the network even though it shouldn't have one. NOTE this is a DENY-list
+# and so intentionally INCOMPLETE — an unanticipated `*_API_KEY` / `*_TOKEN` slips through. It
+# is low-stakes only because the MVP proposer is network-free (a stub author, no client); the
+# container PR replaces it with a fresh minimal allow-list env (docs/read_gate.md).
 _SCRUBBED_ENV_KEYS: tuple[str, ...] = (
     'PYTHONPATH', 'PYTHONHOME', 'PYTHONSTARTUP',
     'GH_TOKEN', 'GITHUB_TOKEN', 'ANTHROPIC_API_KEY', 'ALPHAVANTAGE_API_KEY',
@@ -169,16 +176,25 @@ def prepare_sandbox(sandbox_dir: str, *, path: str = IDEA_LEDGER_PATH) -> None:
                         ledger (hypothesis coordinates + a one-bit KILLED/INVALID verdict,
                         SURVIVED rows excluded), already numberless by construction.
 
-    The sandbox is created if absent. This writes only these two files; the read-deny that
-    keeps everything ELSE out of the proposer's reach is `launch`'s fail-closed check + the
-    process cwd, not this function. `corpus.json` is `assert_numberless`-checked before it
-    lands, so a scoreboard regression can never seed a number into the sandbox."""
+    The sandbox is created if absent and must hold ONLY these two files: if it already contains
+    anything else, this RAISES (a stray file would be readable by the proposer), so the seeded
+    dir is guaranteed to be exactly the two safe artifacts (re-seeding is fine — only the seeds
+    are allowed to pre-exist). BOTH are `assert_numberless`-checked before they land, so a
+    scoreboard/menu regression can never seed a number into the sandbox. (The read-deny that
+    keeps the ENGINE out is `launch`'s fail-closed check; this guarantees the proposer-visible
+    CONTENT is only menu + corpus.)"""
     os.makedirs(sandbox_dir, exist_ok=True)
+    extra = set(os.listdir(sandbox_dir)) - {'menu.json', 'corpus.json'}
+    if extra:
+        raise ValueError(
+            f'prepare_sandbox: {sandbox_dir!r} must hold only the seed files; found '
+            f'{sorted(extra)} (seed a fresh/empty dir — a stray file is proposer-readable)')
 
     menu = [{'name': t.name, 'overlay': t.overlay,
              'params': dict(t.params), 'predicted_sign': t.predicted_sign}
             for t in enumerate_grammar_templates()]
     corpus = build_proposer_corpus(load_idea_ledger(path))
+    assert_numberless(menu)                # menu is coordinate-only; pin it, same bar as corpus
     assert_numberless(corpus)              # the seed must be numberless, same bar as a reply
 
     with open(os.path.join(sandbox_dir, 'menu.json'), 'w', encoding='utf-8') as f:
@@ -188,20 +204,29 @@ def prepare_sandbox(sandbox_dir: str, *, path: str = IDEA_LEDGER_PATH) -> None:
 
 
 def _assert_sandbox_clean(sandbox_dir: str) -> None:
-    """FAIL CLOSED: raise unless the sandbox dir is free of anything that would let the
-    proposer walk past the wall — the engine modules, any chain CSV, a `.git` dir (history
-    holds the answer-key ledger under any path), or a `test_*.py` (the pinned t-stats are a
-    leak surface CLAUDE.md guarantees). The boundary is only real if this holds, so it runs
-    BEFORE `prepare_sandbox` writes anything and BEFORE any subprocess is spawned."""
+    """FAIL CLOSED: raise unless the sandbox TREE is free of anything that would let the
+    proposer walk past the wall — the engine modules, any chain CSV, a `.git` (history holds
+    the answer-key ledger under any path), or a `test_*.py` (pinned t-stats are a leak surface
+    CLAUDE.md guarantees). Walks RECURSIVELY (a nested `sub/edge_search.py` breaches it too),
+    matches names CASE-INSENSITIVELY (a case-insensitive FS reads `SPY...CSV` the same file),
+    and rejects ANY symlink (an innocuously-named link can point at the whole engine checkout).
+
+    This closes the IN-SANDBOX surface only — it does NOT close the same-machine residual that
+    the repo-root engine is reachable by absolute path (see `launch`'s note). It runs BEFORE
+    `prepare_sandbox` writes anything and BEFORE any subprocess is spawned."""
     if not os.path.isdir(sandbox_dir):
         return                             # a not-yet-created dir is trivially clean
-    for entry in os.listdir(sandbox_dir):
-        if entry in _FORBIDDEN_NAMES:
-            raise ValueError(f'sandbox not clean: {entry!r} would breach the read-gate wall')
-        if entry.startswith('test_') and entry.endswith('.py'):
-            raise ValueError(f'sandbox not clean: {entry!r} (pinned t-stats are a leak surface)')
-        if any(entry.endswith(suf) for suf in _FORBIDDEN_SUFFIXES):
-            raise ValueError(f'sandbox not clean: {entry!r} (a chain file breaches the wall)')
+    for root, dirs, files in os.walk(sandbox_dir):
+        for name in dirs + files:
+            low = name.lower()             # case-insensitive FS: EDGE_SEARCH.PY == edge_search.py
+            if os.path.islink(os.path.join(root, name)):
+                raise ValueError(f'sandbox not clean: symlink {name!r} could point past the wall')
+            if low in _FORBIDDEN_NAMES:
+                raise ValueError(f'sandbox not clean: {name!r} would breach the read-gate wall')
+            if low.startswith('test_') and low.endswith('.py'):
+                raise ValueError(f'sandbox not clean: {name!r} (pinned t-stats are a leak surface)')
+            if any(low.endswith(suf) for suf in _FORBIDDEN_SUFFIXES):
+                raise ValueError(f'sandbox not clean: {name!r} (a chain file breaches the wall)')
 
 
 def _scrubbed_env() -> dict[str, str]:
@@ -235,9 +260,18 @@ def launch(
          proposer writes a request line, the oracle scores+records+scrubs and replies. EOF
          (the proposer closing its stdout) ends the loop.
 
-    Returns the proposer's exit code. The engine is reachable by the child ONLY through this
-    oracle loop (`score_fn` defaults to `score_and_record`); there is no other path across
-    the boundary."""
+    Returns the proposer's exit code.
+
+    HONESTY — this is the SUPERVISED-OPERATOR MVP, NOT a kernel seal. `cwd=sandbox_dir` is not
+    a filesystem jail: a child can still `open()` the repo-root engine or answer-key ledger by
+    absolute path, and Python seeds `sys.path[0]` from the proposer SCRIPT's directory — so a
+    `proposer_argv` that runs a script FROM the engine checkout can `import edge_search` inside
+    the "sandbox." What `launch` ENFORCES: fail-closed on a dirty sandbox, a scrubbed env (no
+    PYTHONPATH / no tokens), and a content-only `menu.json`+`corpus.json` seed. What it RELIES
+    ON: the sanctioned `proposer_client` importing no engine (pinned by `test_import_is_engine_free`),
+    and the operator pointing `proposer_argv` at an engine-free location. A real seal — kernel-
+    enforced absence + a guaranteed engine-free proposer path — is the container PR
+    (docs/read_gate.md, "The architecture that works")."""
     _assert_sandbox_clean(sandbox_dir)
     prepare_sandbox(sandbox_dir, path=path)
 

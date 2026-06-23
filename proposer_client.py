@@ -145,8 +145,17 @@ def run_proposer_loop(
     for i in range(rounds):
         proposals, model = author(menu, corpus, onboarded)
         request = build_request(round_id=f'round-{i}', model=model, proposals=proposals)
-        write_line(json.dumps(request, sort_keys=True))
-        reply = json.loads(read_line())
+        # NDJSON: terminate the line. The oracle reads via readline(), so a request WITHOUT a
+        # trailing newline deadlocks the whole session (the oracle blocks for a newline that
+        # never comes while the proposer blocks for a reply). Both sides emit newline-delimited
+        # JSON; the oracle terminates its replies the same way.
+        write_line(json.dumps(request, sort_keys=True) + '\n')
+        raw = read_line()
+        if not raw:                          # the oracle closed the pipe before replying
+            raise RuntimeError('read-gate: oracle closed the connection (EOF) before a reply')
+        reply = json.loads(raw)
+        if reply.get('type') == 'error':     # surface a rejected request loudly, never swallow it
+            raise RuntimeError(f'read-gate: oracle rejected the request: {reply.get("reason")!r}')
         replies.append(reply)
         # Fold this round's scrubbed verdicts into the corpus the next author reads. The reply
         # corpus is coordinate + one-bit-verdict rows (never a statistic), so growing the corpus
