@@ -46,6 +46,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import uuid
 from typing import Any, Callable
 
 from edge_search import (
@@ -482,11 +483,13 @@ def launch_in_container(
     container that NEVER writes a reply line would block `serve`'s blocking `readline` forever — in
     PRODUCTION nothing would unwedge it (the tests guard themselves with SIGALRM, but that is the
     test harness, not this function). So a watchdog `threading.Timer` is armed before the loop: after
-    `timeout` seconds it `proc.kill()`s the `docker run` process, which closes the child's stdout, so
-    `serve`'s `readline` returns '' (EOF) and the loop ENDS rather than hanging. The timer is
-    CANCELLED in the `finally` on normal completion, so a fast round never trips it. FAIL-CLOSED: a
-    timeout means the round did NOT complete — `proc.kill()` makes `docker run` exit non-zero, this
-    function returns that non-zero code, the timer is cancelled, and nothing is left hanging (no
+    `timeout` seconds it STOPS THE CONTAINER (`docker kill <name>`, then kills the client as a
+    fallback — killing only the `docker run` client cannot be proxied to the container and would
+    ORPHAN a runaway one), which closes the child's stdout, so `serve`'s `readline` returns '' (EOF)
+    and the loop ENDS rather than hanging. The timer is CANCELLED in the `finally` on normal
+    completion, so a fast round never trips it. FAIL-CLOSED: a timeout means the round did NOT
+    complete — the container is killed and `docker run` exits non-zero, this function returns that
+    non-zero code, the timer is cancelled, and nothing is left hanging (no
     partial reply is fabricated; the seam only records what it actually scored before the kill).
 
     REQUIRES docker + the #77 image built (`docker build -f Dockerfile.proposer -t <image> .`). The
@@ -526,8 +529,13 @@ def launch_in_container(
     # through: docker run starts a fresh container env, so no host secret can ride in (the wall
     # the soft path's _scrubbed_env can only approximate). dst is the cwd via -w, so sys.path[0]
     # is /sandbox (the mount) — the proposer's own code is reachable, the engine is not.
+    # A unique container name so the watchdog can stop the CONTAINER, not just the docker client:
+    # SIGKILL to the `docker run` client cannot be proxied to the container and would ORPHAN a
+    # runaway one (it keeps consuming the host until its own command exits — exactly the DoS the
+    # timeout exists to prevent). `docker kill <name>` stops it daemon-side; `--rm` then removes it.
+    container_name = f'read-gate-proposer-{uuid.uuid4().hex[:16]}'
     docker_argv = [
-        'docker', 'run', '-i', '--rm',
+        'docker', 'run', '-i', '--rm', '--name', container_name,
         *CONTAINER_SEAL_FLAGS,
         '--mount', f'type=bind,src={src},dst=/sandbox,readonly',
         '-w', '/sandbox',
@@ -553,10 +561,22 @@ def launch_in_container(
 
     # Wall-clock round watchdog: a wedged-but-alive container that never writes a reply line would
     # block `serve`'s blocking `readline` forever, with nothing in production to unwedge it. Arm a
-    # `threading.Timer` that, after `timeout` seconds, kills the docker process — closing the child's
-    # stdout, so `readline` returns '' (EOF) and the loop ENDS. The timer is cancelled in the
-    # `finally` on normal completion, so a fast round never trips it. `timeout=None` disables it.
-    watchdog = threading.Timer(timeout, proc.kill) if timeout is not None else None
+    # `threading.Timer` that, after `timeout` seconds, STOPS THE CONTAINER (`docker kill <name>`,
+    # then kill the client as a fallback) — killing only the `docker run` client would orphan a
+    # runaway container. Stopping it closes the child's stdout, so `readline` returns '' (EOF) and
+    # the loop ENDS. Cancelled in the `finally` on normal completion, so a fast round never trips
+    # it. `timeout=None` disables it.
+    def _stop_container() -> None:
+        try:
+            subprocess.run(['docker', 'kill', container_name], timeout=15,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass                           # best-effort; the client kill below still unblocks serve
+        try:
+            proc.kill()                    # fallback: ensure the client is gone so readline unblocks
+        except Exception:
+            pass
+    watchdog = threading.Timer(timeout, _stop_container) if timeout is not None else None
     if watchdog is not None:
         watchdog.daemon = True             # never keep the process alive on its own account
         watchdog.start()

@@ -273,3 +273,19 @@ class TestContainerRoundTimeout:
         # request, so the ledger stays empty (the seam records only what it actually scored).
         assert load_idea_ledger(led) == [], (
             'a timed-out round recorded a comparison — it should record nothing')
+        # NO ORPHAN: the watchdog must stop the CONTAINER (docker kill <name>), not just the docker
+        # client — else the runaway `sleep 999` keeps running and accumulates (a host DoS, the very
+        # thing the timeout defends against). After the round returns, no container from the image is
+        # still running. (Poll briefly: `docker run --rm` teardown can lag the client exit a beat.)
+        leaked = None
+        for _ in range(10):
+            ps = subprocess.run(
+                ['docker', 'ps', '--quiet', '--filter', f'ancestor={proposer_image}'],
+                capture_output=True, text=True, timeout=30)
+            leaked = ps.stdout.strip()
+            if not leaked:
+                break
+            time.sleep(0.5)
+        assert leaked == '', (
+            f'a timed-out container was ORPHANED (still running: {leaked!r}) — the watchdog killed '
+            f'the docker client but not the container')
