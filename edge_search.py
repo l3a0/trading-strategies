@@ -622,6 +622,15 @@ STRUCTURE_GRAMMAR: dict[str, OverlayGrammar] = {
                                   PremiumFamily.SKEW,       # widening 2: the first NEW family
                                   {'expirations': 1, 'legs': 2, 'net_vega': 'neutral',
                                    'net_delta': 'long', 'net_skew': 'short_rich'}),
+    'credit_spread': OverlayGrammar({'dte': (21, 30, 45), 'short_delta': (0.20, 0.25, 0.30),
+                                   'wing_delta': (0.05, 0.10)},
+                                  PremiumFamily.CARRY,      # widening 3: the first CARRY structure
+                                  {'expirations': 1, 'legs': 2, 'net_vega': 'short',
+                                   'net_delta': 'long', 'net_skew': 'long_rich'}),
+                                  # net_skew is long_rich (engine-VERIFIED, not assumed): the long
+                                  # OTM wing sits on the steep part of the put skew, so it carries
+                                  # HIGHER IV than the nearer-ATM short — the same long_rich read as
+                                  # the iron condor (which also longs its richer OTM wings).
 }
 
 # Flat lattice view of the grammar — byte-identical to the prior ALLOWED_GRID literal (SAME dict
@@ -729,6 +738,8 @@ STRUCTURE_TEMPLATES: tuple[StructureTemplate, ...] = (
                       (('dte', 30), ('short_delta', 0.25)), +1),
     StructureTemplate('risk_reversal', 'risk_reversal',   # widening 2 (the first NEW family: SKEW)
                       (('dte', 30), ('short_delta', 0.25)), +1),
+    StructureTemplate('credit_spread', 'credit_spread',   # widening 3 (the first CARRY structure)
+                      (('dte', 30), ('short_delta', 0.25), ('wing_delta', 0.10)), +1),
 )
 
 
@@ -858,7 +869,8 @@ def structure_kill_gate(cand: StructureCandidate,
     (store, dates, prices). Runs the overlay and scores the daily vol-P&L by the
     HAC t-stat's asymptotic null — no RNG, closed-form p (the only mechanical
     difference from the re-tag gate)."""
-    from vol_premium import (run_real_iron_condor_overlay,
+    from vol_premium import (run_real_credit_spread_overlay,
+                             run_real_iron_condor_overlay,
                              run_real_risk_reversal_overlay,
                              run_real_short_vol_overlay,
                              run_real_straddle_overlay, run_real_strangle_overlay,
@@ -867,7 +879,8 @@ def structure_kill_gate(cand: StructureCandidate,
                 'straddle': run_real_straddle_overlay,
                 'iron_condor': run_real_iron_condor_overlay,
                 'strangle': run_real_strangle_overlay,
-                'risk_reversal': run_real_risk_reversal_overlay}
+                'risk_reversal': run_real_risk_reversal_overlay,
+                'credit_spread': run_real_credit_spread_overlay}
     store, dates, prices = loaded
     summary, trades, eq = overlays[cand.overlay](dates, prices, store,
                                                  {**cand.params_dict(), 'capital': capital})

@@ -29,11 +29,13 @@ from vol_premium import (
     bs_price,
     bs_vega,
     implied_vol,
+    run_real_credit_spread_overlay,
     run_real_iron_condor_overlay,
     run_real_risk_reversal_overlay,
     run_real_short_vol_overlay,
     run_real_straddle_overlay,
     run_real_strangle_overlay,
+    select_credit_spread,
     select_iron_condor,
     select_put_entry,
     select_straddle,
@@ -1080,6 +1082,60 @@ class TestIronCondorMechanics:
         assert s['net_pnl'] < 0 and abs(s['net_pnl']) < abs(naked_loss)  # wing capped it
 
 
+class TestCreditSpreadMechanics:
+    """Synthetic, always-run checks of the two-leg run_real_credit_spread_overlay
+    (widening 3, the first CARRY structure — the put half of the iron condor): correct
+    two-put-leg selection, the net credit kept when price finishes above the short
+    strike, and the loss CAPPED by the long wing on a breach. Reuses the condor
+    scenario (its SP=95/0.25d + LP=90/0.10d are exactly the credit spread's two legs)."""
+
+    def test_selects_two_ordered_put_legs(self) -> None:
+        days = [f'2020-01-0{i + 1}' for i in range(6)]
+        dates, _, store = _condor_scenario([(d, 100.0) for d in days], _flat_condor_legs())
+        pick = select_credit_spread(store[dates[0]], 30, 0.25, 0.10)
+        assert pick is not None
+        sp, lp = pick
+        assert lp[6] < sp[6]                          # long-put wing strike below the short put
+        assert sp[1] < 0 and lp[1] < 0                # both puts (negative vendor delta)
+        assert abs(sp[1]) > abs(lp[1])               # the short sits nearer the money
+
+    def test_above_short_strike_keeps_net_credit(self) -> None:
+        """Price stays above the short strike; both puts expire worthless, so the
+        spread keeps ~its whole net credit (the win case)."""
+        days = [f'2020-02-0{i + 1}' for i in range(6)]
+        dates, prices, store = _condor_scenario([(d, 100.0) for d in days], _flat_condor_legs())
+        s, trades, _ = run_real_credit_spread_overlay(
+            dates, prices, store,
+            {'short_delta': 0.25, 'wing_delta': 0.10, 'capital': 100_000, 'risk_free_rate': 0.0})
+        assert len(trades) > 0
+        assert s['num_credit_spreads_sold'] == 1
+        assert s['net_pnl'] > 0
+        assert s['net_pnl'] == pytest.approx(s['total_premium_collected'], rel=0.02)
+
+    def test_loss_is_bounded_by_the_wing(self) -> None:
+        """Price crashes through the long put: the loss is BOUNDED — the long-put wing
+        caps the option-leg payoff at the (short − long) width, so the realized loss
+        stays a fraction of the naked short put's. Unlike the static iron condor the
+        credit spread is combined-DELTA-HEDGED (the campaign config), so the hedge
+        offsets part of the directional loss too — the exact loss isn't the unhedged
+        width formula, but it is well inside the naked-short-put loss either way."""
+        days = [f'2020-03-0{i + 1}' for i in range(6)]
+        price_path = [(days[0], 100.0)] + [(days[i], 100.0 - 4 * i) for i in range(1, 6)]  # -> 80
+        dates, prices, store = _condor_scenario(price_path, _flat_condor_legs())
+        s, _, _ = run_real_credit_spread_overlay(
+            dates, prices, store,
+            {'short_delta': 0.25, 'wing_delta': 0.10, 'capital': 100_000, 'risk_free_rate': 0.0})
+        shares = s['num_contracts'] * 100
+        credit_ps = s['total_premium_collected'] / shares
+        spread_w = 95.0 - 90.0  # short put 95 / long put 90 -> max option-leg loss = width − credit
+        worst_spread_loss = (credit_ps - spread_w) * shares     # the defined-risk floor on the legs
+        naked_loss = (credit_ps - (95.0 - 80.0)) * shares       # short put ITM by 15, no wing
+        # the wing caps the structure: the realized loss is far smaller than the naked short put's
+        assert s['net_pnl'] < 0 and abs(s['net_pnl']) < abs(naked_loss)
+        # and no worse than ~the defined-risk floor (a small slack for hedge cost on the synthetic)
+        assert s['net_pnl'] >= worst_spread_loss - abs(0.10 * worst_spread_loss)
+
+
 @pytest.mark.skipif(not (_HAVE_SPY and _HAVE_SPY_PUTS),
                     reason='needs spy_option_dailies.csv + spy_option_dailies_puts.csv (or .gz)')
 class TestSpyIronCondorExploratory:
@@ -1323,7 +1379,7 @@ class TestGenericStructureEngineSpecs:
 
     def test_specs_are_well_formed(self) -> None:
         assert set(STRUCTURE_SPECS) == {'short_vol', 'straddle', 'iron_condor', 'strangle',
-                                        'risk_reversal'}
+                                        'risk_reversal', 'credit_spread'}
         for name, spec in STRUCTURE_SPECS.items():
             assert callable(spec['select'])
             assert spec['entry_guard'] in ('each_short_positive', 'net_positive')
@@ -1365,12 +1421,14 @@ _NAMED_OVERLAY = {'short_vol': run_real_short_vol_overlay,    # post-Stage-B: th
                   'straddle': run_real_straddle_overlay,     # to run_structure_via_spec
                   'iron_condor': run_real_iron_condor_overlay,
                   'strangle': run_real_strangle_overlay,     # widening 1 (the OTM straddle)
-                  'risk_reversal': run_real_risk_reversal_overlay}  # widening 2 (SKEW)
+                  'risk_reversal': run_real_risk_reversal_overlay,  # widening 2 (SKEW)
+                  'credit_spread': run_real_credit_spread_overlay}  # widening 3 (CARRY)
 _STRUCT_PARAMS = {'short_vol': {'target_delta': 0.25, 'dte': 30},
                   'straddle': {'dte': 30},
                   'iron_condor': {'dte': 30, 'short_delta': 0.25, 'wing_delta': 0.10},
                   'strangle': {'dte': 30, 'short_delta': 0.25},
-                  'risk_reversal': {'dte': 30, 'short_delta': 0.25}}
+                  'risk_reversal': {'dte': 30, 'short_delta': 0.25},
+                  'credit_spread': {'dte': 30, 'short_delta': 0.25, 'wing_delta': 0.10}}
 
 # The EXACT rich summary field set each named overlay produces — an INDEPENDENT reference (not the
 # engine), so a dropped/renamed field fails the check. Per-overlay: short-vol echoes target_delta +
@@ -1396,6 +1454,10 @@ _OVERLAY_SUMMARY_KEYS = {
                       'interest_earned', 'total_premium_collected', 'total_hedge_cost',
                       'hedge_cost_bps', 'num_risk_reversals_sold', 'wins', 'losses', 'win_rate',
                       'max_drawdown_pct', 'risk_free_rate', 'cash'},   # hedged 2-leg, SKEW
+    'credit_spread': {'capital', 'num_contracts', 'final_equity', 'net_pnl', 'alpha_vs_cash',
+                      'interest_earned', 'total_premium_collected', 'total_hedge_cost',
+                      'hedge_cost_bps', 'num_credit_spreads_sold', 'wins', 'losses', 'win_rate',
+                      'max_drawdown_pct', 'risk_free_rate', 'cash'},   # hedged 2-leg put, CARRY
 }
 
 
@@ -1445,6 +1507,9 @@ class TestGenericStructureEngineEquivalence:
 
     def test_risk_reversal_summary_complete(self, spy_merged_market) -> None:
         _assert_engine_equivalent(spy_merged_market, 'risk_reversal')  # widening 2 (SKEW, mixed-sign)
+
+    def test_credit_spread_summary_complete(self, spy_merged_market) -> None:
+        _assert_engine_equivalent(spy_merged_market, 'credit_spread')  # widening 3 (CARRY, put-leg)
 
     @pytest.mark.skipif(not _HAVE_NVDA, reason='needs nvda_option_dailies.csv or its .gz twin')
     def test_iron_condor_summary_complete_nvda(self) -> None:
@@ -1542,11 +1607,14 @@ class TestGrammarSignatureMatchesEngine:
     """DATASET-GATED: the grammar's DECLARED economic signature (edge_search.STRUCTURE_GRAMMAR) is
     VERIFIED against the engine's actual entry legs — the consistency check that turns the typing
     from a label into an enforcement. For each structure, run its selector on SPY (calls + the
-    separate puts file merged at load, so the put-leg straddle/iron-condor/risk-reversal trade), back
-    the IV out of each leg's mid, compute the three robust axes (net_vega, net_delta, net_skew), and
-    assert the engine-derived {legs, expirations, net_vega, net_delta, net_skew} matches the declared
-    signature. A future overlay that DECLARES short vega while the engine runs something long-vega —
-    or a SKEW structure that declares short_rich while the engine longs the rich wing — fails here."""
+    separate puts file merged at load, so the put-leg straddle/iron-condor/risk-reversal/credit-spread
+    trade), back the IV out of each leg's mid, compute the three robust axes (net_vega, net_delta,
+    net_skew), and assert the engine-derived {legs, expirations, net_vega, net_delta, net_skew}
+    matches the declared signature. A future overlay that DECLARES short vega while the engine runs
+    something long-vega — or a skew structure that declares short_rich while the engine longs the rich
+    wing — fails here. (This is exactly the check that corrected the credit spread's declared net_skew
+    from short_rich to long_rich: its long OTM put wing sits on the steep part of the put skew, so it
+    is the richer leg — the same long_rich read as the iron condor.)"""
 
     def test_each_overlay_signature_matches_engine(self, spy_merged_market) -> None:
         dates, prices, store = spy_merged_market

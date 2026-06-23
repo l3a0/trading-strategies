@@ -277,6 +277,33 @@ def select_iron_condor(
     return short_call, long_call, short_put, long_put
 
 
+def select_credit_spread(
+    day: dict[str, Any], target_dte: int,
+    short_delta: float = 0.30, wing_delta: float = 0.10,
+) -> tuple[tuple[Any, ...], tuple[Any, ...]] | None:
+    """The two PUT legs of a BULL PUT CREDIT SPREAD at ONE expiration: short a
+    ~short_delta put (nearer the money) + long a ~wing_delta put (further OTM, the
+    defined-risk wing). This is the PUT HALF of the iron condor — it reuses that
+    selector's put-side band + wing logic (short_delta carried positive, matched
+    against the negative vendor delta), just without the call legs. Returns
+    (short_put, long_put) candidate tuples or None when either leg is unavailable.
+
+    EXPLORATORY, not a registered instrument: a practical retail CARRY structure
+    (theta-positive, defined-risk), not the delta-hedged-gain VRP isolator.
+    """
+    short_put = select_put_entry(day, target_dte, -short_delta)
+    if short_put is None:
+        return None
+    exp = short_put[5]
+    puts = [c for c in day['candidates'] if c[5] == exp and c[1] < 0]
+    # Long wing: strictly further OTM than the short (lower strike), and buyable (ask > 0).
+    long_put = min([p for p in puts if p[6] < short_put[6] and p[3] > 0],
+                   key=lambda c: abs(c[1] + wing_delta), default=None)
+    if long_put is None:
+        return None
+    return short_put, long_put
+
+
 def run_real_iron_condor_overlay(
     dates: list[str],
     prices: list[float],
@@ -483,6 +510,35 @@ def _legs_risk_reversal(day: dict[str, Any], params: dict[str, Any]) -> list[dic
     ]
 
 
+def _legs_credit_spread(day: dict[str, Any], params: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Bull PUT credit spread — SHORT a -short_delta put (nearer ATM) + LONG a -wing_delta put
+    (further OTM, the defined-risk wing) at one expiry. The CARRY family's first structure: it
+    collects a net CREDIT and is theta-positive, the put half of the iron condor (select_credit_spread
+    reuses that selector's put-side band + wing logic). Combined-delta-hedged so the residual is the
+    carry, not direction. The short put fills at bid, the long-put wing at ask. Net SHORT vega (the
+    short leg sits nearer the money, where vega is larger), net LONG delta (short a put = long the
+    underlying), and LONG_RICH skew (engine-verified: the long OTM wing sits on the steep part of the
+    put skew, so it carries HIGHER IV than the nearer-ATM short — the iron-condor's put-wing read)."""
+    dte = int(params.get('dte', 30))
+    fill = str(params.get('fill', 'bid_ask'))
+    short_delta = float(params.get('short_delta', 0.30))
+    wing_delta = float(params.get('wing_delta', 0.10))
+    pick = select_credit_spread(day, dte, short_delta, wing_delta)
+    if pick is None:
+        return None
+    sp, lp = pick
+    sp_in = sp[2] if fill == 'bid_ask' else sp[4]      # short the near put — collect the bid
+    lp_in = lp[3] if fill == 'bid_ask' else lp[4]      # long the wing — pay the ask
+    return [
+        {'sign': -1, 'right': 'put', 'strike': sp[6], 'contract': sp[7],
+         'entry_net': sp_in - COMMISSION_PER_SHARE, 'mid': sp[4], 'delta': sp[1],
+         'expiration': sp[5]},
+        {'sign': +1, 'right': 'put', 'strike': lp[6], 'contract': lp[7],
+         'entry_net': lp_in + COMMISSION_PER_SHARE, 'mid': lp[4], 'delta': lp[1],
+         'expiration': sp[5]},
+    ]
+
+
 def _summary_strangle(q: dict[str, Any], p: dict[str, Any]) -> dict[str, Any]:
     return {                                       # same field set as the straddle (its OTM cousin)
         'capital': q['capital'], 'num_contracts': q['num_contracts'],
@@ -509,7 +565,20 @@ def _summary_risk_reversal(q: dict[str, Any], p: dict[str, Any]) -> dict[str, An
     }
 
 
-# The FIVE structures as their generic-engine configs (selector + the three knobs) plus
+def _summary_credit_spread(q: dict[str, Any], p: dict[str, Any]) -> dict[str, Any]:
+    return {                              # hedged two-leg structure (same shape as the strangle);
+        'capital': q['capital'], 'num_contracts': q['num_contracts'],   # CARRY: a net CREDIT
+        'final_equity': q['final_equity'], 'net_pnl': q['net_pnl'],     # (short put > long wing)
+        'alpha_vs_cash': q['alpha_vs_cash'], 'interest_earned': q['interest_earned'],
+        'total_premium_collected': q['total_premium_collected'],
+        'total_hedge_cost': q['total_hedge_cost'], 'hedge_cost_bps': q['hedge_cost_bps'],
+        'num_credit_spreads_sold': q['num_sold'], 'wins': q['wins'], 'losses': q['losses'],
+        'win_rate': q['win_rate'], 'max_drawdown_pct': q['max_drawdown_pct'],
+        'risk_free_rate': q['risk_free_rate'], 'cash': q['cash'],
+    }
+
+
+# The SIX structures as their generic-engine configs (selector + the three knobs) plus
 # `defaults` — the per-overlay parameter defaults that differ from the generic's own (only
 # the straddle's hedge_cost_bps=0.5 vs the generic/short-vol 1.0). Merged UNDER user params,
 # exactly reproducing each frozen overlay's `params.get(..., default)`. `summary` reassembles the
@@ -530,6 +599,9 @@ STRUCTURE_SPECS: dict[str, dict[str, Any]] = {
     'risk_reversal': {'select': _legs_risk_reversal, 'entry_guard': 'each_short_positive',
                     'hedge_mode': 'combined', 'management': 'hold',   # SKEW: short put + long call
                     'defaults': {'hedge_cost_bps': 0.5}, 'summary': _summary_risk_reversal},
+    'credit_spread': {'select': _legs_credit_spread, 'entry_guard': 'net_positive',
+                    'hedge_mode': 'combined', 'management': 'hold',   # CARRY: short near put + long wing
+                    'defaults': {'hedge_cost_bps': 0.5}, 'summary': _summary_credit_spread},
 }
 
 
@@ -575,6 +647,20 @@ def run_real_risk_reversal_overlay(
     wing. Mixed-sign (the first hedged structure that isn't all-short), so it exercises the engine's
     position-delta `combined` hedge in its general form."""
     return run_structure_via_spec('risk_reversal', dates, prices, store, params)
+
+
+def run_real_credit_spread_overlay(
+    dates: list[str],
+    prices: list[float],
+    store: dict[str, dict[str, Any]],
+    params: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]], pd.DataFrame]:
+    """Real-chain bull-PUT-credit-spread overlay — SHORT a -short_delta put + LONG a -wing_delta put
+    (further OTM), combined-delta-hedged, held to expiry. The third grammar WIDENING and the first
+    CARRY-family structure: theta-positive, defined-risk, collecting a net credit (the put half of
+    the iron condor). A pure STRUCTURE_SPEC + delegate, no engine change — single-expiration, so the
+    Stage-B engine already handles it. Net SHORT vega, net LONG delta, long_rich skew (engine-verified)."""
+    return run_structure_via_spec('credit_spread', dates, prices, store, params)
 
 
 def run_real_structure_overlay(
