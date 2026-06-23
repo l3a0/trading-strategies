@@ -1,5 +1,21 @@
 # The read-gate — why hiding the answer key fails, and what counting looks does instead
 
+## Status (built so far)
+
+**The in-process seam (#72) and the transport are BUILT; the container hardening and the real
+LLM author remain.** `edge_search.score_and_record` is the oracle seam (score → lifetime-judge →
+record → return only the one-bit scoreboard). `oracle_server.py` (`serve` / `launch` /
+`prepare_sandbox`, fail-closed via `assert_sandbox_clean`) + `proposer_client.py`
+(`run_proposer_loop`, imports only `read_gate_wire`) are the NDJSON transport + the
+**supervised-operator** sandbox — pinned by `test_oracle_server.py` / `test_proposer_client.py`,
+including a real `launch`↔`proposer_client` end-to-end. This is HONEST about being supervised, not
+airtight: a same-machine `cwd` is not a kernel jail (the repo-root engine + answer-key ledger stay
+reachable by absolute path), so the load-bearing control at this stage is that the sanctioned
+proposer code imports no engine (`test_import_is_engine_free`). Two builds remain: the **container**
+(kernel-enforced absence + a guaranteed engine-free proposer path + a single-host egress allow-list)
+and the **real model author** (a temperature-0 Claude call behind the boundary). An LLM author must
+NOT be activated until the container exists. The residual analysis below is unchanged.
+
 ## Why this doc exists
 
 The structure-search desk (see [edge_search.md](edge_search.md)) automates options-structure
