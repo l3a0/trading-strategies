@@ -64,19 +64,32 @@ from read_gate_wire import (
     assert_numberless,
 )
 
-# Environment variables stripped before spawning the untrusted proposer. PYTHONPATH could
-# re-expose the engine on the proposer's import path (the whole point of the sandbox is that
-# it CAN'T import it); the credential vars are belt-and-suspenders so a compromised proposer
-# can't exfiltrate via the network even though it shouldn't have one. NOTE this is a DENY-list
-# and so intentionally INCOMPLETE — an unanticipated `*_API_KEY` / `*_TOKEN` slips through. It
-# is low-stakes only because the MVP proposer is network-free (a stub author, no client); the
-# container PR replaces it with a fresh minimal allow-list env (docs/read_gate.md).
-_SCRUBBED_ENV_KEYS: tuple[str, ...] = (
-    'PYTHONPATH', 'PYTHONHOME', 'PYTHONSTARTUP',
-    'GH_TOKEN', 'GITHUB_TOKEN', 'ANTHROPIC_API_KEY', 'ALPHAVANTAGE_API_KEY',
-    'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'OPENAI_API_KEY',
-    'VIRTUAL_ENV', 'CONDA_PREFIX',
-)
+# Environment variables PASSED THROUGH to the untrusted proposer. This is an ALLOW-list, not a
+# deny-list — SAFE BY DEFAULT: everything not named here is dropped by omission, so an
+# unanticipated var (a new `*_API_KEY`, a cloud cred, a proxy/config var, or a `PYTHON*` that
+# re-exposes the engine on the import path) CANNOT leak. A deny-list is unsafe by construction —
+# it only stops what someone remembered to list — and the transport review flagged the old
+# deny-list as known-incomplete; flipping to an allow-list closes that whole class.
+#
+# The set is deliberately MINIMAL. The MVP proposer is network-free, stdlib-only, and spawned
+# via an ABSOLUTE `sys.executable`, so a venv Python resolves its own prefix from that path and
+# needs almost nothing (empirically it starts and imports the stdlib under an EMPTY env). What's
+# kept, and why each earns its place:
+#   * PATH                     — a legitimate stdlib subprocess can resolve system tools.
+#   * HOME                     — some stdlib paths (`~` expansion, default config dirs) read it.
+#   * TMPDIR / TMP / TEMP      — tempfile honors these; a stripped temp dir breaks file writes.
+#   * LANG / LC_ALL / LC_CTYPE — locale/encoding, so text I/O doesn't fall to a surprising default.
+#   * TZ                       — stable local-time for any datetime the proposer formats.
+# Notably ABSENT (and they STAY absent): PYTHONPATH / PYTHONHOME / PYTHONSTARTUP (any could
+# re-expose the engine on the import path — the whole point of the sandbox is that it CAN'T
+# import it), every token / API key / cloud credential, and proxy vars (HTTP(S)_PROXY, etc.).
+#
+# Track C-2 (the container, docs/read_gate.md) replaces process-env control entirely with a
+# fresh minimal image env — at which point the container's env subsumes this allow-list.
+_ENV_ALLOWLIST: frozenset[str] = frozenset({
+    'PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP',
+    'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ',
+})
 
 # Filenames/patterns whose presence in the sandbox dir means the wall is NOT real — the
 # proposer could import the engine, read a chain CSV, or `git show` the answer-key ledger.
@@ -279,10 +292,14 @@ def _assert_sandbox_clean(sandbox_dir: str) -> None:
 
 
 def _scrubbed_env() -> dict[str, str]:
-    """A copy of the current environment with the engine-/credential-exposing keys dropped,
-    so the spawned proposer can neither re-import the engine via PYTHONPATH nor exfiltrate
-    via a stray token. Everything else (PATH so python resolves, etc.) is preserved."""
-    return {k: v for k, v in os.environ.items() if k not in _SCRUBBED_ENV_KEYS}
+    """The child environment for the spawned proposer, built from an ALLOW-list (safe by
+    default): ONLY the curated `_ENV_ALLOWLIST` keys are carried over from the current
+    environment; everything else is dropped by omission. So the proposer can neither re-import
+    the engine via PYTHONPATH nor exfiltrate via a stray token — and, unlike a deny-list, an
+    unanticipated var (a new API key, a cloud cred, a proxy setting) can't slip through because
+    it was never on the list. A var that isn't set in the parent is simply absent from the
+    child (we copy what's present, never invent values)."""
+    return {k: os.environ[k] for k in _ENV_ALLOWLIST if k in os.environ}
 
 
 def launch(
@@ -304,8 +321,9 @@ def launch(
       2. Seed the sandbox with exactly four files — `menu.json` + `corpus.json` (data) plus
          `proposer_client.py` + `read_gate_wire.py` (the proposer's engine-free code)
          (`prepare_sandbox`). Copying the code IN is what closes the import vector (step 3).
-      3. Spawn `proposer_argv` with `cwd=sandbox_dir`, a SCRUBBED env (no PYTHONPATH / no
-         tokens), and stdin/stdout as pipes — the proposer reads requests from / writes
+      3. Spawn `proposer_argv` with `cwd=sandbox_dir`, an ALLOW-listed env (only the curated
+         `_ENV_ALLOWLIST` keys — no PYTHONPATH, no tokens, no unanticipated var), and
+         stdin/stdout as pipes — the proposer reads requests from / writes
          replies to the oracle. Because cwd is the sandbox AND the proposer's code lives there,
          `sys.path[0]` resolves to the sandbox (which holds no engine), so `import edge_search`
          raises ModuleNotFoundError — the import vector is CLOSED.
@@ -326,8 +344,9 @@ def launch(
 
     What is STILL OPEN — `cwd=sandbox_dir` is not a kernel filesystem jail: a child can still
     `open()` the repo-root engine or answer-key ledger by absolute path, or shell out. What
-    `launch` ENFORCES: fail-closed on a dirty sandbox, a scrubbed env (no PYTHONPATH / no
-    tokens), a four-file seed, and the closed import path. What it RELIES ON: the sanctioned
+    `launch` ENFORCES: fail-closed on a dirty sandbox, an allow-listed env (only `_ENV_ALLOWLIST`,
+    so PYTHONPATH / tokens / unanticipated vars are dropped by omission), a four-file seed, and
+    the closed import path. What it RELIES ON: the sanctioned
     `proposer_client` importing no engine (pinned by `test_import_is_engine_free`). A real seal
     — kernel-enforced absence of the abspath read + the subprocess — is the container PR
     (docs/read_gate.md, "The architecture that works")."""

@@ -45,7 +45,7 @@ from oracle_server import (
     prepare_sandbox,
     serve,
 )
-from oracle_server import _scrubbed_env  # the scrubbed env launch spawns the proposer with
+from oracle_server import _ENV_ALLOWLIST, _scrubbed_env  # the allow-listed env launch spawns the proposer with
 
 # A synthetic per-candidate scorer shaped like TestReadGateOracleSeam._scorer: a KILLED
 # verdict (t=0.5 is nowhere near the e-LOND bar) carrying the banned result keys, so the
@@ -394,3 +394,41 @@ class TestImportVectorClosed:
             f'proposer_client was NOT importable from the sandbox.\nstderr={proc.stderr!r}')
         assert 'LEAKED:' in proc.stdout and proc.stdout.strip() == 'LEAKED:', (
             f'importing proposer_client dragged the engine in: {proc.stdout!r}')
+
+
+class TestScrubbedEnv:
+    """`_scrubbed_env` is an ALLOW-list, not a deny-list: only the curated `_ENV_ALLOWLIST`
+    keys survive into the child env, and EVERYTHING ELSE is dropped by omission. The negative
+    test is the point — a deny-list can't keep up with new secret-bearing vars, so we assert
+    that an unanticipated `*_API_KEY` / cloud cred / PYTHONPATH never reaches the proposer
+    precisely BECAUSE it was never allow-listed (not because someone remembered to deny it)."""
+
+    def test_allowlisted_vars_pass_through(self, monkeypatch) -> None:
+        # PATH/HOME are on the allow-list, so a parent value reaches the child env verbatim.
+        monkeypatch.setenv('PATH', '/usr/bin:/bin')
+        monkeypatch.setenv('HOME', '/home/proposer')
+        env = _scrubbed_env()
+        assert env['PATH'] == '/usr/bin:/bin'
+        assert env['HOME'] == '/home/proposer'
+
+    def test_unanticipated_secret_vars_are_dropped(self, monkeypatch) -> None:
+        # The deny-list-can't-keep-up failure the allow-list fixes: inject vars a deny-list
+        # might miss — PYTHONPATH (the engine import vector), a known key, a cloud cred, and a
+        # NOVEL token nobody listed — and assert NONE of them reach the child. They're absent
+        # because they aren't on the allow-list, which is exactly the safe-by-default property.
+        for k in ('PYTHONPATH', 'ANTHROPIC_API_KEY', 'AWS_SECRET_ACCESS_KEY',
+                  'SOME_NOVEL_TOKEN'):
+            monkeypatch.setenv(k, 'leak-me')
+        env = _scrubbed_env()
+        for k in ('PYTHONPATH', 'ANTHROPIC_API_KEY', 'AWS_SECRET_ACCESS_KEY',
+                  'SOME_NOVEL_TOKEN'):
+            assert k not in env, f'{k} leaked into the proposer env (allow-list breached)'
+
+    def test_child_env_is_a_subset_of_the_allowlist(self, monkeypatch) -> None:
+        # Whatever the parent carries, the child holds ONLY allow-listed keys — no key outside
+        # `_ENV_ALLOWLIST` can ever appear (pins the safe-by-default invariant directly).
+        monkeypatch.setenv('PATH', '/usr/bin')
+        monkeypatch.setenv('UNLISTED_VAR', 'x')
+        env = _scrubbed_env()
+        assert set(env).issubset(_ENV_ALLOWLIST)
+        assert 'UNLISTED_VAR' not in env
