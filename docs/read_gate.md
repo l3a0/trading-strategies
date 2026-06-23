@@ -173,4 +173,11 @@ be theater and must not be built or claimed as a control.**
   menu-walker proposer.
 - `build_proposer_corpus` / `scrub_ledger_row` / `SAFE_FIELDS` / `run_proposer_round` in
   `edge_search.py` — the (correct, airtight-for-what-it-covers) scrub, and the proposer loop the
-  oracle architecture would slot into unchanged.
+  oracle architecture slots into unchanged.
+- `edge_search.score_and_record` — the in-process realization of the oracle SEAM (PR1, the
+  first build of this architecture): the single entry point that scores → lifetime-judges →
+  records BEFORE replying and hands back only the scrubbed one-bit scoreboard. The contract it
+  speaks (`WIRE_VERSION`, `BANNED_RESULT_FIELDS`, `assert_numberless`, `REQUIRED_MODEL_FIELDS`,
+  `PROPOSAL_FIELDS`) lives in the dependency-free `read_gate_wire.py` so the sandboxed proposer
+  shares it without importing the engine. The transport + the sandbox (the wall around the seam)
+  are the remaining build; this seam is what they bolt onto.
