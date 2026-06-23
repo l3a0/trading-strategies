@@ -78,6 +78,13 @@ from explorations import (
     load_naked_run,
     post_rip_mask,
 )
+from read_gate_wire import (   # the dependency-free read-gate contract (shared w/ the proposer)
+    BANNED_RESULT_FIELDS,
+    PROPOSAL_FIELDS,
+    REQUIRED_MODEL_FIELDS,
+    WIRE_VERSION,
+    assert_numberless,
+)
 
 # --- campaign configuration (committed before the numbers are read) ---------
 
@@ -1566,6 +1573,79 @@ def run_proposer_round(
     if record:
         result['recorded'] = record_trials(ledger_rows, path)
     return result
+
+
+# --- the read-gate oracle seam (the one-bit entry point across the boundary) ---
+# The PROPOSER (untrusted, sandboxed — docs/read_gate.md) may reach the engine ONLY
+# through score_and_record: it sends coordinate-only proposals + its self-reported model
+# identity; the oracle scores -> lifetime-judges -> records (BEFORE replying) -> and hands
+# back ONLY the scrubbed one-bit scoreboard. The t-stat-bearing rows never cross back. This
+# is the seam the oracle server + proposer client (the next PRs) bolt onto; PR1 builds and
+# pins it IN-PROCESS so the boundary's contract is frozen before the transport exists. The
+# contract itself (WIRE_VERSION, BANNED_RESULT_FIELDS, assert_numberless, the field lists)
+# lives in the dependency-free read_gate_wire so the proposer can share it without importing
+# the engine.
+def score_and_record(
+    proposals: Sequence[dict[str, Any]],
+    *,
+    round_id: str,
+    model: dict[str, Any],
+    campaign: Campaign = STRUCTURE_CAMPAIGN,
+    path: str = IDEA_LEDGER_PATH,
+    capital: float = STRUCTURE_CAPITAL,
+    provenance_path: str | None = None,
+    scorer: Callable[[StructureCandidate], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """The ORACLE's single exported entry point — the ONLY way across the read-gate to
+    reach the engine (docs/read_gate.md). Takes COORDINATE-ONLY proposals
+    (`{overlay, ticker, params, predicted_sign}`) plus the proposer's self-reported `model`
+    identity (REQUIRED_MODEL_FIELDS), runs the full gate -> score -> lifetime-judge -> record
+    chain (`run_proposer_round`), and returns ONLY the scrubbed one-bit scoreboard — never
+    the t-stat-bearing rows.
+
+    The honesty property "every look is a recorded look" holds BY CONSTRUCTION: the engine
+    is reachable only through here, and here always runs with `record=True`, so each look is
+    committed to the lifetime e-LOND stream (and the provenance audit log) BEFORE the reply
+    is composed. Two guards keep the reply clean: `rejected[].proposal` is re-scrubbed to
+    PROPOSAL_FIELDS (a proposer cannot smuggle an extra key back through its own echoed
+    input, nor crash the numberless check with a banned-named key it sent), and the whole
+    reply is `assert_numberless`-checked as defense-in-depth behind the allow-list scrub.
+
+    The reply's `corpus` is THIS round's scrubbed verdicts; the *lifetime* scrubbed corpus is
+    seeded into the proposer's sandbox separately, not via the reply. A survivor is excluded
+    from the corpus and escalates to manual pre-registration — so `recorded > 0` with an
+    empty `corpus` means a cell survived. `scorer` is injectable for the synthetic test
+    layer (no engine / no datasets)."""
+    missing = [f for f in REQUIRED_MODEL_FIELDS if f not in model]
+    if missing:
+        raise ValueError(f'score_and_record: model identity missing {missing} '
+                         f'(required: {list(REQUIRED_MODEL_FIELDS)})')
+
+    def _echo(_menu: Any, _corpus: Any, _onboarded: Any) -> ProposalBatch:
+        return ProposalBatch(tuple(proposals),
+                             model_requested=model['model_requested'],
+                             model_served=model['model_served'],
+                             temperature=model['temperature'],
+                             prompt_sha=model['prompt_sha'])
+    result = run_proposer_round(
+        campaign, path=path, capital=capital, scorer=scorer,
+        run=True, record=True, author=_echo,
+        round_id=round_id, provenance_path=provenance_path)
+    # Re-scrub the echoed rejects to COORDINATES ONLY: the oracle never hands back an extra
+    # key the proposer attached to its own proposal, so untrusted input can neither ride the
+    # reply nor trip assert_numberless with a banned-named key the oracle never produced.
+    rejected = [{'proposal': ({k: r['proposal'].get(k) for k in PROPOSAL_FIELDS}
+                              if isinstance(r['proposal'], dict) else {}),
+                 'reason': r['reason']} for r in result['rejected']]
+    reply = {
+        'wire_version': WIRE_VERSION,
+        'recorded': result['recorded'],
+        'needs_onboard': result['needs_onboard'],
+        'rejected': rejected,
+        'corpus': build_proposer_corpus(result['ledger_rows']),
+    }
+    assert_numberless(reply)
+    return reply
 
 
 def main() -> None:

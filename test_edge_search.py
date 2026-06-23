@@ -38,6 +38,8 @@ from edge_search import (
     STRUCTURE_SEARCH,
     STRUCTURE_TEMPLATES,
     TREND_WINDOWS,
+    WIRE_VERSION,
+    BANNED_RESULT_FIELDS,
     Campaign,
     Candidate,
     CycleData,
@@ -65,6 +67,8 @@ from edge_search import (
     kill_gate,
     propose_structure_candidates,
     run_proposer_round,
+    score_and_record,
+    assert_numberless,
     _load_ticker_data,
     load_idea_ledger,
     load_proposer_corpus,
@@ -1087,6 +1091,78 @@ class TestLLMProposer:
         prov_after = [json.loads(ln) for ln in open(pa)]
         assert len(prov_after) == 2                                                      # the re-proposal IS audited ...
         assert prov_after[-1]['model_served'] == 'B-snap' and prov_after[-1]['accepted'] == []  # ... but accepted nothing
+
+
+class TestReadGateOracleSeam:
+    """PR 1 of the read-gate: `score_and_record` — the oracle's one-bit entry point, the
+    ONLY way across the boundary to the engine. It records BEFORE replying and hands back
+    only the scrubbed scoreboard (no t-stats). Always-run, synthetic (injected scorer; no
+    engine/datasets). The wall (separate processes) is a later PR; this pins the contract."""
+
+    @staticmethod
+    def _scorer(cand):
+        return {'phase': 'structure', 'template': cand.template, 'ticker': cand.ticker,
+                'params': cand.params_dict(), 'predicted_sign': cand.predicted_sign,
+                't_stat_newey_west': 0.5, 'sign_ok': True, 'p_value': 0.3}
+
+    _MODEL = {'model_requested': 'claude-x', 'model_served': 'claude-x-snap',
+              'temperature': 0.0, 'prompt_sha': 'abc'}
+    _CELL = {'overlay': 'short_vol', 'ticker': 'AAA',
+             'params': {'target_delta': 0.25, 'dte': 30}, 'predicted_sign': 1}
+
+    def test_records_and_returns_one_bit_view(self, monkeypatch, tmp_path) -> None:
+        # NOTE: record-before-reply is STRUCTURAL (run_proposer_round records, then
+        # score_and_record composes the reply from its return) — this asserts the
+        # recording is present by return time + the reply is the scrubbed one-bit view.
+        monkeypatch.setattr('edge_search._is_onboarded', lambda tk: True)
+        led = str(tmp_path / 'idea_ledger.jsonl')
+        reply = score_and_record([self._CELL], round_id='r1', model=self._MODEL,
+                                 campaign=Campaign(search=('AAA',)), path=led,
+                                 provenance_path=str(tmp_path / 'prov.jsonl'), scorer=self._scorer)
+        assert len(load_idea_ledger(led)) == 1                                    # the comparison row is on disk
+        assert reply['recorded'] == 1 and reply['wire_version'] == WIRE_VERSION
+        # the reply is the SCRUBBED scoreboard — a one-bit verdict, never the raw rows
+        assert 'rows' not in reply and 'ledger_rows' not in reply and 'candidates' not in reply
+        assert [r['verdict'] for r in reply['corpus']] == ['KILLED']
+        assert all('p_value' not in r and 't_stat_newey_west' not in r for r in reply['corpus'])
+
+    def test_assert_numberless_catches_a_leak(self) -> None:
+        assert_numberless({'corpus': [{'template': 'x', 'verdict': 'KILLED'}]})   # clean: no raise
+        with pytest.raises(ValueError, match='numberless'):
+            assert_numberless({'corpus': [{'template': 'x', 't_stat_newey_west': 2.1}]})
+        with pytest.raises(ValueError, match='numberless'):
+            assert_numberless({'a': {'b': [{'p_value': 0.01}]}})                  # nested leak caught too
+
+    def test_banned_set_covers_engine_result_fields(self) -> None:
+        # the guard's promise ("a future leak fails loudly") only holds if every result key
+        # the engine produces is banned — incl. the easy-to-miss n_days / nw_lag / sign_ok
+        assert {'t_stat_newey_west', 'p_value', 'e_value', 'elond_survivor', 'by_survivor',
+                'n_days', 'nw_lag', 'sign_ok', 'data_lineage_hash'} <= BANNED_RESULT_FIELDS
+
+    def test_proposer_cannot_crash_oracle_with_a_banned_named_key(self, monkeypatch, tmp_path) -> None:
+        # S1 regression: an untrusted proposal carrying a banned-named key gets rejected,
+        # and the echoed rejected[].proposal is re-scrubbed to coordinates — so it neither
+        # rides the reply nor trips assert_numberless (which would crash the oracle).
+        monkeypatch.setattr('edge_search._is_onboarded', lambda tk: True)
+        led = str(tmp_path / 'l.jsonl')
+        sneaky = {**self._CELL, 'ticker': 'ZZZ', 't_stat_newey_west': 9.9}        # off-campaign + banned key
+        reply = score_and_record([sneaky], round_id='r', model=self._MODEL,
+                                 campaign=Campaign(search=('AAA',)), path=led,
+                                 provenance_path=str(tmp_path / 'p.jsonl'), scorer=self._scorer)
+        assert_numberless(reply)                                                  # did not raise
+        echoed = reply['rejected'][0]['proposal']
+        assert set(echoed) == {'overlay', 'ticker', 'params', 'predicted_sign'}   # scrubbed to coords
+        assert 't_stat_newey_west' not in echoed
+
+    def test_missing_model_field_raises_before_recording(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setattr('edge_search._is_onboarded', lambda tk: True)
+        led = str(tmp_path / 'l.jsonl')
+        bad_model = {k: v for k, v in self._MODEL.items() if k != 'prompt_sha'}
+        with pytest.raises(ValueError, match='prompt_sha'):
+            score_and_record([self._CELL], round_id='r', model=bad_model,
+                             campaign=Campaign(search=('AAA',)), path=led,
+                             provenance_path=str(tmp_path / 'p.jsonl'), scorer=self._scorer)
+        assert load_idea_ledger(led) == []                                        # nothing recorded on a bad request
 
 
 class TestStructurePhase:
