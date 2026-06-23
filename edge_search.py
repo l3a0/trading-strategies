@@ -689,6 +689,26 @@ def grid_universe_size() -> int:
                for grid in ALLOWED_GRID.values())
 
 
+def max_proposals_per_round(campaign: 'Campaign') -> int:
+    """The HARD per-invocation ceiling on cells a single proposer round may score —
+    the e-LOND BUDGET GUARD (docs/llm_proposer_plan.md, Phase A). It is the full
+    reachable hypothesis space: every closed-grammar template (`grid_universe_size()`)
+    crossed with every committed search ticker. No author — the deterministic
+    menu-walker OR a future LLM — can score MORE cells in one round than the entire
+    grammar x universe permits, so a runaway author (a model hallucinating thousands
+    of proposals) cannot drain the online-FDR budget in a single look (e-LOND power
+    degrades as gamma_t -> 0, so an unbounded stream is the danger the small menu and
+    this cap both guard).
+
+    It is a CEILING, not a target: the menu-walker's natural one-round sweep over the
+    untried space sits at or below it by construction (the grammar is finite), so the
+    cap never silently truncates a legitimate full menu-walk — it only bites an author
+    that proposes off the end of the reachable space. The LLM front-end's `max_batch` is
+    a TIGHTER per-call throttle layered inside this hard ceiling, not a replacement for
+    it (the menu-walker path takes no `max_batch`)."""
+    return grid_universe_size() * len(campaign.search)
+
+
 def _validate_grammar(label: str, overlay: str,
                       params: tuple[tuple[str, Any], ...], predicted_sign: int) -> None:
     """Enforce the closed grammar on an (overlay, params, sign) triple. Raises
@@ -1400,9 +1420,18 @@ def build_proposer_corpus(ledger_rows: Sequence[dict[str, Any]]) -> list[dict[st
     bar), and per the manual-graduation discipline it escalates to human pre-
     registration out-of-band — it must never feed back into automated proposal. So
     the corpus is the duds to avoid (KILLED) plus unmeasurable tickers (INVALID).
-    Re-proposing an excluded survivor cell is harmless: record_trials dedupes it."""
-    return [s for r in ledger_rows
-            if (s := scrub_ledger_row(r))['verdict'] != 'SURVIVED']
+    Re-proposing an excluded survivor cell is harmless: record_trials dedupes it.
+
+    The result is `assert_numberless`-checked before return: this corpus is THE proposer-
+    visible surface (the seed file it reads, the deltas the oracle reply carries, and — under
+    the oracle-side prompt builder, docs/llm_proposer_plan.md — the bytes that go into the
+    model's prompt), so the same key-name guard the oracle reply runs is applied at the
+    source. The allow-list scrub already guarantees this; the assertion is defense-in-depth
+    that fails loudly if a future SAFE_FIELDS edit ever admitted a result-named key."""
+    corpus = [s for r in ledger_rows
+              if (s := scrub_ledger_row(r))['verdict'] != 'SURVIVED']
+    assert_numberless(corpus, 'proposer_corpus')
+    return corpus
 
 
 def load_proposer_corpus(path: str = IDEA_LEDGER_PATH) -> list[dict[str, Any]]:
@@ -1676,6 +1705,12 @@ def run_proposer_round(
     else:
         cands, needs_onboard, rejected, batch = llm_propose_candidates(
             author, campaign, corpus, tried, max_batch)
+    # The HARD e-LOND BUDGET GUARD (docs/llm_proposer_plan.md, Phase A) — enforced for
+    # EVERY author path, not just the LLM's `max_batch`. A single round can never score
+    # more cells than the full reachable grammar x universe, so a runaway author cannot
+    # drain the online-FDR budget in one look. It is a CEILING the finite menu-walk sits
+    # under by construction; it bites only an author that ran off the end of the space.
+    cands = cands[:max_proposals_per_round(campaign)]
     result: dict[str, Any] = {'proposed': len(cands), 'recorded': 0,
                               'needs_onboard': needs_onboard, 'rejected': rejected,
                               'candidates': cands, 'rows': [], 'ledger_rows': []}
