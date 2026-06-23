@@ -922,7 +922,13 @@ def _load_ticker_data(ticker: str, end: str = STRUCTURE_END,
         # (the window stays the canonical one) — it only enriches each canonical day with the
         # >60-DTE call legs the calendar's far leg needs. setdefault is unused on purpose: we never
         # create a new date key, so a far-only date is silently dropped, exactly as intended.
-        far_store = load_chain_store(_far_chain_paths(ticker)[0], start=start)
+        # Load ONLY the far legs (DTE >= 60). The canonical store already holds DTE <= 60, so the far
+        # file's near-term rows are exact duplicates (the calendar's ~30-DTE near leg is selected from
+        # the canonical candidates, and those rows' marks are identical to the canonical's). Loading
+        # the file whole — its dense near-term bulk — is what OOMs the campaign on a ~7GB CI runner.
+        # min_dte=60 keeps the boundary + the >60 far legs the calendar's far_dte=90 leg needs;
+        # verified byte-identical on the pinned calendar t-stats.
+        far_store = load_chain_store(_far_chain_paths(ticker)[0], start=start, min_dte=60)
         keep = set(days)
         for d, far_day in far_store.items():
             tgt = store.get(d)
@@ -1025,32 +1031,45 @@ def run_structure_campaign(campaign: Campaign = STRUCTURE_CAMPAIGN,
     over the lifetime stream via judge_against_lifetime_stream before recording (#3b)."""
     from validate_dailies import SCALE_TOL
     cands = enumerate_structure_candidates(campaign) if candidates is None else list(candidates)
-    if scorer is None:
-        # Cache key is (ticker, include_far): a calendar cell loads the far-augmented store while
-        # every single-expiration cell loads the byte-identical canonical store — two distinct cache
-        # entries for the same ticker, so the wider far data never reaches a single-exp overlay.
-        cache: dict[tuple[str, bool], tuple[Any, list[str], list[float]]] = {}
-        invalid: dict[str, float] = {}  # keyed by TICKER: the price/chain scale is DTE-window-independent
-
-        def _default_score(cand: StructureCandidate) -> dict[str, Any]:
-            far = _uses_far_chain(cand.overlay)
-            key = (cand.ticker, far)
-            if key not in cache:
-                cache[key] = _load_ticker_data(cand.ticker, include_far=far)
-                ratio = _ticker_scale_ratio(cache[key])
-                if ratio is not None and abs(ratio - 1.0) > SCALE_TOL:
-                    invalid[cand.ticker] = ratio
-            if cand.ticker in invalid:
-                return {'phase': 'structure', 'template': cand.template, 'overlay': cand.overlay,
-                        'ticker': cand.ticker,
-                        'params': cand.params_dict(), 'predicted_sign': cand.predicted_sign,
-                        'measurement_invalid': True, 'scale_ratio': round(invalid[cand.ticker], 3),
-                        't_stat_newey_west': None, 'sign_ok': False, 'p_value': None}
-            return structure_kill_gate(cand, cache[key], capital)
-
-        scorer = _default_score
-
-    rows = [scorer(c) for c in cands]
+    if scorer is not None:
+        rows = [scorer(c) for c in cands]
+    else:
+        # Score TICKER-BY-TICKER, loading each ticker's store(s) ONCE and freeing them before the
+        # next ticker — so the campaign holds at most ONE ticker's data at a time, not all seven.
+        # Holding all seven canonical stores at once already sat near a CI runner's ~7GB ceiling; the
+        # far-DTE calendar backfill (even loaded at min_dte=60, _load_ticker_data) tipped it over — the
+        # OOM that killed the edge-search bucket. Per-ticker loading caps the peak at one ticker's
+        # canonical store (plus its far-augmented calendar store) and frees it on the way out.
+        # RESULT-IDENTICAL: each cell is scored against its own ticker's data (scoring is order-
+        # independent), and the rows are reassembled in ENUMERATION order — exactly what the e-LOND/BY
+        # stream below reads — so the verdict is byte-for-byte what a hold-everything pass produced. A
+        # ticker's price/chain SCALE is DTE-window-independent, so the canonical load's ratio gates
+        # every one of that ticker's cells; the far-augmented store is loaded lazily, only if the
+        # ticker has a TERM cell, and reused across any such cells.
+        scored: dict[int, dict[str, Any]] = {}
+        by_ticker: dict[str, list[tuple[int, StructureCandidate]]] = {}
+        for i, c in enumerate(cands):
+            by_ticker.setdefault(c.ticker, []).append((i, c))
+        for tkr, cells in by_ticker.items():
+            canon = _load_ticker_data(tkr, include_far=False)
+            ratio = _ticker_scale_ratio(canon)
+            bad = round(ratio, 3) if (ratio is not None and abs(ratio - 1.0) > SCALE_TOL) else None
+            far_store: tuple[Any, list[str], list[float]] | None = None
+            for i, c in cells:
+                if bad is not None:
+                    scored[i] = {'phase': 'structure', 'template': c.template, 'overlay': c.overlay,
+                                 'ticker': c.ticker,
+                                 'params': c.params_dict(), 'predicted_sign': c.predicted_sign,
+                                 'measurement_invalid': True, 'scale_ratio': bad,
+                                 't_stat_newey_west': None, 'sign_ok': False, 'p_value': None}
+                elif _uses_far_chain(c.overlay):
+                    if far_store is None:
+                        far_store = _load_ticker_data(tkr, include_far=True)
+                    scored[i] = structure_kill_gate(c, far_store, capital)
+                else:
+                    scored[i] = structure_kill_gate(c, canon, capital)
+            canon = far_store = None  # drop this ticker's stores before loading the next
+        rows = [scored[i] for i in range(len(cands))]
     # e-LOND is the FDR CONTROL OF RECORD (#3b, docs/prereg_fdr_budget.md): the
     # campaign's cells form the stream in enumeration order; a cell is FLAGGED (a
     # survivor) iff its calibrated e-value clears the e-LOND level. A
