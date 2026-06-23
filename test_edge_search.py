@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 
 import numpy as np
 import pytest
@@ -47,14 +48,18 @@ from edge_search import (
     StructureCandidate,
     StructureTemplate,
     grid_universe_size,
+    main,
     structure_family,
     _add_one_p,
     _assert_grammar_well_typed,
+    _assert_llm_boundary,
     _asymptotic_p,
     _cooldown_null,
     _cand_key,
     _data_lineage_hash,
+    _engine_importable_from_cwd,
     _ledger_key,
+    _resolve_llm_author,
     _vol_confound,
     benjamini_yekutieli,
     build_cycle_data,
@@ -1509,3 +1514,106 @@ class TestNvdaStructureCampaign:
         cal = self._cell(rows, 'calendar')                         # widening 4 (TERM)
         assert cal['t_stat_newey_west'] == pytest.approx(-1.88, abs=0.05)
         assert cal['p_value'] == pytest.approx(0.9699, abs=0.01)
+
+
+class TestLlmCliRefusal:
+    """The read-gate CLI refusal (interlock #5): `propose --llm` must FAIL CLOSED unless BOTH
+    (a) the engine is unimportable from cwd AND (b) a model author is configured. Always-run,
+    synthetic — no datasets, no engine. The core pin is that an LLM author cannot be activated
+    from the engine checkout; the only sanctioned home is proposer_client inside the
+    oracle_server sandbox (docs/read_gate.md), where C-1 makes `import edge_search` raise."""
+
+    def test_no_model_author_configured_yet(self) -> None:
+        # item 4 (the real Claude client) is a later PR — backstop (b) is live until then
+        assert _resolve_llm_author() is None
+
+    def test_engine_importable_from_repo_cwd(self) -> None:
+        # the subprocess probe sees edge_search from the repo checkout -> precondition (a) fails
+        assert _engine_importable_from_cwd() is True
+
+    def test_engine_unimportable_from_clean_cwd(self, monkeypatch, tmp_path) -> None:
+        # from a directory that is NOT the engine checkout, the scrubbed-env probe can't
+        # import edge_search (no PYTHONPATH leak) -> precondition (a) PASSES
+        monkeypatch.chdir(tmp_path)
+        assert _engine_importable_from_cwd() is False
+
+    def test_probe_reports_reachable_when_engine_present_but_deps_broken(
+            self, monkeypatch, tmp_path) -> None:
+        # The SERIOUS-fix regression pin: the probe measures PRESENCE (find_spec), not
+        # importability. A PRESENT engine whose body fails to import (missing dep / syntax error)
+        # must still read as reachable (True -> refuse), never as "absent". A stand-in edge_search.py
+        # whose first line imports a nonexistent module would make a bare `import edge_search` probe
+        # exit non-zero (and the old `returncode == 0` logic return False -> spuriously pass (a));
+        # find_spec locates the file WITHOUT running it, so it correctly reports reachable.
+        (tmp_path / 'edge_search.py').write_text(
+            'import a_module_that_surely_does_not_exist_zzz\n')
+        monkeypatch.chdir(tmp_path)
+        assert _engine_importable_from_cwd() is True
+
+    def test_guard_refuses_from_repo_naming_a(self, capsys) -> None:
+        # (a) fails from the repo: the guard refuses and the message names precondition (a)
+        with pytest.raises(SystemExit) as exc:
+            _assert_llm_boundary()
+        assert exc.value.code == 2
+        err = capsys.readouterr().err
+        assert 'REFUSED' in err
+        assert '(a)' in err and 'importable' in err
+        assert 'docs/read_gate.md' in err and 'oracle_server' in err
+
+    def test_a_and_b_independent_b_is_the_backstop(self, monkeypatch, tmp_path, capsys) -> None:
+        # in a clean cwd (a) PASSES, but (b) still refuses (no model) -> the two are independent
+        # and (b) is the current backstop. The message names (b), NOT (a).
+        monkeypatch.chdir(tmp_path)
+        assert _engine_importable_from_cwd() is False             # (a) passes here
+        with pytest.raises(SystemExit) as exc:
+            _assert_llm_boundary()
+        assert exc.value.code == 2
+        err = capsys.readouterr().err
+        assert '(b)' in err and 'no model author' in err
+        assert '(a) the engine IS importable' not in err          # (a) did NOT fail here
+
+    def test_a_fails_even_when_b_passes(self, capsys) -> None:
+        # supply a configured author (simulating item 4): (b) passes, but (a) still fails from
+        # the repo -> wiring a model never unlocks running it from the engine checkout
+        def author(menu, corpus, onboarded):                      # a stand-in LLMProposer
+            return None
+        with pytest.raises(SystemExit) as exc:
+            _assert_llm_boundary(author=author)
+        assert exc.value.code == 2
+        err = capsys.readouterr().err
+        assert '(a) the engine IS importable' in err              # (a) is the failure here
+        assert 'no model author' not in err                       # (b) passed
+
+    def test_propose_llm_fails_closed_via_cli(self, monkeypatch, capsys) -> None:
+        # the core interlock pin, driven through the CLI entry: `propose --llm` from the repo
+        # exits non-zero with the boundary message before any author/engine runs.
+        called = []
+        monkeypatch.setattr('edge_search.run_proposer_round',
+                            lambda *a, **k: called.append((a, k)) or {})
+        monkeypatch.setattr(sys, 'argv', ['edge_search.py', 'propose', '--llm'])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 2
+        err = capsys.readouterr().err
+        assert 'REFUSED' in err and '(a)' in err and '(b)' in err
+        assert called == []                                       # never reached the proposer
+
+    def test_menu_walker_propose_path_unaffected(self, monkeypatch) -> None:
+        # the default `propose` (no --llm) still routes to the menu-walker: run_proposer_round
+        # is called with author unset (None), and no boundary guard fires.
+        captured = {}
+
+        def _stub(*args, **kwargs):
+            captured['author'] = kwargs.get('author', None)
+            captured['run'] = kwargs.get('run')
+            captured['record'] = kwargs.get('record')
+            return {'proposed': 0, 'recorded': 0, 'needs_onboard': [], 'rows': []}
+
+        monkeypatch.setattr('edge_search.run_proposer_round', _stub)
+        # if the guard ran on this path it would explode the test
+        monkeypatch.setattr('edge_search._assert_llm_boundary',
+                            lambda *a, **k: pytest.fail('guard must not fire without --llm'))
+        monkeypatch.setattr(sys, 'argv', ['edge_search.py', 'propose'])
+        main()
+        assert captured['author'] is None                         # menu-walker path
+        assert captured['run'] is False and captured['record'] is False  # default = preview
