@@ -1047,6 +1047,13 @@ def _format_structure_summary(rows: Sequence[dict[str, Any]],
 # scrubbed scoreboard is the redacted view it is allowed to see.
 IDEA_LEDGER_PATH = 'idea_ledger.jsonl'
 
+# The proposal-provenance audit trail (interlock-adjacent, NOT the comparison ledger).
+# One row per LLM proposer round: the EXACT model identity + prompt hash + the cells the
+# batch contributed. Deliberately SEPARATE from idea_ledger.jsonl and never read by
+# _ledger_key / _data_lineage_hash — the engine is model-blind, so the model that
+# proposed a cell must not move the FDR comparison count (see record_provenance).
+PROVENANCE_PATH = 'proposal_provenance.jsonl'
+
 
 def _read_data_checksums(path: str = 'data_checksums.sha256') -> dict[str, str]:
     """filename -> sha256, parsed from the committed checksum manifest. Missing
@@ -1363,6 +1370,139 @@ def propose_structure_candidates(
     return cands, needs_onboard
 
 
+# --- Phase 2: the LLM author contract (the drop-in for the menu-walker) -------
+# An LLM author is a pure function of EXACTLY what the menu-walker sees — the grammar
+# menu, the scrubbed corpus, the onboarded search tickers — and NOTHING else (no engine,
+# chains, answer-key ledger, tests, or git history; that isolation is the unbuilt
+# process boundary in docs/read_gate.md, the precondition for ACTIVATING a real author). Step 1
+# here is only the CONTRACT: the type, the gated front-end, and the provenance log. The
+# gate/judge/record pipeline downstream of the proposer is reused byte-identical.
+@dataclass(frozen=True)
+class ProposalBatch:
+    """What an LLM author returns: COORDINATE-ONLY proposals + the exact model identity
+    for auditability. Each proposal is a dict `{overlay, ticker, params, predicted_sign}`
+    — not a serialized candidate; the harness resolves it to the canonical grammar
+    template and constructs the `StructureCandidate` (construction is the grammar gate).
+    The model identity rides to the SEPARATE provenance log (`record_provenance`), never
+    into the comparison ledger's identity — see that function for why."""
+    proposals: tuple[dict[str, Any], ...]
+    model_requested: str          # the alias passed to the API (can repoint over time)
+    model_served: str             # the EXACT snapshot the API reports it ran — the audit id
+    temperature: float            # 0.0 for reproducibility
+    prompt_sha: str               # hash of the exact prompt, so a proposal is reconstructable
+
+
+# (grammar_menu, scrubbed_corpus, onboarded_search_tickers) -> ProposalBatch
+LLMProposer = Callable[
+    [list[StructureTemplate], list[dict[str, Any]], tuple[str, ...]], ProposalBatch]
+
+
+def llm_propose_candidates(
+    author: LLMProposer,
+    campaign: Campaign = STRUCTURE_CAMPAIGN,
+    corpus: Sequence[dict[str, Any]] | None = None,
+    tried_keys: set[tuple[str, str, str]] | None = None,
+    max_batch: int = 16,
+) -> tuple[list[StructureCandidate], list[str], list[dict[str, Any]], ProposalBatch]:
+    """The LLM-author front-end — the Phase-2 drop-in for `propose_structure_candidates`.
+    Hand the author exactly what the menu-walker sees, then GATE its raw output:
+
+      * resolve each `(overlay, params)` to its CANONICAL grammar template — an off-menu
+        point has no canonical template and is REJECTED (the grammar gate at the proposal
+        layer); using the canonical name keeps the dedup key aligned with the corpus, so a
+        proposal can't re-count a tried cell under a fresh name;
+      * require `predicted_sign` to equal the menu's committed sign (the menu is +1-only);
+      * reject sealed tickers (the seal must never run) and tickers off the committed
+        `campaign.search` universe (widening the universe is a human-gated edit, like the
+        NVDA fold — not an LLM runtime decision); route an un-onboarded SEARCH ticker to
+        `needs_onboard` (never auto-fetch);
+      * drop already-tried cells (`_cand_key` vs the corpus coordinates) and within-batch
+        duplicates; cap accepted at `max_batch` (an LLM must not burn the e-LOND budget
+        enumerating the untried space on noise).
+
+    Returns `(candidates, needs_onboard, rejected, batch)`. `batch` carries the model
+    identity for the provenance log; it is NOT mixed into the comparison rows. A malformed
+    or off-grammar proposal is dropped WITH A REASON, never crashing the round."""
+    tried = tried_keys or set()
+    onboarded = tuple(tk for tk in campaign.search if _is_onboarded(tk))
+    menu = enumerate_grammar_templates()
+    canon = {_overlay_params_key(t.overlay, dict(t.params)): t for t in menu}
+    batch = author(menu, list(corpus or []), onboarded)
+    cands: list[StructureCandidate] = []
+    needs_onboard: list[str] = []
+    rejected: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for p in batch.proposals:
+        try:
+            overlay, ticker, sign = p['overlay'], p['ticker'], p['predicted_sign']
+            params = dict(p['params'])     # ValueError too: a stringified/flattened params
+        except (KeyError, TypeError, ValueError) as exc:
+            rejected.append({'proposal': p, 'reason': f'malformed: {exc!r}'})
+            continue
+        if ticker in campaign.sealed:
+            rejected.append({'proposal': p, 'reason': 'sealed ticker — must never run'})
+            continue
+        if ticker not in campaign.search:
+            rejected.append({'proposal': p, 'reason': 'off-campaign ticker (universe edit is human-gated)'})
+            continue
+        t = canon.get(_overlay_params_key(overlay, params))
+        if t is None:
+            rejected.append({'proposal': p, 'reason': 'off-grammar (overlay, params)'})
+            continue
+        if type(sign) is not int or sign != t.predicted_sign:   # type-strict, like _validate_grammar (no bool)
+            rejected.append({'proposal': p, 'reason': f'predicted_sign {sign!r} != menu {t.predicted_sign}'})
+            continue
+        if ticker not in onboarded:
+            if ticker not in needs_onboard:
+                needs_onboard.append(ticker)
+            continue
+        try:
+            c = StructureCandidate(t.name, ticker, t.overlay, t.params, t.predicted_sign)
+        except ValueError as exc:
+            rejected.append({'proposal': p, 'reason': f'grammar gate: {exc}'})
+            continue
+        key = _cand_key(c)
+        if key in tried or key in seen:
+            continue                          # already tried, or duplicated within this batch
+        seen.add(key)
+        cands.append(c)
+        if len(cands) >= max_batch:
+            break
+    return cands, needs_onboard, rejected, batch
+
+
+def record_provenance(
+    batch: ProposalBatch,
+    accepted: Sequence[tuple[str, str, str]],
+    *,
+    round_id: str,
+    path: str = PROVENANCE_PATH,
+) -> None:
+    """Append ONE row to the proposal-provenance audit trail — a SEPARATE artifact from
+    the comparison ledger. It carries the exact model identity (`model_served`, the
+    snapshot the API ran, not just the requested alias) + temperature + `prompt_sha` +
+    the cell keys this batch contributed.
+
+    This is lineage-ADJACENT: provenance is NEVER read by `_ledger_key` or
+    `_data_lineage_hash`, so a model change re-records HERE but does NOT re-key or
+    re-spend the model-blind comparison ledger — the engine scores a cell identically
+    whoever proposed it, and keying the FDR count on the model would re-spend budget on a
+    model bump (the alpha-reset loophole the grammar-exclusion already guards). `round_id`
+    is caller-supplied so the row is deterministic in tests; production passes a
+    timestamped/uuid handle."""
+    row = {
+        'round_id': round_id,
+        'model_requested': batch.model_requested,
+        'model_served': batch.model_served,
+        'temperature': batch.temperature,
+        'prompt_sha': batch.prompt_sha,
+        'n_proposed': len(batch.proposals),
+        'accepted': [list(k) for k in accepted],
+    }
+    with open(path, 'a') as f:
+        f.write(json.dumps(row, sort_keys=True) + '\n')
+
+
 def run_proposer_round(
     campaign: Campaign = STRUCTURE_CAMPAIGN,
     path: str = IDEA_LEDGER_PATH,
@@ -1370,26 +1510,52 @@ def run_proposer_round(
     scorer: Callable[[StructureCandidate], dict[str, Any]] | None = None,
     run: bool = True,
     record: bool = False,
+    author: LLMProposer | None = None,
+    max_batch: int = 16,
+    round_id: str | None = None,
+    provenance_path: str | None = None,
 ) -> dict[str, Any]:
-    """One menu-walker proposer round (Phase 1 — deterministic, NO LLM): the loop the LLM
-    will later plug into, with the enumerator standing in for the author.
+    """One proposer round: the loop the LLM plugs into. `author` selects the proposer:
 
-      READ scrubbed corpus -> PROPOSE (menu-walk grammar x onboarded tickers, minus tried)
-      -> GRAMMAR-GATE (StructureCandidate) -> RUN (engine, scored per-batch) -> JUDGE over the
-      lifetime e-LOND stream (judge_against_lifetime_stream, #3b) -> RECORD -> next round
-      re-reads the corpus and skips them.
+      * `author is None` -> the deterministic MENU-WALKER (Phase 1 — walks the whole
+        grammar x onboarded tickers, minus tried).
+      * an `LLMProposer` -> the Phase-2 AUTHOR front-end (`llm_propose_candidates`),
+        capped at `max_batch`, with the model identity written to the provenance audit
+        log on `record=True`.
+
+    Either way the path downstream is byte-identical: READ scrubbed corpus -> PROPOSE ->
+    GRAMMAR-GATE (StructureCandidate) -> RUN (engine, scored per-batch) -> JUDGE over the
+    lifetime e-LOND stream (`judge_against_lifetime_stream`, #3b) -> RECORD -> next round
+    re-reads the corpus and skips them.
 
     `run=False` is a cheap PREVIEW — it proposes the untried cells but runs no engine and
     writes nothing. `run=True, record=False` runs + lifetime-judges without writing (a dry
     run). `record=True` appends the judged rows to the lifetime ledger (and implies run). The
     proposer reads only the scrubbed corpus, never the answer-key ledger. `scorer` is
-    injectable for the synthetic test layer."""
+    injectable for the synthetic test layer. The model provenance is recorded to a SEPARATE
+    artifact, co-located with the ledger by default — never into the model-blind ledger."""
+    import os
     corpus = load_proposer_corpus(path)
     tried = {_proposer_key(r['template'], r['ticker'], r['params']) for r in corpus}
-    cands, needs_onboard = propose_structure_candidates(campaign, tried)
+    if author is None:
+        cands, needs_onboard = propose_structure_candidates(campaign, tried)
+        batch, rejected = None, []
+    else:
+        cands, needs_onboard, rejected, batch = llm_propose_candidates(
+            author, campaign, corpus, tried, max_batch)
     result: dict[str, Any] = {'proposed': len(cands), 'recorded': 0,
-                              'needs_onboard': needs_onboard, 'candidates': cands,
-                              'rows': [], 'ledger_rows': []}
+                              'needs_onboard': needs_onboard, 'rejected': rejected,
+                              'candidates': cands, 'rows': [], 'ledger_rows': []}
+    # Provenance records the PROPOSAL EVENT (which model ran + what it accepted), so it
+    # fires on every recorded round the author was invoked — INCLUDING a round that
+    # accepted zero cells (all tried/rejected): the model still ran, and a complete audit
+    # trail must show it. It is the model-blind COMPARISON ledger that must not grow on a
+    # zero-accept round, never the audit log. (run=False is a preview -> records nothing.)
+    if record and run and batch is not None:
+        prov = provenance_path or os.path.join(
+            os.path.dirname(path) or '.', os.path.basename(PROVENANCE_PATH))
+        record_provenance(batch, [_cand_key(c) for c in cands],
+                          round_id=round_id or datetime.now().isoformat(), path=prov)
     if not cands or not run:
         return result
     rows = run_structure_campaign(campaign, capital=capital, scorer=scorer, candidates=cands)
