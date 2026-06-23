@@ -1663,26 +1663,51 @@ def _resolve_llm_author() -> LLMProposer | None:
 
 
 def _engine_importable_from_cwd() -> bool:
-    """True iff `import edge_search` SUCCEEDS in a fresh interpreter rooted at the current
-    working directory — i.e. cwd is (or reaches, via sys.path[0]=cwd) the engine checkout.
-    Spawns the probe the same way `oracle_server.launch` spawns the proposer: cwd=getcwd()
-    with `oracle_server._scrubbed_env()` (no PYTHONPATH that could re-expose the engine), so
-    this measures EXACTLY what the sandboxed proposer would see. From the engine checkout the
-    probe succeeds (returncode 0) -> True; from the C-1 sandbox it raises ModuleNotFoundError
-    (non-zero) -> False."""
+    """True iff the engine module `edge_search` is REACHABLE on the import path a sandboxed
+    proposer would see here — i.e. cwd (or a non-scrubbed path) puts `edge_search` on `sys.path`.
+
+    Measures PRESENCE via `importlib.util.find_spec` in a subprocess, NOT a real `import`. This
+    is the load-bearing distinction: `find_spec` locates `edge_search.py` WITHOUT executing its
+    body, so a missing dependency (numpy), a mid-edit syntax error, or a stripped venv var can't
+    make a PRESENT engine read as absent. (A bare `import edge_search` probe gets this wrong: from
+    the engine checkout with numpy uninstalled it raises `No module named 'numpy'` from inside
+    edge_search.py — a non-zero exit that naively reads as "engine absent", silently disarming the
+    guard. Same vacuity class as the C-1 import-vector test.) The probe uses cwd=getcwd() (so the
+    engine checkout's cwd is on `sys.path[0]`) and the same `oracle_server._scrubbed_env()` that
+    `launch` spawns the proposer with — so a PYTHONPATH the proposer would NOT receive can't
+    inflate the result. (It does NOT replicate `launch`'s sandbox-seed; this is a CLI tripwire,
+    not the launch path.)
+
+    FAIL CLOSED: returns True (engine reachable -> the guard REFUSES) unless the probe is CERTAIN
+    the module is absent (`find_spec` returned None -> exit 1). ANY ambiguity — `find_spec` raised,
+    `oracle_server` failed to import, an odd exit code — returns True. Only the unambiguous
+    "absent" (exit 1), which is what the C-1 sandbox produces, returns False."""
     import os
     import subprocess
     import sys
 
-    import oracle_server  # local: oracle_server imports edge_search, so import only at call time
-    proc = subprocess.run(
-        [sys.executable, '-c', 'import edge_search'],
-        cwd=os.getcwd(),
-        env=oracle_server._scrubbed_env(),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+    # find_spec, not import: exit 0 = module FOUND, exit 1 = unambiguously NOT found; a find_spec
+    # exception -> found=True (assume present, fail closed) so it never reads as exit 1.
+    probe = (
+        'import importlib.util as u, sys\n'
+        'try:\n'
+        '    found = u.find_spec("edge_search") is not None\n'
+        'except Exception:\n'
+        '    found = True\n'
+        'sys.exit(0 if found else 1)\n'
     )
-    return proc.returncode == 0
+    try:
+        import oracle_server  # local: oracle_server imports edge_search, so import only at call time
+        proc = subprocess.run(
+            [sys.executable, '-c', probe],
+            cwd=os.getcwd(),
+            env=oracle_server._scrubbed_env(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except Exception:
+        return True                # can't even run the probe -> refuse (fail closed)
+    return proc.returncode != 1    # exit 1 is the ONLY "certainly absent"; all else -> reachable
 
 
 def _assert_llm_boundary(author: LLMProposer | None = None) -> LLMProposer:

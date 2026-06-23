@@ -1537,6 +1537,19 @@ class TestLlmCliRefusal:
         monkeypatch.chdir(tmp_path)
         assert _engine_importable_from_cwd() is False
 
+    def test_probe_reports_reachable_when_engine_present_but_deps_broken(
+            self, monkeypatch, tmp_path) -> None:
+        # The SERIOUS-fix regression pin: the probe measures PRESENCE (find_spec), not
+        # importability. A PRESENT engine whose body fails to import (missing dep / syntax error)
+        # must still read as reachable (True -> refuse), never as "absent". A stand-in edge_search.py
+        # whose first line imports a nonexistent module would make a bare `import edge_search` probe
+        # exit non-zero (and the old `returncode == 0` logic return False -> spuriously pass (a));
+        # find_spec locates the file WITHOUT running it, so it correctly reports reachable.
+        (tmp_path / 'edge_search.py').write_text(
+            'import a_module_that_surely_does_not_exist_zzz\n')
+        monkeypatch.chdir(tmp_path)
+        assert _engine_importable_from_cwd() is True
+
     def test_guard_refuses_from_repo_naming_a(self, capsys) -> None:
         # (a) fails from the repo: the guard refuses and the message names precondition (a)
         with pytest.raises(SystemExit) as exc:
