@@ -19,6 +19,7 @@ swept class is not re-derived. See docs/edge_search.md.
 
 from __future__ import annotations
 
+import json
 import os
 
 import numpy as np
@@ -41,6 +42,7 @@ from edge_search import (
     Candidate,
     CycleData,
     OverlayGrammar,
+    ProposalBatch,
     StructureCandidate,
     StructureTemplate,
     grid_universe_size,
@@ -67,6 +69,8 @@ from edge_search import (
     load_idea_ledger,
     load_proposer_corpus,
     load_search_runs,
+    llm_propose_candidates,
+    record_provenance,
     record_trials,
     render_proposer_corpus,
     run_batch,
@@ -965,6 +969,125 @@ class TestMenuWalkerProposer:
         assert res['proposed'] == grid_universe_size()            # ran + judged ...
         assert len(res['ledger_rows']) == grid_universe_size()
         assert res['recorded'] == 0 and load_idea_ledger(p) == []  # ... but wrote nothing
+
+
+class TestLLMProposer:
+    """Phase 2: the LLM AUTHOR contract — the drop-in for the menu-walker. Always-run,
+    synthetic (a stub author, injected scorer, monkeypatched onboarding, temp ledger; no
+    model, no engine). Pins the gate/dedup/seal/cap AND the provenance invariant: the
+    exact model id is recorded to a SEPARATE audit log and never re-keys or re-spends the
+    model-blind comparison ledger. The sandbox/oracle process boundary (docs/read_gate.md)
+    is what makes a REAL author safe to activate; this is the contract it plugs into."""
+
+    @staticmethod
+    def _scorer(cand):
+        return {'phase': 'structure', 'template': cand.template, 'ticker': cand.ticker,
+                'params': cand.params_dict(), 'predicted_sign': cand.predicted_sign,
+                't_stat_newey_west': 0.5, 'sign_ok': True, 'p_value': 0.3}
+
+    @staticmethod
+    def _author(proposals, model='claude-test'):
+        def author(menu, corpus, onboarded):
+            return ProposalBatch(tuple(proposals), model_requested=model,
+                                 model_served=f'{model}-snap', temperature=0.0,
+                                 prompt_sha=f'sha-{model}')
+        return author
+
+    # a valid committed grid point (short_call_25); reused across tests
+    _CELL = {'overlay': 'short_vol', 'ticker': 'AAA',
+             'params': {'target_delta': 0.25, 'dte': 30}, 'predicted_sign': 1}
+
+    def test_gate_rejects_off_menu_sealed_offcampaign_and_sign(self, monkeypatch) -> None:
+        monkeypatch.setattr('edge_search._is_onboarded', lambda tk: tk == 'AAA')
+        camp = Campaign(search=('AAA', 'BBB'), sealed=('TLT',))
+        proposals = [
+            self._CELL,                                                                  # valid
+            {**self._CELL, 'params': {'target_delta': 0.241, 'dte': 30}},                # off-grammar
+            {**self._CELL, 'ticker': 'TLT'},                                             # sealed
+            {**self._CELL, 'ticker': 'ZZZ'},                                             # off-campaign
+            {'overlay': 'straddle', 'ticker': 'AAA', 'params': {'dte': 30},
+             'predicted_sign': -1},                                                      # sign mismatch
+            {**self._CELL, 'params': 'target_delta=0.25,dte=30'},                        # malformed (stringified -> dict() ValueError)
+            {**self._CELL, 'predicted_sign': True},                                      # bool sign (not int) -> rejected
+            self._CELL,                                                                  # dup of #1
+        ]
+        cands, need, rejected, batch = llm_propose_candidates(
+            self._author(proposals), camp, corpus=[], tried_keys=set())
+        assert [(c.template, c.ticker) for c in cands] == [('short_call_25', 'AAA')]     # only the valid one
+        assert need == []
+        reasons = ' '.join(r['reason'] for r in rejected)
+        assert 'off-grammar' in reasons and 'sealed' in reasons
+        assert 'off-campaign' in reasons and 'predicted_sign' in reasons
+        assert 'malformed' in reasons                                                    # stringified params didn't crash the round
+        assert batch.model_served == 'claude-test-snap'                                  # carried, not gated
+
+    def test_unonboarded_search_ticker_routes_to_needs_onboard(self, monkeypatch) -> None:
+        monkeypatch.setattr('edge_search._is_onboarded', lambda tk: tk == 'AAA')
+        camp = Campaign(search=('AAA', 'BBB'), sealed=('TLT',))
+        cands, need, rejected, _ = llm_propose_candidates(
+            self._author([{**self._CELL, 'ticker': 'BBB'}]), camp, corpus=[], tried_keys=set())
+        assert need == ['BBB'] and cands == []                                           # flagged, not run
+
+    def test_dedup_against_corpus_coordinates(self, monkeypatch) -> None:
+        monkeypatch.setattr('edge_search._is_onboarded', lambda tk: True)
+        camp = Campaign(search=('AAA',))
+        tried = {('short_call_25', 'AAA', json.dumps({'target_delta': 0.25, 'dte': 30}, sort_keys=True))}
+        cands, _, _, _ = llm_propose_candidates(
+            self._author([self._CELL]), camp, corpus=[], tried_keys=tried)
+        assert cands == []                                                               # already tried -> dropped
+
+    def test_max_batch_caps_accepted(self, monkeypatch) -> None:
+        monkeypatch.setattr('edge_search._is_onboarded', lambda tk: True)
+        camp = Campaign(search=('AAA',))
+        menu = enumerate_grammar_templates()
+        many = [{'overlay': t.overlay, 'ticker': 'AAA', 'params': dict(t.params),
+                 'predicted_sign': t.predicted_sign} for t in menu]                      # the whole menu
+        cands, _, _, _ = llm_propose_candidates(
+            self._author(many), camp, corpus=[], tried_keys=set(), max_batch=3)
+        assert len(cands) == 3                                                           # capped
+
+    def test_round_records_comparison_and_provenance(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setattr('edge_search._is_onboarded', lambda tk: True)
+        led = str(tmp_path / 'idea_ledger.jsonl')
+        prov = str(tmp_path / 'proposal_provenance.jsonl')
+        res = run_proposer_round(Campaign(search=('AAA',)), path=led, scorer=self._scorer,
+                                 run=True, record=True, author=self._author([self._CELL], 'A'),
+                                 round_id='r1', provenance_path=prov)
+        assert res['proposed'] == 1 and res['recorded'] == 1
+        ledger = load_idea_ledger(led)
+        assert len(ledger) == 1
+        # the comparison row is MODEL-AGNOSTIC: no model/prompt field leaked in
+        assert not ({'model_served', 'model_requested', 'prompt_sha'} & set(ledger[0]))
+        prov_rows = [json.loads(l) for l in open(prov)]
+        assert len(prov_rows) == 1 and prov_rows[0]['model_served'] == 'A-snap'
+        assert prov_rows[0]['round_id'] == 'r1'
+
+    def test_model_id_does_not_rekey_or_respend(self, monkeypatch, tmp_path) -> None:
+        """The invariant: the model is provenance, not lineage. The same cell scored under
+        two different models yields a BYTE-IDENTICAL comparison row, and a second model
+        re-proposing a tried cell re-spends nothing."""
+        monkeypatch.setattr('edge_search._is_onboarded', lambda tk: True)
+        camp = Campaign(search=('AAA',))
+        # same cell, two different models, two fresh ledgers
+        a, b = (str(tmp_path / 'a.jsonl'), str(tmp_path / 'b.jsonl'))
+        pa, pb = (str(tmp_path / 'pa.jsonl'), str(tmp_path / 'pb.jsonl'))
+        run_proposer_round(camp, path=a, scorer=self._scorer, run=True, record=True,
+                           author=self._author([self._CELL], 'A'), round_id='r', provenance_path=pa)
+        run_proposer_round(camp, path=b, scorer=self._scorer, run=True, record=True,
+                           author=self._author([self._CELL], 'B'), round_id='r', provenance_path=pb)
+        # comparison rows identical regardless of model (model never touches _ledger_key /
+        # _data_lineage_hash); provenance differs
+        assert load_idea_ledger(a) == load_idea_ledger(b)
+        assert json.loads(open(pa).read())['model_served'] == 'A-snap'
+        assert json.loads(open(pb).read())['model_served'] == 'B-snap'
+        # re-spend guard: model B proposing the SAME cell into A's ledger adds nothing
+        res = run_proposer_round(camp, path=a, scorer=self._scorer, run=True, record=True,
+                                 author=self._author([self._CELL], 'B'), round_id='r2', provenance_path=pa)
+        assert res['proposed'] == 0 and res['recorded'] == 0                             # tried -> no new comparison
+        assert len(load_idea_ledger(a)) == 1                                             # COMPARISON ledger unchanged (no re-spend)
+        prov_after = [json.loads(l) for l in open(pa)]
+        assert len(prov_after) == 2                                                      # the re-proposal IS audited ...
+        assert prov_after[-1]['model_served'] == 'B-snap' and prov_after[-1]['accepted'] == []  # ... but accepted nothing
 
 
 class TestStructurePhase:

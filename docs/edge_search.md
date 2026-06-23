@@ -262,6 +262,22 @@ does not bend the cheap re-tag gate:
   for the enumerator while the gate, the lifetime judge, and the record stay identical. Run
   via `python edge_search.py propose` (preview), `propose --run` (score, no record), or
   `propose --record`; pinned by the always-run `TestMenuWalkerProposer`.
+- **The Phase-2 author contract (built, no model wired yet).** `llm_propose_candidates`
+  is the drop-in for the menu-walker's enumerator: `run_proposer_round(..., author=)`
+  selects it (`None` → menu-walker; an `LLMProposer` → the gated author front-end). It
+  hands the author exactly what the menu-walker sees (grammar menu + scrubbed corpus +
+  onboarded tickers) and gates its **coordinate-only** `ProposalBatch` — resolve each
+  `(overlay, params)` to its canonical grammar template (off-menu → rejected), drop sealed
+  and off-`campaign.search` tickers (a universe edit stays human-gated), route un-onboarded
+  search tickers to onboarding, dedup against the corpus, cap at `max_batch`. The batch
+  carries the **exact model identity** — `model_served` (the API's served snapshot, not the
+  alias, which can repoint) + `temperature` + `prompt_sha` — written by `record_provenance`
+  to a *separate* `proposal_provenance.jsonl` audit log. That provenance is **lineage-
+  adjacent**: it never touches `_ledger_key` or `_data_lineage_hash`, so a model change
+  re-records there but cannot re-key or re-spend the model-blind comparison ledger (the
+  engine scores a cell identically whoever proposed it). Pinned by the always-run
+  `TestLLMProposer`. Activation still waits on the process boundary above (a model that can
+  recompute the answer key is not safe behind a mere function signature).
 
 The roll / stop-loss / spread-width structure *variants* — which need their own
 engine parameters per candidate — are the natural next expansion of this class.
