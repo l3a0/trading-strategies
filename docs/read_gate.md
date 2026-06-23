@@ -14,8 +14,12 @@ reachable by absolute path). The IMPORT recompute vector is now CLOSED (track C-
 copies the proposer's engine-free code into the sandbox and `launch` runs it with `cwd=sandbox`, so
 `sys.path[0]` holds no engine and `import edge_search` raises (pinned by
 `test_oracle_server.py::TestImportVectorClosed`). What STAYS open is the absolute-path read + the
-subprocess — closing those is the **container** (kernel-enforced absence + a guaranteed engine-free
-proposer path + a single-host egress allow-list), and then the **real model author** (a temperature-0
+subprocess — closing those is the **container**. Its first half now exists: a **sealed proposer
+image** (`Dockerfile.proposer`) that bakes in only the engine-free code, plus a docker-gated CI
+seal test (`test_read_gate_container.py::TestProposerImageSeal`, run under the hardened `_SEAL_FLAGS`)
+proving the engine + answer-key ledger are absent and the network is dead inside it. What remains is
+the **integration** — wiring `launch` to actually run the proposer inside that image (today it still
+spawns a bare subprocess) — and then the **real model author** (a temperature-0
 Claude call behind the boundary). An LLM author must NOT be activated until the container exists. The
 residual analysis below is unchanged.
 
