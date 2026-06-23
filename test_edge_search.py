@@ -70,7 +70,6 @@ from edge_search import (
     load_proposer_corpus,
     load_search_runs,
     llm_propose_candidates,
-    record_provenance,
     record_trials,
     render_proposer_corpus,
     run_batch,
@@ -1058,7 +1057,7 @@ class TestLLMProposer:
         assert len(ledger) == 1
         # the comparison row is MODEL-AGNOSTIC: no model/prompt field leaked in
         assert not ({'model_served', 'model_requested', 'prompt_sha'} & set(ledger[0]))
-        prov_rows = [json.loads(l) for l in open(prov)]
+        prov_rows = [json.loads(ln) for ln in open(prov)]
         assert len(prov_rows) == 1 and prov_rows[0]['model_served'] == 'A-snap'
         assert prov_rows[0]['round_id'] == 'r1'
 
@@ -1085,7 +1084,7 @@ class TestLLMProposer:
                                  author=self._author([self._CELL], 'B'), round_id='r2', provenance_path=pa)
         assert res['proposed'] == 0 and res['recorded'] == 0                             # tried -> no new comparison
         assert len(load_idea_ledger(a)) == 1                                             # COMPARISON ledger unchanged (no re-spend)
-        prov_after = [json.loads(l) for l in open(pa)]
+        prov_after = [json.loads(ln) for ln in open(pa)]
         assert len(prov_after) == 2                                                      # the re-proposal IS audited ...
         assert prov_after[-1]['model_served'] == 'B-snap' and prov_after[-1]['accepted'] == []  # ... but accepted nothing
 
