@@ -29,7 +29,11 @@ wiring: `launch_in_container` exists and is pinned, but no production entrypoint
 CLI `main()` still drives the soft `launch`, and only the test exercises the container path. Item 4
 plugs the model into a `launch_in_container` caller and closes the container's remaining must-dos (a
 round timeout, a base-image digest pin, making the seal CI job a required check, seccomp). An LLM
-author must NOT be activated until that lands. The residual analysis below is unchanged.
+author must NOT be activated until that lands. The full item-4 design — where the Claude call lives
+(oracle-side), why that trades the container's kernel isolation for a *correctness argument* for the
+LLM, the prompt-builder leak surface + its three location options, and the unsolved training-leak
+(time-axis-holdout) blocker — is recorded in [llm_proposer_plan.md](llm_proposer_plan.md). The
+residual analysis below is unchanged.
 
 ## Why this doc exists
 
