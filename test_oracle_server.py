@@ -42,6 +42,7 @@ from oracle_server import (
     SANDBOX_SEED_FILES,
     assert_sandbox_clean,
     launch,
+    launch_in_container,
     prepare_sandbox,
     serve,
 )
@@ -440,3 +441,21 @@ class TestScrubbedEnv:
         env = _scrubbed_env()
         assert set(env).issubset(_ENV_ALLOWLIST)
         assert 'UNLISTED_VAR' not in env
+
+
+class TestLaunchInContainerGuard:
+    """`launch_in_container`'s fail-fast mount-path guard — ALWAYS-RUN (no docker): a sandbox path
+    containing ',' or '=' would corrupt the comma/`=`-delimited `--mount` spec (and could drop the
+    `readonly` flag — failing OPEN), so it raises BEFORE seeding or spawning anything."""
+
+    def test_comma_in_sandbox_path_raises_before_spawn(self, tmp_path) -> None:
+        bad = str(tmp_path / 'has,comma')
+        with pytest.raises(ValueError, match='comma'):
+            launch_in_container('img', ['python', '-c', 'pass'], sandbox_dir=bad)
+        assert not os.path.exists(bad), 'guard must fire BEFORE prepare_sandbox seeds the dir'
+
+    def test_equals_in_sandbox_path_raises_before_spawn(self, tmp_path) -> None:
+        bad = str(tmp_path / 'has=eq')
+        with pytest.raises(ValueError):
+            launch_in_container('img', ['python', '-c', 'pass'], sandbox_dir=bad)
+        assert not os.path.exists(bad)
