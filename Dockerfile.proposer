@@ -1,0 +1,46 @@
+# The read-gate proposer image — the SEALED environment an untrusted LLM proposer runs inside.
+#
+# It bakes in ONLY the engine-free proposer code (proposer_client.py + read_gate_wire.py). It
+# does NOT contain the engine (edge_search.py / vol_premium.py / cc_backtest.py), the option
+# chains, or the answer-key ledger (idea_ledger.jsonl). Combined with the runtime flags the
+# oracle WILL launch it under — the hardened `_SEAL_FLAGS` set in test_read_gate_container.py
+# (`--network none`, `--read-only`, `--cap-drop=ALL`, no-new-privileges, pids/mem caps) plus a
+# READ-ONLY bind of only the per-run sandbox seeds (menu.json + corpus.json), never the repo —
+# this makes the residual the supervised MVP leaves open (abspath reads, subprocess, exfil)
+# KERNEL-impossible. (The launch-uses-the-container INTEGRATION is a LATER PR — today
+# oracle_server.launch still spawns a bare subprocess; this PR delivers the image + the proof
+# it seals, not the production wiring.)
+#
+#   * mount namespace  -> the engine source and the answer-key ledger are not in the container's
+#                         filesystem view, so NO absolute path resolves to them and no subprocess
+#                         can `python /repo/edge_search.py` or `git show` the ledger.
+#   * network namespace -> `--network none` means a recomputed/scraped number can't be exfiltrated.
+#
+# This is the kernel-enforced absence docs/read_gate.md calls "the architecture that works"; the
+# import-vector closure (C-1) + the supervised MVP's soft sandbox were only defense-in-depth on
+# trusted code. The seal is verified by test_read_gate_container.py (docker-gated, CI).
+#
+# Pinned to the Debian-bookworm slim variant for determinism. The integration PR should tighten
+# this to a digest pin (python:3.12-slim-bookworm@sha256:…) once a docker surface can resolve the
+# digest, so the audited bytes are exactly the bytes CI builds.
+FROM python:3.12-slim-bookworm
+
+# Run as an unprivileged user — the proposer never needs root, and a non-root uid is one less
+# lever if the container itself were ever escaped.
+RUN useradd --create-home --uid 10001 proposer
+
+WORKDIR /app
+# Bake in ONLY the proposer's engine-free code. proposer_client imports just read_gate_wire +
+# the stdlib (pinned engine-free by proposer_client's test_import_is_engine_free), so there are
+# NO dependencies to pip-install — and installing nothing keeps the image's surface minimal.
+COPY proposer_client.py read_gate_wire.py /app/
+
+# The proposer talks over stdio and writes no files; don't litter .pyc (it runs under
+# --read-only, where only an explicit tmpfs is writable).
+ENV PYTHONDONTWRITEBYTECODE=1
+
+USER proposer
+
+# No ENTRYPOINT: the trusted oracle spawns the proposer explicitly (`docker run -i … python
+# /app/proposer_client.py`) and the seal test overrides the command. A bare start is inert.
+CMD ["python", "-c", "import sys; sys.stderr.write('read-gate proposer image — spawn via oracle_server (docs/read_gate.md)\\n'); sys.exit(0)"]
