@@ -15,14 +15,18 @@ What is pinned:
     each yield an `error` reply and the loop CONTINUES to the next request.
   * `launch` fail-closes on a dirty sandbox (a copied `edge_search.py` makes it raise before
     spawning anything).
-  * `prepare_sandbox` writes EXACTLY menu.json + corpus.json — both valid JSON, the corpus
-    numberless.
+  * `prepare_sandbox` writes EXACTLY the four sandbox files (menu.json + corpus.json + the
+    proposer's engine-free code) — the JSON seeds valid, the corpus numberless.
+  * IMPORT VECTOR (`TestImportVectorClosed`): a child spawned with `cwd=sandbox` + the scrubbed
+    env CANNOT `import edge_search` (ModuleNotFoundError), but CAN `import proposer_client` (its
+    own code is seeded in). This is the track C-1 regression pin.
 """
 from __future__ import annotations
 
 import json
 import os
 import signal
+import subprocess
 import sys
 
 import pytest
@@ -33,7 +37,15 @@ from edge_search import (
     score_and_record,
 )
 from read_gate_wire import WIRE_VERSION, assert_numberless
-from oracle_server import launch, prepare_sandbox, serve
+from oracle_server import (
+    PROPOSER_CODE_FILES,
+    SANDBOX_SEED_FILES,
+    assert_sandbox_clean,
+    launch,
+    prepare_sandbox,
+    serve,
+)
+from oracle_server import _scrubbed_env  # the scrubbed env launch spawns the proposer with
 
 # A synthetic per-candidate scorer shaped like TestReadGateOracleSeam._scorer: a KILLED
 # verdict (t=0.5 is nowhere near the e-LOND bar) carrying the banned result keys, so the
@@ -150,13 +162,20 @@ class TestServe:
 
 
 class TestPrepareSandbox:
-    """The sandbox seed: EXACTLY menu.json + corpus.json, both valid JSON, corpus numberless."""
+    """The sandbox seed: EXACTLY the four sandbox files (menu + corpus + the proposer's
+    engine-free code), the JSON seeds valid, the corpus numberless."""
 
-    def test_writes_exactly_menu_and_corpus(self, tmp_path) -> None:
+    def test_writes_exactly_the_four_sandbox_files(self, tmp_path) -> None:
         sandbox = tmp_path / 'sbx'
         led = str(tmp_path / 'idea_ledger.jsonl')          # missing file -> empty corpus
         prepare_sandbox(str(sandbox), path=led)
-        assert sorted(os.listdir(sandbox)) == ['corpus.json', 'menu.json']
+        # the frozen layout: menu + corpus (data) + the proposer's own engine-free code
+        assert sorted(os.listdir(sandbox)) == sorted(SANDBOX_SEED_FILES)
+        assert sorted(os.listdir(sandbox)) == [
+            'corpus.json', 'menu.json', 'proposer_client.py', 'read_gate_wire.py']
+        # the copied code is the proposer's, not the engine — and it's actually present
+        for name in PROPOSER_CODE_FILES:
+            assert (sandbox / name).is_file() and (sandbox / name).read_text()
 
         menu = json.loads((sandbox / 'menu.json').read_text())
         corpus = json.loads((sandbox / 'corpus.json').read_text())
@@ -164,6 +183,27 @@ class TestPrepareSandbox:
         assert set(menu[0]) == {'name', 'overlay', 'params', 'predicted_sign'}
         assert isinstance(corpus, list)                                 # empty ledger -> []
         assert_numberless(corpus)                                       # the seed carries no number
+
+    def test_reseeding_an_already_seeded_dir_is_fine(self, tmp_path) -> None:
+        # the four seed files are allowed to pre-exist (re-seed); a stray file is not.
+        sandbox = tmp_path / 'sbx'
+        led = str(tmp_path / 'idea_ledger.jsonl')
+        prepare_sandbox(str(sandbox), path=led)
+        prepare_sandbox(str(sandbox), path=led)            # re-seed: must not raise
+        assert sorted(os.listdir(sandbox)) == sorted(SANDBOX_SEED_FILES)
+        (sandbox / 'stray.txt').write_text('proposer-readable\n')
+        with pytest.raises(ValueError, match='stray.txt'):
+            prepare_sandbox(str(sandbox), path=led)
+
+    def test_clean_gate_passes_a_seeded_sandbox(self, tmp_path) -> None:
+        # The fail-closed gate forbids the ENGINE, not the proposer's own code: a SEEDED sandbox
+        # (the four files, incl. the copied-in proposer_client.py + read_gate_wire.py) still
+        # passes assert_sandbox_clean. Pins the launch docstring's claim that the clean gate
+        # tolerates the proposer code — matters if track C-2 (the container) re-checks a populated
+        # sandbox rather than the pre-seed dir launch checks today.
+        sandbox = tmp_path / 'sbx'
+        prepare_sandbox(str(sandbox), path=str(tmp_path / 'idea_ledger.jsonl'))
+        assert_sandbox_clean(str(sandbox))                 # must not raise on the proposer code
 
     def test_corpus_reflects_the_ledger_and_stays_numberless(self, tmp_path) -> None:
         # seed a real (numberless-by-construction) ledger via the seam, then assert the
@@ -231,13 +271,13 @@ class TestLaunchFailClosed:
     def test_clean_sandbox_does_not_raise_at_the_gate(self, tmp_path, monkeypatch) -> None:
         # a clean (empty) sandbox passes the fail-closed gate; with an inert proposer the
         # whole launch returns its exit code (0). This also confirms prepare_sandbox seeded
-        # the two files into the (formerly empty) sandbox.
+        # the four sandbox files into the (formerly empty) sandbox.
         monkeypatch.setattr('edge_search._is_onboarded', lambda tk: True)
         sandbox = tmp_path / 'sbx'
         code = launch(['python3', '-c', 'pass'], sandbox_dir=str(sandbox),
                       path=str(tmp_path / 'l.jsonl'))
         assert code == 0
-        assert sorted(os.listdir(sandbox)) == ['corpus.json', 'menu.json']
+        assert sorted(os.listdir(sandbox)) == sorted(SANDBOX_SEED_FILES)
 
 
 class TestLaunchEndToEnd:
@@ -245,19 +285,24 @@ class TestLaunchEndToEnd:
     `proposer_client`-based child over real pipes, round-trips one request, the oracle
     scores+records, and the one-bit reply reaches the proposer. This is the regression pin for
     the missing-newline DEADLOCK (a request without a trailing newline hangs `readline` forever)
-    — a SIGALRM guard fails fast instead of hanging CI if it ever regresses. It proves
-    COMPOSITION (the happy path), NOT the seal: in this MVP the engine is still abspath-reachable."""
+    — a SIGALRM guard fails fast instead of hanging CI if it ever regresses.
+
+    The child runs PURELY from the sandbox: it `import proposer_client` WITHOUT inserting the
+    repo path, so the import resolves to the COPY `prepare_sandbox` seeded into the sandbox
+    (sys.path[0] = cwd = sandbox for `python -c`). That proves the proposer's own code runs
+    engine-free from the sandbox; `TestImportVectorClosed` pins the matching negative (the
+    engine is NOT importable there). It proves COMPOSITION (the happy path), NOT a kernel seal:
+    in this MVP the engine is still abspath-reachable."""
 
     def test_real_proposer_client_round_trips(self, monkeypatch, tmp_path) -> None:
         monkeypatch.setattr('edge_search._is_onboarded', lambda tk: True)
         led = str(tmp_path / 'idea_ledger.jsonl')
         sandbox = str(tmp_path / 'sandbox')
-        repo = os.path.dirname(os.path.abspath(__file__))   # proposer_client + read_gate_wire live here
-        # A real proposer: cwd is the sandbox and PYTHONPATH is scrubbed, so add `repo` to import
-        # proposer_client; propose one committed cell via a stub author; write the reply to cwd.
+        # A real proposer running PURELY from the sandbox: cwd is the sandbox and the proposer's
+        # own code is copied there, so `import proposer_client` resolves with NO repo-path insert
+        # (sys.path[0] = cwd). Propose one committed cell via a stub author; write the reply to cwd.
         src = (
             "import sys, json\n"
-            f"sys.path.insert(0, {repo!r})\n"
             "import proposer_client as pc\n"
             "author = lambda menu, corpus, onboarded: (\n"
             "    [{'overlay': 'short_vol', 'ticker': 'AAA',\n"
@@ -286,3 +331,66 @@ class TestLaunchEndToEnd:
         replies = json.loads((tmp_path / 'sandbox' / 'verdicts.json').read_text())
         assert replies[0]['wire_version'] == WIRE_VERSION
         assert [r['verdict'] for r in replies[0]['corpus']] == ['KILLED']  # the one-bit reply reached the child
+
+
+class TestImportVectorClosed:
+    """Track C-1 regression pin: a process spawned EXACTLY as `launch` spawns the proposer —
+    `cwd=sandbox` + the scrubbed env — CANNOT `import edge_search` (it raises ModuleNotFoundError,
+    so the child exits non-zero), because the sandbox holds no engine and `sys.path[0]` for a
+    `python -c` child is the cwd (the sandbox). The proposer's OWN code IS reachable there
+    (`import proposer_client` succeeds), because `prepare_sandbox` copied it in. Together these
+    prove the import recompute vector the #73 review flagged is closed for the intended invocation."""
+
+    def _spawn_in_sandbox(self, sandbox, code):
+        """Run `python -c code` exactly as launch spawns the proposer: cwd=sandbox + scrubbed env.
+        Returns the completed process (caller asserts returncode / stderr)."""
+        return subprocess.run(
+            [sys.executable, '-c', code],
+            cwd=str(sandbox), env=_scrubbed_env(),
+            capture_output=True, text=True, timeout=30)
+
+    def test_engine_not_importable_from_sandbox(self, tmp_path) -> None:
+        sandbox = tmp_path / 'sbx'
+        prepare_sandbox(str(sandbox), path=str(tmp_path / 'idea_ledger.jsonl'))
+        proc = self._spawn_in_sandbox(sandbox, 'import edge_search')
+        assert proc.returncode != 0, (
+            f'edge_search WAS importable from the sandbox — the import vector is OPEN.\n'
+            f'stdout={proc.stdout!r} stderr={proc.stderr!r}')
+        # Assert the SPECIFIC missing-module message, not a loose 'ModuleNotFoundError' +
+        # 'edge_search' substring pair: if the fix were reverted (engine present in the sandbox)
+        # on a bare interpreter, `import edge_search` raises "No module named 'numpy'" FROM INSIDE
+        # edge_search.py — whose traceback path still contains "edge_search" — so the loose pair
+        # would pass vacuously. "No module named 'edge_search'" appears only when the engine
+        # MODULE itself is absent, which is exactly what the closed vector guarantees.
+        assert "No module named 'edge_search'" in proc.stderr, proc.stderr
+
+    def test_other_engine_modules_not_importable_from_sandbox(self, tmp_path) -> None:
+        # the same vector for the rest of the engine surface a proposer might recompute through
+        sandbox = tmp_path / 'sbx'
+        prepare_sandbox(str(sandbox), path=str(tmp_path / 'idea_ledger.jsonl'))
+        for mod in ('edge_search', 'vol_premium', 'cc_backtest', 'real_cc_backtest'):
+            proc = self._spawn_in_sandbox(sandbox, f'import {mod}')
+            # the SPECIFIC missing-module message (see test_engine_not_importable_from_sandbox):
+            # "No module named '<mod>'" only appears when <mod> ITSELF is absent, not when a
+            # present <mod>'s dependency is missing — so this stays non-vacuous on any interpreter.
+            assert proc.returncode != 0 and f"No module named '{mod}'" in proc.stderr, (
+                f'{mod} WAS importable from the sandbox.\nstderr={proc.stderr!r}')
+
+    def test_proposer_client_is_importable_from_sandbox(self, tmp_path) -> None:
+        # the proposer's OWN engine-free code is reachable (copied in) — and it does NOT drag
+        # the engine in transitively (it imports only read_gate_wire + the stdlib). The leak
+        # denylist below is fixed; if a new engine module is added, extend BOTH it and
+        # test_other_engine_modules_not_importable_from_sandbox's tuple.
+        sandbox = tmp_path / 'sbx'
+        prepare_sandbox(str(sandbox), path=str(tmp_path / 'idea_ledger.jsonl'))
+        code = (
+            'import sys, proposer_client, read_gate_wire\n'
+            "leaked = [m for m in ('edge_search', 'vol_premium', 'numpy', 'pandas') "
+            'if m in sys.modules]\n'
+            "print('LEAKED:' + ','.join(leaked))\n"
+        )
+        proc = self._spawn_in_sandbox(sandbox, code)
+        assert proc.returncode == 0, (
+            f'proposer_client was NOT importable from the sandbox.\nstderr={proc.stderr!r}')
+        assert 'LEAKED:' in proc.stdout and proc.stdout.strip() == 'LEAKED:', (
+            f'importing proposer_client dragged the engine in: {proc.stdout!r}')

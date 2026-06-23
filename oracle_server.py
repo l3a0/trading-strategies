@@ -6,11 +6,20 @@ engine, no chains) reaches the engine ONLY through a trusted ORACLE that charges
 score to the lifetime e-LOND stream BEFORE returning a one-bit verdict — "count every look;
 don't hide a number you can't hide." `edge_search.score_and_record` is the in-process seam
 (PR #72) that already does the score -> lifetime-judge -> record -> scrub chain; this module
-is the transport + the SUPERVISED-OPERATOR sandbox around that seam. NOTE: the wall here is a
-same-machine `cwd` + a scrubbed env, NOT a kernel filesystem jail — a malicious proposer could
-still read the engine or the answer-key ledger by absolute path. The load-bearing control at
-this stage is that the SANCTIONED proposer code (`proposer_client`) imports no engine (pinned
-by `test_import_is_engine_free`); kernel-enforced absence is the container PR (docs/read_gate.md).
+is the transport + the SUPERVISED-OPERATOR sandbox around that seam.
+
+THE IMPORT VECTOR IS NOW CLOSED (track C-1). `prepare_sandbox` COPIES the proposer's own code
+(`proposer_client.py` + `read_gate_wire.py`) INTO the sandbox, and `launch` spawns it with
+`cwd=sandbox`, so Python seeds `sys.path[0]` from the sandbox — which holds only those two
+engine-free files. `import edge_search` from inside the sandbox raises ModuleNotFoundError
+(pinned by `TestImportVectorClosed`). Before this, the proposer's CODE lived in the repo root,
+so `sys.path[0]` was the repo root and `import edge_search` SUCCEEDED inside the "sandbox" — the
+recompute vector the #73 adversarial review flagged.
+
+WHAT IS STILL OPEN (the container PR, docs/read_gate.md): the abspath read + the subprocess. A
+malicious proposer can still `open()` the repo-root engine or the answer-key ledger by absolute
+path, or shell out — `cwd` is not a kernel filesystem jail. Closing the import path narrows the
+EASY recompute (a bare `import edge_search`); kernel-enforced absence is the remaining seal.
 
 THE TWO SIDES:
 
@@ -18,9 +27,11 @@ THE TWO SIDES:
     reads NDJSON requests, validates each against the frozen wire contract (`read_gate_wire`),
     calls the seam, and writes back the seam's already-scrubbed, numberless reply.
   * The PROPOSER (a separate process, spawned by `launch`) is UNTRUSTED. It runs in a
-    sandbox dir containing ONLY `menu.json` + `corpus.json` (the grammar + the scrubbed
-    scoreboard — never the engine, the chains, or the answer-key ledger), with a scrubbed
-    environment, talking to the oracle over stdin/stdout.
+    sandbox dir containing EXACTLY four files: `menu.json` + `corpus.json` (the data seeds —
+    the grammar + the scrubbed scoreboard) plus `proposer_client.py` + `read_gate_wire.py`
+    (the proposer's OWN engine-free code, copied in so it can run with no engine on the import
+    path). The engine, the chains, and the answer-key ledger are NEVER in the sandbox. With a
+    scrubbed environment it talks to the oracle over stdin/stdout.
 
 `serve` takes injectable `read_line`/`write_line` so the tests can drive the loop with no
 pipes and no subprocess; `launch` wires them to a real subprocess. Stdlib only on this
@@ -31,6 +42,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from typing import Any, Callable
@@ -74,6 +86,22 @@ _FORBIDDEN_NAMES: frozenset[str] = frozenset({
     'idea_ledger.jsonl', '.git',
 })
 _FORBIDDEN_SUFFIXES: tuple[str, ...] = ('.csv', '.csv.gz')
+
+# The proposer's OWN engine-free code, copied into the sandbox by `prepare_sandbox` so the
+# proposer runs PURELY from the sandbox (cwd=sandbox => sys.path[0]=sandbox holds no engine,
+# closing the `import edge_search` recompute vector). These are NOT forbidden by
+# `_assert_sandbox_clean` — they are the proposer's code, not the engine. Both import only the
+# stdlib + `read_gate_wire` (pinned engine-free by proposer_client's test_import_is_engine_free),
+# so seeding them adds no engine reach. Copied from this module's OWN directory (the repo root),
+# where proposer_client.py + read_gate_wire.py live next to oracle_server.py.
+_PROPOSER_CODE_FILES: tuple[str, ...] = ('proposer_client.py', 'read_gate_wire.py')
+
+# The COMPLETE, frozen sandbox layout: exactly these four names and nothing else. The data
+# seeds (menu + corpus) plus the proposer's engine-free code. Track C-2 (the container) builds
+# against this contract. `prepare_sandbox` enforces it; `_assert_sandbox_clean` independently
+# forbids the engine/chains/.git/test_*.py (a disjoint guard, defense-in-depth).
+_SANDBOX_SEED_FILES: frozenset[str] = frozenset(
+    {'menu.json', 'corpus.json'}) | frozenset(_PROPOSER_CODE_FILES)
 
 
 def _error_reply(reason: str) -> dict[str, Any]:
@@ -166,29 +194,38 @@ def serve(
 
 
 def prepare_sandbox(sandbox_dir: str, *, path: str = IDEA_LEDGER_PATH) -> None:
-    """Seed the proposer's sandbox with EXACTLY the two files it is allowed to read — the
-    grammar menu and the scrubbed scoreboard — and NOTHING else.
+    """Seed the proposer's sandbox with EXACTLY four files and NOTHING else — the two data
+    seeds plus the proposer's own engine-free code.
 
-      * `menu.json`   — `enumerate_grammar_templates()` as plain coordinate dicts
-                        (name / overlay / params / predicted_sign). The full hypothesis menu
-                        the proposer may walk; no engine, no result.
-      * `corpus.json` — `build_proposer_corpus(load_idea_ledger(path))`: the scrubbed lifetime
-                        ledger (hypothesis coordinates + a one-bit KILLED/INVALID verdict,
-                        SURVIVED rows excluded), already numberless by construction.
+      * `menu.json`          — `enumerate_grammar_templates()` as plain coordinate dicts
+                               (name / overlay / params / predicted_sign). The full hypothesis
+                               menu the proposer may walk; no engine, no result.
+      * `corpus.json`        — `build_proposer_corpus(load_idea_ledger(path))`: the scrubbed
+                               lifetime ledger (hypothesis coordinates + a one-bit KILLED/INVALID
+                               verdict, SURVIVED rows excluded), numberless by construction.
+      * `proposer_client.py` — the proposer's OWN code, COPIED from this module's directory.
+      * `read_gate_wire.py`  — the dependency-free wire contract `proposer_client` imports.
 
-    The sandbox is created if absent and must hold ONLY these two files: if it already contains
+    Copying the proposer's code IN is what CLOSES the import vector: the proposer runs with
+    `cwd=sandbox` (see `launch`), so `sys.path[0]` is the sandbox — and the sandbox holds only
+    these two engine-free modules. `import edge_search` from inside the sandbox raises
+    ModuleNotFoundError. Both code files import only the stdlib + each other (pinned engine-free
+    by `proposer_client`'s `test_import_is_engine_free`), so seeding them adds no engine reach.
+
+    The sandbox is created if absent and must hold ONLY these four names: if it already contains
     anything else, this RAISES (a stray file would be readable by the proposer), so the seeded
-    dir is guaranteed to be exactly the two safe artifacts (re-seeding is fine — only the seeds
-    are allowed to pre-exist). BOTH are `assert_numberless`-checked before they land, so a
-    scoreboard/menu regression can never seed a number into the sandbox. (The read-deny that
-    keeps the ENGINE out is `launch`'s fail-closed check; this guarantees the proposer-visible
-    CONTENT is only menu + corpus.)"""
+    dir is guaranteed to be exactly the four safe artifacts (re-seeding is fine — only the seeds
+    are allowed to pre-exist). The two JSON seeds are `assert_numberless`-checked before they
+    land, so a scoreboard/menu regression can never seed a number into the sandbox. (The read-deny
+    that keeps the ENGINE out is `launch`'s fail-closed `_assert_sandbox_clean`; this guarantees
+    the proposer-visible CONTENT is exactly menu + corpus + the engine-free proposer code.)"""
     os.makedirs(sandbox_dir, exist_ok=True)
-    extra = set(os.listdir(sandbox_dir)) - {'menu.json', 'corpus.json'}
+    extra = set(os.listdir(sandbox_dir)) - _SANDBOX_SEED_FILES
     if extra:
         raise ValueError(
-            f'prepare_sandbox: {sandbox_dir!r} must hold only the seed files; found '
-            f'{sorted(extra)} (seed a fresh/empty dir — a stray file is proposer-readable)')
+            f'prepare_sandbox: {sandbox_dir!r} must hold only the seed files '
+            f'{sorted(_SANDBOX_SEED_FILES)}; found {sorted(extra)} '
+            f'(seed a fresh/empty dir — a stray file is proposer-readable)')
 
     menu = [{'name': t.name, 'overlay': t.overlay,
              'params': dict(t.params), 'predicted_sign': t.predicted_sign}
@@ -202,6 +239,13 @@ def prepare_sandbox(sandbox_dir: str, *, path: str = IDEA_LEDGER_PATH) -> None:
     with open(os.path.join(sandbox_dir, 'corpus.json'), 'w', encoding='utf-8') as f:
         json.dump(corpus, f, sort_keys=True)
 
+    # Copy the proposer's engine-free code in from THIS module's directory (the repo root,
+    # where proposer_client.py + read_gate_wire.py live next to oracle_server.py), so the
+    # proposer's import path (sys.path[0]=cwd=sandbox) reaches its own code but NOT the engine.
+    src_dir = os.path.dirname(os.path.abspath(__file__))
+    for name in _PROPOSER_CODE_FILES:
+        shutil.copy(os.path.join(src_dir, name), os.path.join(sandbox_dir, name))
+
 
 def _assert_sandbox_clean(sandbox_dir: str) -> None:
     """FAIL CLOSED: raise unless the sandbox TREE is free of anything that would let the
@@ -211,9 +255,14 @@ def _assert_sandbox_clean(sandbox_dir: str) -> None:
     matches names CASE-INSENSITIVELY (a case-insensitive FS reads `SPY...CSV` the same file),
     and rejects ANY symlink (an innocuously-named link can point at the whole engine checkout).
 
+    `proposer_client.py` and `read_gate_wire.py` are NOT forbidden — they are the proposer's
+    OWN engine-free code, which `prepare_sandbox` deliberately COPIES in (closing the import
+    vector). This guard runs on the PRE-SEED dir (BEFORE `prepare_sandbox` writes anything and
+    BEFORE any subprocess is spawned), so the proposer code isn't present yet anyway, and even
+    re-run on a seeded dir it would still pass them.
+
     This closes the IN-SANDBOX surface only — it does NOT close the same-machine residual that
-    the repo-root engine is reachable by absolute path (see `launch`'s note). It runs BEFORE
-    `prepare_sandbox` writes anything and BEFORE any subprocess is spawned."""
+    the repo-root engine is reachable by absolute path (see `launch`'s note)."""
     if not os.path.isdir(sandbox_dir):
         return                             # a not-yet-created dir is trivially clean
     for root, dirs, files in os.walk(sandbox_dir):
@@ -252,25 +301,35 @@ def launch(
       1. FAIL CLOSED on a dirty sandbox (`_assert_sandbox_clean`): if `sandbox_dir` carries
          the engine, a chain CSV, `.git`, or a `test_*.py`, raise — never spawn into a dir
          from which the proposer could recompute or read the answer key.
-      2. Seed the sandbox with exactly `menu.json` + `corpus.json` (`prepare_sandbox`).
+      2. Seed the sandbox with exactly four files — `menu.json` + `corpus.json` (data) plus
+         `proposer_client.py` + `read_gate_wire.py` (the proposer's engine-free code)
+         (`prepare_sandbox`). Copying the code IN is what closes the import vector (step 3).
       3. Spawn `proposer_argv` with `cwd=sandbox_dir`, a SCRUBBED env (no PYTHONPATH / no
          tokens), and stdin/stdout as pipes — the proposer reads requests from / writes
-         replies to the oracle.
+         replies to the oracle. Because cwd is the sandbox AND the proposer's code lives there,
+         `sys.path[0]` resolves to the sandbox (which holds no engine), so `import edge_search`
+         raises ModuleNotFoundError — the import vector is CLOSED.
       4. Drive `serve` with `read_line`/`write_line` bound to the child's stdout/stdin: the
          proposer writes a request line, the oracle scores+records+scrubs and replies. EOF
          (the proposer closing its stdout) ends the loop.
 
     Returns the proposer's exit code.
 
-    HONESTY — this is the SUPERVISED-OPERATOR MVP, NOT a kernel seal. `cwd=sandbox_dir` is not
-    a filesystem jail: a child can still `open()` the repo-root engine or answer-key ledger by
-    absolute path, and Python seeds `sys.path[0]` from the proposer SCRIPT's directory — so a
-    `proposer_argv` that runs a script FROM the engine checkout can `import edge_search` inside
-    the "sandbox." What `launch` ENFORCES: fail-closed on a dirty sandbox, a scrubbed env (no
-    PYTHONPATH / no tokens), and a content-only `menu.json`+`corpus.json` seed. What it RELIES
-    ON: the sanctioned `proposer_client` importing no engine (pinned by `test_import_is_engine_free`),
-    and the operator pointing `proposer_argv` at an engine-free location. A real seal — kernel-
-    enforced absence + a guaranteed engine-free proposer path — is the container PR
+    HONESTY — this is the SUPERVISED-OPERATOR MVP. The IMPORT vector is now CLOSED: the
+    proposer's code is seeded INTO the sandbox and run with `cwd=sandbox`, so `sys.path[0]`
+    (the sandbox) holds no engine and `import edge_search` raises ModuleNotFoundError (pinned
+    by `TestImportVectorClosed`). This holds for the intended invocation — `python -c <stub>`
+    or `python <a-script-in-the-sandbox>`, where `sys.path[0]` is the cwd. It does NOT hold if
+    the operator points `proposer_argv` at a script that lives in the engine checkout (then
+    `sys.path[0]` is that script's dir, not the sandbox); the read-gate contract is that the
+    proposer is `proposer_client` running from the seeded sandbox, not an arbitrary repo script.
+
+    What is STILL OPEN — `cwd=sandbox_dir` is not a kernel filesystem jail: a child can still
+    `open()` the repo-root engine or answer-key ledger by absolute path, or shell out. What
+    `launch` ENFORCES: fail-closed on a dirty sandbox, a scrubbed env (no PYTHONPATH / no
+    tokens), a four-file seed, and the closed import path. What it RELIES ON: the sanctioned
+    `proposer_client` importing no engine (pinned by `test_import_is_engine_free`). A real seal
+    — kernel-enforced absence of the abspath read + the subprocess — is the container PR
     (docs/read_gate.md, "The architecture that works")."""
     _assert_sandbox_clean(sandbox_dir)
     prepare_sandbox(sandbox_dir, path=path)
@@ -313,8 +372,9 @@ def main() -> None:
     real lifetime ledger. With no args, prints usage (the loop needs a proposer to talk to)."""
     if len(sys.argv) < 2:
         print('usage: python oracle_server.py <proposer-cmd> [args...]\n'
-              '  spawns the proposer in a sandbox (menu.json + corpus.json only) and runs\n'
-              '  the trusted oracle loop against it (docs/read_gate.md).', file=sys.stderr)
+              '  spawns the proposer in a sandbox (menu.json + corpus.json + the proposer\'s\n'
+              '  engine-free code) and runs the trusted oracle loop against it '
+              '(docs/read_gate.md).', file=sys.stderr)
         raise SystemExit(2)
     sandbox = os.environ.get('ORACLE_SANDBOX_DIR', '.oracle_sandbox')
     code = launch(sys.argv[1:], sandbox_dir=sandbox)
@@ -329,3 +389,9 @@ if __name__ == '__main__':
 # a sandbox dir without spawning. The leading-underscore impl stays the single source of
 # truth.
 assert_sandbox_clean = _assert_sandbox_clean
+
+# The frozen sandbox-layout contract, public so track C-2 (the container) and tests can assert
+# against it: the COMPLETE set of names the sandbox holds after `prepare_sandbox`, and the
+# subset that is the proposer's own engine-free code (copied in, not a data seed).
+SANDBOX_SEED_FILES = _SANDBOX_SEED_FILES
+PROPOSER_CODE_FILES = _PROPOSER_CODE_FILES
