@@ -471,7 +471,27 @@ def launch_in_container(
 
     REQUIRES docker + the #77 image built (`docker build -f Dockerfile.proposer -t <image> .`). The
     dev box has no docker, so the container tests skip locally and run in CI; this function is
-    authored against the documented `docker run` CLI, not exercised here."""
+    authored against the documented `docker run` CLI, not exercised here.
+
+    STILL OWED BEFORE A REAL MODEL IS WIRED (item 4 — the seal holds, but an untrusted LLM needs
+    these too): a wall-clock round TIMEOUT (a wedged-but-alive container that never writes a line
+    would block `serve`'s `readline` forever — only the tests guard this today, via SIGALRM); a
+    DIGEST pin on the base image (`FROM …@sha256:…`, so audited bytes == built bytes); making the
+    `read-gate-container` CI job a REQUIRED check (so a Dockerfile regression that re-bakes the
+    engine or drops `--network none` BLOCKS merge); and a seccomp profile + an explicit `--user`
+    (belt-and-suspenders behind the image's non-root USER). None are needed for the seal itself —
+    they are the gate before `launch_in_container` carries an actual model author."""
+    # Validate the bind path FIRST (fail fast, before seeding): `--mount` is a comma/`=`-delimited
+    # spec, so a sandbox path containing ',' or '=' would silently corrupt it (split a truncated
+    # src, or drop the `readonly` flag — failing OPEN). The path is caller-controlled (not proposer
+    # input), so this is robustness not an exploit, but a sealed launch must never fail open: reject
+    # such a path rather than mis-mount.
+    src = os.path.abspath(sandbox_dir)
+    if ',' in src or '=' in src:
+        raise ValueError(
+            f'launch_in_container: sandbox path {src!r} contains a comma or "=", which would '
+            f'corrupt the --mount spec; use a path without those characters')
+
     _assert_sandbox_clean(sandbox_dir)
     prepare_sandbox(sandbox_dir, path=path)
 
@@ -479,7 +499,6 @@ def launch_in_container(
     # through: docker run starts a fresh container env, so no host secret can ride in (the wall
     # the soft path's _scrubbed_env can only approximate). dst is the cwd via -w, so sys.path[0]
     # is /sandbox (the mount) — the proposer's own code is reachable, the engine is not.
-    src = os.path.abspath(sandbox_dir)
     docker_argv = [
         'docker', 'run', '-i', '--rm',
         *CONTAINER_SEAL_FLAGS,

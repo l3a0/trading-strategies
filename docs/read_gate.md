@@ -24,8 +24,12 @@ and the network is dead (`--network none`). Pinned by `test_read_gate_container.
 `TestProposerImageSeal` (engine absent by import AND by abspath, network dead, proposer code still
 runs) plus `TestContainerRoundTrip` (a live `launch_in_container`↔`proposer_client` round-trip that
 records exactly one comparison + read-only-mount / no-docker-socket hardening pins). What remains is
-the **real model author** (a temperature-0 Claude call behind the boundary). An LLM author must NOT
-be activated until that lands. The residual analysis below is unchanged.
+the **real model author** (a temperature-0 Claude call behind the boundary) AND its production
+wiring: `launch_in_container` exists and is pinned, but no production entrypoint uses it yet — the
+CLI `main()` still drives the soft `launch`, and only the test exercises the container path. Item 4
+plugs the model into a `launch_in_container` caller and closes the container's remaining must-dos (a
+round timeout, a base-image digest pin, making the seal CI job a required check, seccomp). An LLM
+author must NOT be activated until that lands. The residual analysis below is unchanged.
 
 ## Why this doc exists
 
