@@ -754,8 +754,9 @@ STRUCTURE_TEMPLATES: tuple[StructureTemplate, ...] = (
     StructureTemplate('credit_spread', 'credit_spread',   # widening 3 (the first CARRY structure)
                       (('dte', 30), ('short_delta', 0.25), ('wing_delta', 0.10)), +1),
     StructureTemplate('calendar', 'calendar',         # widening 4 (the first TERM family: two expirations)
-                      (('near_dte', 30), ('far_dte', 60)), +1),
-)
+                      (('near_dte', 30), ('far_dte', 90)), +1),   # far_dte 60->90: the far-DTE backfill
+)                                                                  # lets the far leg reach a real ~90-DTE
+#                                                                  # expiration (off the old 60-DTE data edge)
 
 
 @dataclass(frozen=True)
@@ -846,20 +847,61 @@ def _put_chain_paths(ticker: str) -> list[str]:
     return [base] if (os.path.exists(base) or os.path.exists(base + '.gz')) else []
 
 
-def _load_ticker_data(ticker: str, end: str = STRUCTURE_END) -> tuple[Any, list[str], list[float]]:
+def _far_chain_paths(ticker: str) -> list[str]:
+    """The far-DTE backfill file for a ticker, used ONLY by the TERM-family calendar overlay.
+    `{ticker}_option_dailies_180dte.csv` carries calls out to 180 DTE (a superset of the canonical
+    1-60 window), which is what lets the calendar's LONG far leg reach a real ~90-DTE expiration —
+    on the canonical store the far leg tops out near 60 DTE, so far_dte=90 collapses to ~60 and on
+    MSFT the same-strike far call simply isn't listed (the old measurement_invalid). The merge is
+    DELIBERATELY family-conditional: it enters ONLY the calendar's data path (include_far=True),
+    never the shared store every single-expiration overlay sees, so their pins stay byte-identical
+    even in LINEAGE (the far file's checksum touches only TERM rows). Returns [] when the backfill
+    is absent (the calendar then keeps its canonical-only behavior, MSFT staying invalid).
+    NOTE: unpublished as of this widening — leave it in place; publishing is a separate human gate."""
+    import os
+    base = f'{ticker.lower()}_option_dailies_180dte.csv'
+    return [base] if (os.path.exists(base) or os.path.exists(base + '.gz')) else []
+
+
+def _uses_far_chain(overlay: str) -> bool:
+    """True iff this overlay needs the far-DTE backfill — the TERM family (the calendar), whose
+    LONG leg lives on a far expiration the canonical 1-60 DTE store can't reach. Every other family
+    (VARIANCE / SKEW / CARRY) is single-expiration and loads the canonical store unchanged. Reading
+    the family (not a hardcoded {'calendar'}) keeps a future TERM widening — the diagonal, a rolled
+    calendar — automatically on the far path without a second edit here."""
+    return structure_family(overlay) is PremiumFamily.TERM
+
+
+def _load_ticker_data(ticker: str, end: str = STRUCTURE_END,
+                      include_far: bool = False) -> tuple[Any, list[str], list[float]]:
     """Load one ticker's era-clipped chain store + matching unadjusted prices ONCE,
     reused across all that ticker's templates in a campaign — the store parse, not
     the overlay, is the per-cell cost, so caching it cuts the campaign from one load
     per (template, ticker) cell to one per ticker. LIVE CHAIN_CLEAN_START (exploratory
     sees the corrected boundary). For SPY/MSFT/QQQ the separate puts file is MERGED
     (_put_chain_paths) so the put-leg structures trade. Engine deps imported lazily so
-    re-tag-only use of this module stays light."""
+    re-tag-only use of this module stays light.
+
+    `include_far` merges the far-DTE backfill (`_far_chain_paths`) so the TERM-family
+    calendar overlay can reach far_dte=90. It is FALSE for every single-expiration overlay
+    — their stores are byte-identical to the no-far path — and TRUE only for calendar cells,
+    so the wider data never leaks into the short-vol / straddle / strangle / iron-condor /
+    risk-reversal / credit-spread measurement (nor their lineage). The far merge is
+    WINDOW-ADDITIVE the same way the puts merge is: the far file spans different dates than
+    the canonical store (MSFT far 2016-01.. vs canonical 2016-04..), so merging it whole would
+    stretch the calendar's window past the canonical run's and re-measure it. Instead the far
+    rows are merged ONLY onto dates already in the canonical (+puts) store — the canonical day
+    set is fixed first — so the calendar runs on exactly the canonical window with extra far-DTE
+    legs added, never an extra day. Same hygiene as the canonical path: the era clip
+    (CHAIN_CLEAN_START start), the call-day window restriction, and unadjusted-price alignment;
+    the campaign's scale guard runs on the loaded store afterward."""
     from real_cc_backtest import (CHAIN_CLEAN_START, load_chain_store,
                                    load_unadjusted_prices)
+    start = CHAIN_CLEAN_START.get(ticker)
     extra = _put_chain_paths(ticker)
     store = load_chain_store(f'{ticker.lower()}_option_dailies.csv',
                              extra_paths=extra,
-                             start=CHAIN_CLEAN_START.get(ticker))
+                             start=start)
     days = sorted(store)
     if extra:
         # A merged puts file can PREDATE the calls (QQQ puts go back to 2011, its calls to 2016)
@@ -872,6 +914,21 @@ def _load_ticker_data(ticker: str, end: str = STRUCTURE_END) -> tuple[Any, list[
         call_days = [d for d in days if any(c[1] > 0 for c in store[d]['candidates'])]
         if call_days:
             days = call_days
+    if include_far and _far_chain_paths(ticker):
+        # Fold the far-DTE legs onto the CANONICAL day set only. The canonical (+puts) window is
+        # already fixed in `days`; the far store is loaded separately and its rows are merged into
+        # the canonical store ONLY for dates already present, so the far file can never add a day
+        # (the window stays the canonical one) — it only enriches each canonical day with the
+        # >60-DTE call legs the calendar's far leg needs. setdefault is unused on purpose: we never
+        # create a new date key, so a far-only date is silently dropped, exactly as intended.
+        far_store = load_chain_store(_far_chain_paths(ticker)[0], start=start)
+        keep = set(days)
+        for d, far_day in far_store.items():
+            tgt = store.get(d)
+            if tgt is None or d not in keep:
+                continue
+            tgt['candidates'].extend(far_day['candidates'])
+            tgt['marks'].update(far_day['marks'])
     dates, prices = load_unadjusted_prices(ticker, days[0], end)
     pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
     return store, [d for d, _ in pairs], [p for _, p in pairs]
@@ -906,7 +963,8 @@ def structure_kill_gate(cand: StructureCandidate,
         # measurement happened, so flag measurement_invalid (p=None -> e=0: counts toward the
         # stream, never flags) rather than scoring the idle flat rf-credit curve as a real ~0
         # t-stat — the campaign analog of the equivalence test's must_trade guard.
-        return {'phase': 'structure', 'template': cand.template, 'ticker': cand.ticker,
+        return {'phase': 'structure', 'template': cand.template, 'overlay': cand.overlay,
+                'ticker': cand.ticker,
                 'params': cand.params_dict(), 'predicted_sign': cand.predicted_sign,
                 'measurement_invalid': True, 'no_trades': True,
                 't_stat_newey_west': None, 'sign_ok': False, 'p_value': None}
@@ -915,6 +973,7 @@ def structure_kill_gate(cand: StructureCandidate,
     return {
         'phase': 'structure',
         'template': cand.template,
+        'overlay': cand.overlay,
         'ticker': cand.ticker,
         'params': cand.params_dict(),
         'predicted_sign': cand.predicted_sign,
@@ -966,21 +1025,27 @@ def run_structure_campaign(campaign: Campaign = STRUCTURE_CAMPAIGN,
     from validate_dailies import SCALE_TOL
     cands = enumerate_structure_candidates(campaign) if candidates is None else list(candidates)
     if scorer is None:
-        cache: dict[str, tuple[Any, list[str], list[float]]] = {}
-        invalid: dict[str, float] = {}
+        # Cache key is (ticker, include_far): a calendar cell loads the far-augmented store while
+        # every single-expiration cell loads the byte-identical canonical store — two distinct cache
+        # entries for the same ticker, so the wider far data never reaches a single-exp overlay.
+        cache: dict[tuple[str, bool], tuple[Any, list[str], list[float]]] = {}
+        invalid: dict[str, float] = {}  # keyed by TICKER: the price/chain scale is DTE-window-independent
 
         def _default_score(cand: StructureCandidate) -> dict[str, Any]:
-            if cand.ticker not in cache:
-                cache[cand.ticker] = _load_ticker_data(cand.ticker)
-                ratio = _ticker_scale_ratio(cache[cand.ticker])
+            far = _uses_far_chain(cand.overlay)
+            key = (cand.ticker, far)
+            if key not in cache:
+                cache[key] = _load_ticker_data(cand.ticker, include_far=far)
+                ratio = _ticker_scale_ratio(cache[key])
                 if ratio is not None and abs(ratio - 1.0) > SCALE_TOL:
                     invalid[cand.ticker] = ratio
             if cand.ticker in invalid:
-                return {'phase': 'structure', 'template': cand.template, 'ticker': cand.ticker,
+                return {'phase': 'structure', 'template': cand.template, 'overlay': cand.overlay,
+                        'ticker': cand.ticker,
                         'params': cand.params_dict(), 'predicted_sign': cand.predicted_sign,
                         'measurement_invalid': True, 'scale_ratio': round(invalid[cand.ticker], 3),
                         't_stat_newey_west': None, 'sign_ok': False, 'p_value': None}
-            return structure_kill_gate(cand, cache[cand.ticker], capital)
+            return structure_kill_gate(cand, cache[key], capital)
 
         scorer = _default_score
 
@@ -1077,8 +1142,30 @@ def _read_data_checksums(path: str = 'data_checksums.sha256') -> dict[str, str]:
     return out
 
 
+def _far_store_sha(ticker: str, checksums: dict[str, str]) -> str:
+    """The far-DTE backfill's content checksum, for folding into a TERM-family lineage. The
+    file is UNPUBLISHED as of this widening (a raw `.csv`, no `.gz` release asset), so the manifest
+    has no entry — fall back to hashing the local file's bytes so the calendar lineage is still
+    honest about which far data produced its t-stat. When the file is later published, its `.gz`
+    sha lands in the manifest and is preferred, re-lineaging the calendar cells exactly once (the
+    correct behavior — a published-data swap is a new lineage). Returns 'MISSING' when neither the
+    manifest entry nor the local file exists (a fresh checkout without the backfill)."""
+    sha = checksums.get(f'{ticker.lower()}_option_dailies_180dte.csv.gz')
+    if sha:
+        return sha
+    paths = _far_chain_paths(ticker)
+    if not paths:
+        return 'MISSING'
+    h = hashlib.sha256()
+    with open(paths[0], 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def _data_lineage_hash(ticker: str, end: str, capital: float = STRUCTURE_CAPITAL,
-                       checksums: dict[str, str] | None = None) -> str:
+                       checksums: dict[str, str] | None = None,
+                       overlay: str | None = None) -> str:
     """A short, deterministic id for the (data + engine) a comparison's RESULT ran
     against: this ticker's chain-store checksum + its era-clip boundary + the end
     date + the deployed capital + the engine-version tag. The rule is exactly the
@@ -1094,8 +1181,15 @@ def _data_lineage_hash(ticker: str, end: str, capital: float = STRUCTURE_CAPITAL
     false-discovery budget on every grid widening). The grammar's countability role
     lives where it belongs: grid_universe_size and the pinned 28-cell batch (the
     denominator the BY diagnostic of a single batch needs), not the per-comparison
-    identity. `checksums` is
-    injectable for tests."""
+    identity. `checksums` is injectable for tests.
+
+    `overlay` selects whether the far-DTE backfill is part of the data identity: it is
+    for the TERM family (the calendar loads the far store, so its result depends on that
+    file's content) and for nothing else. Passing it keeps single-expiration lineages
+    BYTE-UNCHANGED — only calendar rows fold the far checksum, so the far backfill never
+    re-lineages (and never resets the lifetime counter of) a short-vol / straddle /
+    strangle / iron-condor / risk-reversal / credit-spread comparison. `overlay=None`
+    keeps the pre-far behavior for any caller that doesn't have the overlay handy."""
     from real_cc_backtest import CHAIN_CLEAN_START
     checks = _read_data_checksums() if checksums is None else checksums
     sha = checks.get(f'{ticker.lower()}_option_dailies.csv.gz', 'MISSING')
@@ -1110,6 +1204,13 @@ def _data_lineage_hash(ticker: str, end: str, capital: float = STRUCTURE_CAPITAL
     # separate puts file exists, so a no-puts ticker's lineage is byte-unchanged.
     if _put_chain_paths(ticker):
         payload['puts_sha'] = checks.get(f'{ticker.lower()}_option_dailies_puts.csv.gz', 'MISSING')
+    # For a TERM-family (calendar) comparison the loaded store is canonical+far MERGED
+    # (_load_ticker_data include_far), so the far file is part of the result's data identity —
+    # fold its checksum so a re-measured calendar cell re-records. Only the TERM family, so every
+    # single-expiration lineage is byte-identical to the pre-far hash (the far backfill is invisible
+    # to them, exactly as it is invisible to their measurement).
+    if overlay is not None and _uses_far_chain(overlay) and _far_chain_paths(ticker):
+        payload['far_sha'] = _far_store_sha(ticker, checks)
     canon = json.dumps(payload, sort_keys=True)
     return hashlib.sha256(canon.encode()).hexdigest()[:16]
 
@@ -1147,7 +1248,12 @@ def structure_ledger_rows(campaign_rows: Sequence[dict[str, Any]],
         'measurement_invalid': bool(r.get('measurement_invalid', False)),
         'fdr_q': r.get('fdr_q'),
         'end': end,
-        'data_lineage_hash': _data_lineage_hash(r['ticker'], end, capital),
+        # Pass the overlay so a TERM-family (calendar) row folds the far-DTE checksum into its
+        # lineage (the far store is part of its result's data identity), while every single-
+        # expiration row's lineage stays byte-identical to the pre-far hash. A synthetic row
+        # without 'overlay' falls back to None -> the pre-far behavior (no far fold).
+        'data_lineage_hash': _data_lineage_hash(r['ticker'], end, capital,
+                                                overlay=r.get('overlay')),
     } for r in campaign_rows]
 
 
