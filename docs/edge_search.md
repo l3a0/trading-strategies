@@ -225,7 +225,7 @@ does not bend the cheap re-tag gate:
   now sets `elond_survivor` (the control flag); BY is retained as a reported *diagnostic*
   (`by_survivor`). The honest price: e-LOND is *less* powerful than BY (calibration is
   lossy), buying dependence-robustness + online validity rather than power — and it is
-  *stricter* here, so the verdict is unchanged: **0 / 49 cells flagged.** The strongest
+  *stricter* here, so the verdict is unchanged: **0 / 56 cells flagged.** The strongest
   cell (SPY short-call-25, t_NW ≈ +2.17) calibrates to e ≈ 4.1, far below the
   head-of-stream bar 1/(α·γ₁) ≈ 16.3. The machinery is oracle-tested against the
   `online-fdr` package; `TestStructureCampaign` now pins the e-LOND verdict on real
@@ -324,13 +324,14 @@ both out of this MVP's scope, both the natural next phase.
 
 ---
 
-## Campaign 2 — structure class — EMPTY (2026-06-17; NVDA folded in 2026-06-20; SPY/MSFT/QQQ put chains merged 2026-06-22; strangle widening 2026-06-22; risk-reversal widening 2026-06-22; credit-spread widening 2026-06-22)
+## Campaign 2 — structure class — EMPTY (2026-06-17; NVDA folded in 2026-06-20; SPY/MSFT/QQQ put chains merged 2026-06-22; strangle widening 2026-06-22; risk-reversal widening 2026-06-22; credit-spread widening 2026-06-22; calendar widening 2026-06-22)
 
 **The batch.** Forty-nine `(template, ticker)` cells — **seven** structure templates
 (short call 0.25Δ, short call ATM, ATM straddle, 25Δ/10Δ iron condor, the OTM
 short **strangle** (widening 1), the bullish **risk reversal** (widening 2 — the
-first new family), and the bull put **credit spread** (widening 3 — the first CARRY
-structure, below)) crossed with the seven search
+first new family), the bull put **credit spread** (widening 3 — the first CARRY
+structure), and the long **calendar** (widening 4 — the first TERM family, two
+expirations; all below)) crossed with the seven search
 tickers (MSFT, SPY, QQQ, GLD, XLE, EEM, NVDA; **TLT sealed**) — each a full
 `run_real_*_overlay` engine pass scored by the Newey-West HAC t-stat against its
 asymptotic normal null (closed-form p, no permutation), then judged as a stream by
@@ -338,12 +339,12 @@ asymptotic normal null (closed-form p, no permutation), then judged as a stream 
 retained as a diagnostic. The chains are era-clipped at the live `CHAIN_CLEAN_START`
 (exploratory sees the corrected SPY boundary).
 
-**The result.** No cell is flagged by e-LOND, the control (`0 / 49`); none survives
+**The result.** No cell is flagged by e-LOND, the control (`0 / 56`); none survives
 the BY diagnostic either. The strongest is SPY short-call 0.25Δ at t = +2.17 (the
 exploratory cousin of the frozen +2.54 short-vol headline, now on the wider corrected
 SPY span): individually suggestive at p \~0.015, but it calibrates to an e-value of
 \~4.1 — far short of the e-LOND head-of-stream bar 1/(α·γ₁) \~16.3, and missing the BY
-diagnostic's rank-1 bar (\~0.0005 for 49 dependent tests) by an order of magnitude.
+diagnostic's rank-1 bar (\~0.0004 for the 56-cell batch, 55 scored) by an order of magnitude.
 The next cells trail off fast — SPY short-call ATM at +1.60, GLD's call wings near
 +1.15 — and every put-leg straddle/iron-condor cell is at most +0.72 (SPY straddle).
 The risk-reversal cells are all wrong-signed (negative alpha over cash on all seven
@@ -383,7 +384,7 @@ per-ticker `_data_lineage_hash` so the re-measured cells re-record honestly, and
 rather than scored as a real \~0.
 Re-measured, the six cells are real and distinct, and all still far from significance
 — SPY straddle +0.72 / iron-condor −1.08; MSFT −0.67 / +0.52; QQQ −0.10 / +0.14. The
-`0 / 28` verdict was unchanged (the strangle, risk-reversal, and credit-spread widenings later took the batch to 35, then 42, then 49); the cells are now honest measurements rather than
+`0 / 28` verdict was unchanged (the strangle, risk-reversal, credit-spread, and calendar widenings later took the batch to 35, then 42, then 49, then 56); the cells are now honest measurements rather than
 flat-curve artifacts (the same class of bug as XLE — defective inputs, not a real
 edge — caught on the other side: missing data rather than mis-scaled).
 
@@ -408,7 +409,7 @@ strangle cells are judged at the tail of the lifetime e-LOND stream (after the p
 28) and recorded; the existing rows are byte-unchanged. The strangle is another null
 (MSFT +0.50 / SPY +1.06 / QQQ +0.34 / GLD +0.33 / XLE −1.34 / EEM −0.78 / NVDA
 −1.33 — all well short of significance), so the verdict stays `0 / 35` (then `0 / 42`
-after widening 2, `0 / 49` after widening 3, below).
+after widening 2, `0 / 49` after widening 3, `0 / 56` after widening 4, below).
 
 ### Widening 2 — the risk reversal (the first NEW family, SKEW)
 
@@ -446,7 +447,7 @@ tickers** (MSFT −2.09 / SPY −1.78 / QQQ −1.27 / GLD −3.30 / XLE −2.00 
 NVDA −0.19): there is no harvestable put-call skew premium at these names/era. (The
 overlay's large *raw* P&L is risk-free interest on the cash balance; the **alpha over
 cash** the campaign scores is negative.) The verdict stays `0 / 42` (then `0 / 49`
-after widening 3, below).
+after widening 3, `0 / 56` after widening 4, below).
 
 ### Widening 3 — the bull put credit spread (the first CARRY structure)
 
@@ -483,9 +484,61 @@ negative at these names/era. (As with the risk reversal, the large *raw* P&L is 
 interest on the cash balance; the **alpha over cash** the campaign scores is negative.)
 The put legs trade on the calls-only SPY/MSFT/QQQ stores via the merged puts file (175 /
 105 / 107 entries), and a 0-trades → `measurement_invalid` guard would flag a future
-non-trading cell rather than score a vacuous \~0. The verdict stays `0 / 49`. The
-roll/stop/spread *variants* and a further new family (`TERM` calendar — which needs the
-typed signature extended past `{vega, delta, skew}`) remain next.
+non-trading cell rather than score a vacuous \~0. The verdict stays `0 / 49`. The first `TERM`-family
+widening — the long calendar (widening 4) — follows directly below.
+
+### Widening 4 — the long calendar (the first TERM family, two expirations)
+
+The first widening that touches the **engine itself**, and the deepest lift so far. A
+long calendar — SHORT a near-month ~ATM call + LONG a far-month call at the SAME strike,
+combined-delta-hedged — harvests the **term structure** of implied vol: it sells the
+near (faster-decaying) leg and buys the far (richer-vega) leg, so the spread is net LONG
+vega across two expirations. That is the `TERM` family's defining axis (opposite-sign
+vega across expirations), distinct from the single-expiration VARIANCE and SKEW families.
+
+**The engine change (a human-signed surgery).** Every prior structure settled all its
+legs at once: the loop tracked a single scalar expiration and an `elif date >= expiration`
+branch closed the whole position. A calendar has two distinct expirations, so the engine
+gained **staggered settlement** — the near leg settles at its own expiry (a `settle_leg`
+trade) while the far leg keeps marking and hedging, and the structure closes only when the
+far leg expires. The new branch is guarded so a single-expiration structure (every other
+overlay) takes the byte-identical scalar-expiration path, which the equivalence and
+registered pins confirm did not move. The Saturday-expiry handling and the `gap ≤ 4`
+assert are applied **per leg**.
+
+**The signature schema change (a human-signed grammar decision).** A two-expiration
+structure can't price both legs on one clock. `structure_greek_signature` gained an
+`entry_date` argument: when passed, each leg's IV is backed out at its OWN tenor (the
+far leg has more time value and more vega than the near at the same strike — exactly the
+long-vega edge). Single-expiration callers pass no `entry_date` and are byte-unchanged.
+The `net_skew` axis was also refined to read `flat` for a SAME-strike spread: a calendar's
+short-vs-long IV gap is the term-structure slope, not a wing asymmetry, so without the
+guard a TERM structure would mis-type as SKEW. The calendar declares
+`{2 expirations, 2 legs, net_vega long, net_delta neutral, net_skew flat}`, cross-checked
+against SPY's engine greeks by the dataset-gated `TestGrammarSignatureMatchesEngine`. The
+selector enforces a `min_gap_dte = 30` floor so the far leg is genuinely further out — a
+near-adjacent far leg reads vega-neutral, not the long-vega calendar the family claims.
+
+**The result.** It took the closed grammar `66 → 70` (the calendar lattice is
+`near_dte × far_dte = 2 × 2 = 4`) and the committed batch `7 × 7 = 49 → 8 × 7 = 56`,
+appending 7 calendar cells to the lifetime e-LOND stream. Six of the seven traded and are
+**wrong-signed** (SPY −2.44 / QQQ −0.11 / GLD −0.66 / XLE −1.25 / EEM −0.49 / NVDA −1.88):
+a long-vega calendar pays for term-structure exposure these names/era don't reward. The
+seventh, **MSFT, is measurement-invalid** — MSFT's listed chains carry no far call at the
+near leg's exact strike (a same-strike calendar needs the strike quoted ≥30 DTE past the
+near, which MSFT's grid doesn't list), so the structure never enters; the no-trades guard
+flags it (e = 0, counts toward n = 56, never flagged), exactly as designed. The verdict
+stays `0 / 56`. The roll/stop/spread *variants* and the **diagonal** (a calendar with
+different strikes) remain next.
+
+**A measurement caveat — the TERM family is data-limited.** The chains are fetched at
+`--max-dte 60`, so the calendar's far leg (DTE ≥ near + 30 = 60) sits at the exact data
+edge: a 60-DTE expiry exists on only \~4–6% of days, and the grammar's `far_dte=90` is
+unreachable. The six traded cells scrape that thin tail, and MSFT's \~30-day roll cadence
+never lands on enough 60-DTE-expiry days to complete an entry — hence its
+`measurement_invalid`. So this `0 / 56` is a *clean null on thin data*, not a fully-powered
+TERM test; a proper measurement needs a far-DTE backfill (60 < DTE ≤ 180), a separate
+pin-safe data project ([term_backfill_plan.md](term_backfill_plan.md)).
 
 ### NVDA — the seventh ticker (live-onboarded, folded in)
 
@@ -507,6 +560,7 @@ BY diagnostic) even applies:
 | strangle | −1.33 | 0.9082 | no | yes |
 | risk_reversal | −0.19 | 0.5753 | no | yes |
 | credit_spread | −0.06 | 0.5239 | no | yes |
+| calendar | −1.88 | 0.9699 | no | yes |
 
 **A clean data-hygiene read — for once.** Where XLE needed a split repair, NVDA
 passed every clean-gate check on the first try. `validate_dailies.py` streamed
