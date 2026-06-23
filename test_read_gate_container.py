@@ -185,7 +185,13 @@ class TestContainerRoundTrip:
     `_scorer` stands in for the overlay, so this pins the COMPOSITION (spawn -> wire -> record), not
     a real backtest."""
 
-    def test_real_proposer_client_round_trips_in_container(self, proposer_image, tmp_path) -> None:
+    def test_real_proposer_client_round_trips_in_container(
+            self, proposer_image, tmp_path, monkeypatch) -> None:
+        # The oracle runs on the HOST (this process); onboard the synthetic AAA there so the cell
+        # SCORES + RECORDS rather than routing to needs_onboard (mirrors test_oracle_server's
+        # oracle tests). Without this the round-trip completes (exit 0) but records 0 — the CI
+        # failure this test caught, invisible locally where the docker-gated test skips.
+        monkeypatch.setattr('edge_search._is_onboarded', lambda tk: True)
         led = str(tmp_path / 'idea_ledger.jsonl')
         sandbox = str(tmp_path / 'sandbox')
         # A real proposer running PURELY from the read-only seed mount (cwd=/sandbox). It proposes
