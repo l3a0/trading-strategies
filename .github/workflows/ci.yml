@@ -137,6 +137,14 @@ jobs:
             xle_option_dailies.csv.gz
             eem_option_dailies.csv.gz
             nvda_option_dailies.csv.gz
+            msft_option_dailies_180dte.csv.gz
+            spy_option_dailies_180dte.csv.gz
+            qqq_option_dailies_180dte.csv.gz
+            gld_option_dailies_180dte.csv.gz
+            xle_option_dailies_180dte.csv.gz
+            eem_option_dailies_180dte.csv.gz
+            nvda_option_dailies_180dte.csv.gz
+            tlt_option_dailies_180dte.csv.gz
           key: chain-data-${{ hashFiles('data_checksums.sha256') }}
       - name: Fetch chain data from the data release
         if: steps.chain-cache.outputs.cache-hit != 'true'
@@ -206,6 +214,14 @@ jobs:
             xle_option_dailies.csv.gz
             eem_option_dailies.csv.gz
             nvda_option_dailies.csv.gz
+            msft_option_dailies_180dte.csv.gz
+            spy_option_dailies_180dte.csv.gz
+            qqq_option_dailies_180dte.csv.gz
+            gld_option_dailies_180dte.csv.gz
+            xle_option_dailies_180dte.csv.gz
+            eem_option_dailies_180dte.csv.gz
+            nvda_option_dailies_180dte.csv.gz
+            tlt_option_dailies_180dte.csv.gz
           key: chain-data-${{ hashFiles('data_checksums.sha256') }}
       - name: Fetch chain data from the data release
         if: steps.chain-cache.outputs.cache-hit != 'true'

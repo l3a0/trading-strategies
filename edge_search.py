@@ -857,7 +857,8 @@ def _far_chain_paths(ticker: str) -> list[str]:
     never the shared store every single-expiration overlay sees, so their pins stay byte-identical
     even in LINEAGE (the far file's checksum touches only TERM rows). Returns [] when the backfill
     is absent (the calendar then keeps its canonical-only behavior, MSFT staying invalid).
-    NOTE: unpublished as of this widening — leave it in place; publishing is a separate human gate."""
+    NOTE: published to the data-2026-06 release — CI fetches the `.gz` via the same wide glob as
+    every canonical store, so the calendar's far leg is available in CI exactly like the chains."""
     import os
     base = f'{ticker.lower()}_option_dailies_180dte.csv'
     return [base] if (os.path.exists(base) or os.path.exists(base + '.gz')) else []
@@ -1143,13 +1144,14 @@ def _read_data_checksums(path: str = 'data_checksums.sha256') -> dict[str, str]:
 
 
 def _far_store_sha(ticker: str, checksums: dict[str, str]) -> str:
-    """The far-DTE backfill's content checksum, for folding into a TERM-family lineage. The
-    file is UNPUBLISHED as of this widening (a raw `.csv`, no `.gz` release asset), so the manifest
-    has no entry — fall back to hashing the local file's bytes so the calendar lineage is still
-    honest about which far data produced its t-stat. When the file is later published, its `.gz`
-    sha lands in the manifest and is preferred, re-lineaging the calendar cells exactly once (the
-    correct behavior — a published-data swap is a new lineage). Returns 'MISSING' when neither the
-    manifest entry nor the local file exists (a fresh checkout without the backfill)."""
+    """The far-DTE backfill's content checksum, for folding into a TERM-family lineage. The file is
+    PUBLISHED to the data-2026-06 release, so its `.gz` sha lives in the manifest and is the lineage
+    source of record (preferred whenever present). The local-`.csv`-bytes branch is the fallback for
+    a checkout that has the raw backfill but no manifest entry yet (e.g. mid-fetch before publish) —
+    it keeps the calendar lineage honest about which far data produced its t-stat. Publishing flipped
+    the lineage from the local-bytes hash to the `.gz` sha exactly once (a published-data swap is a
+    new lineage). Returns 'MISSING' when neither the manifest entry nor the local file exists (a
+    fresh checkout without the backfill)."""
     sha = checksums.get(f'{ticker.lower()}_option_dailies_180dte.csv.gz')
     if sha:
         return sha
