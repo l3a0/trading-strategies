@@ -85,8 +85,13 @@ def assert_numberless(obj: Any, _path: str = 'reply') -> None:
     A banned key is caught regardless of its value's type (a banned key with a scalar, dict, or
     list value all raise). Scalars and strings are inspected only as dict KEYS, never as values,
     so a banned NAME appearing as a plain string value does not (and should not) trip the guard.
-    Sets/frozensets cannot transitively hold a dict (dicts are unhashable, as is any tuple
-    containing one), so they are not a container shape a banned key can hide inside."""
+
+    LEAF-TYPE GUARD: every leaf must be a JSON primitive (str / int / float / bool / None). A
+    non-primitive leaf — a dataclass or custom object whose ATTRIBUTES (not dict keys) could carry
+    a banned name, or a set/frozenset — is REJECTED, so the guard is self-sufficient as the sole
+    seal and does not rely on a downstream json.dumps failure to catch a smuggled object. (A
+    namedtuple is a tuple, descended above as values; its field names don't survive JSON, so it is
+    not a banned-NAME vector.)"""
     if isinstance(obj, dict):
         bad = BANNED_RESULT_FIELDS & obj.keys()
         if bad:
@@ -96,3 +101,14 @@ def assert_numberless(obj: Any, _path: str = 'reply') -> None:
     elif isinstance(obj, (list, tuple)):
         for i, v in enumerate(obj):
             assert_numberless(v, f'{_path}[{i}]')
+    elif obj is not None and not isinstance(obj, (str, int, float, bool)):
+        # Leaf-type guard — the SOLE seal must be self-sufficient, not lean on a downstream
+        # json.dumps failure (docs/llm_proposer_plan.md: oracle-side builder, no kernel backstop).
+        # The numberless object crosses the wire as JSON, so every leaf must be a JSON primitive.
+        # A non-primitive leaf — a dataclass / custom object whose ATTRIBUTES (not dict keys) could
+        # carry a banned field name the key-guard never inspects — is rejected here. (A namedtuple
+        # is a tuple, descended above as values; its field names don't survive JSON, so a banned
+        # NAME cannot ride it.)
+        raise ValueError(
+            f'read-gate numberless violation at {_path}: non-primitive leaf of type '
+            f'{type(obj).__name__} (a banned field could hide in its attributes; the wire is JSON)')

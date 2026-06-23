@@ -185,7 +185,7 @@ jobs:
       matrix:
         include:
           - {bucket: vol-premium,   files: "test_vol_premium.py"}
-          - {bucket: edge-search,   files: "test_edge_search.py test_validate_dailies.py test_oracle_server.py test_proposer_client.py"}
+          - {bucket: edge-search,   files: "test_edge_search.py test_validate_dailies.py test_oracle_server.py test_proposer_client.py test_read_gate_wire.py"}
           - {bucket: trend-explore, files: "test_trend_gate.py test_explorations.py"}
     steps:
       - uses: actions/checkout@v4

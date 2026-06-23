@@ -151,6 +151,39 @@ class TestNotANumberDetector:
         assert assert_numberless({'wire_version': 1, 'recorded': 42}) is None
 
 
+class TestLeafTypeGuard:
+    """The SOLE seal must be self-sufficient (oracle-side builder, no kernel backstop): every leaf
+    must be a JSON primitive, so a banned field cannot hide in a non-primitive leaf's ATTRIBUTES
+    (which the key-name guard never inspects) and the seal does not lean on a downstream json.dumps
+    failure. A namedtuple is a tuple — descended as values, its field names lost to JSON — so it is
+    not a banned-NAME vector and is not the concern here; a dataclass / custom object IS."""
+
+    def test_dataclass_leaf_with_a_banned_attribute_is_rejected(self):
+        import dataclasses
+
+        @dataclasses.dataclass
+        class _Sneaky:
+            t_stat_newey_west: float = 2.1      # a banned name, but as an ATTR, not a dict key
+
+        with pytest.raises(ValueError, match='non-primitive leaf'):
+            assert_numberless({'corpus': [{'extra': _Sneaky()}]})
+
+    def test_arbitrary_object_leaf_is_rejected(self):
+        class _Obj:
+            pass
+        with pytest.raises(ValueError, match='non-primitive leaf'):
+            assert_numberless({'x': _Obj()})
+
+    def test_a_set_leaf_is_rejected(self):
+        # a set is not JSON-serializable; reject it as a non-primitive leaf rather than ignore it
+        with pytest.raises(ValueError, match='non-primitive leaf'):
+            assert_numberless({'x': {1, 2, 3}})
+
+    def test_primitive_leaves_and_none_still_pass(self):
+        assert assert_numberless(
+            {'a': 'str', 'b': 1, 'c': 2.5, 'd': True, 'e': None, 'f': [1, 'x', None]}) is None
+
+
 class TestErrorMessage:
     """The raise must name the offending field and a path, so a leak in CI is debuggable."""
 
@@ -338,11 +371,14 @@ class TestProposerSurfaceIsNumberless:
 
 # ---- the hard e-LOND budget cap (item 3) ----
 class TestProposalsCap:
-    """A single proposer invocation must not score an unbounded number of cells — e-LOND
-    power degrades as gamma_t -> 0, so a runaway author could drain the budget in one look.
-    `max_proposals_per_round` is the HARD ceiling enforced for ALL author paths in
-    run_proposer_round (not just the LLM's max_batch). These pin the ceiling and that it
-    actually bites a too-eager author on BOTH paths."""
+    """The e-LOND budget per round is bounded — but by the CLOSED GRAMMAR (interlock #1), not by a
+    separate cap. The grammar's reach is `grid_universe_size() * len(onboarded)` distinct cells, and
+    the grammar gate (llm_propose_candidates / propose_structure_candidates) canonicalizes + dedups
+    EVERY author's output to that, so no author path can score past it. `max_proposals_per_round`
+    restates that reach as an explicit ceiling that `run_proposer_round` slices to — a NO-OP backstop
+    in normal operation (the grammar already bounds the count, as the flooding-author test shows),
+    there only to bound the budget loudly if the gate ever regressed. These pin the real bound (the
+    grammar reach) and that a legitimate full walk is never truncated."""
 
     @staticmethod
     def _scorer(cand):
@@ -351,42 +387,33 @@ class TestProposalsCap:
                 'predicted_sign': cand.predicted_sign,
                 't_stat_newey_west': 0.5, 'sign_ok': True, 'p_value': 0.3}
 
-    def test_ceiling_is_grid_times_universe(self):
+    def test_ceiling_equals_the_grammar_reach(self):
         import edge_search as es
         camp = es.Campaign(search=('AAA', 'BBB', 'CCC'))
         assert es.max_proposals_per_round(camp) == es.grid_universe_size() * 3
 
-    def test_menu_walker_round_never_exceeds_the_ceiling(self, monkeypatch, tmp_path):
-        # the menu-walker path (author=None) is the one the LLM's max_batch does NOT touch
-        import edge_search as es
-        monkeypatch.setattr('edge_search._is_onboarded', lambda tk: True)
-        camp = es.Campaign(search=('AAA', 'BBB'))
-        res = es.run_proposer_round(camp, path=str(tmp_path / 'l.jsonl'),
-                                    scorer=self._scorer, run=False)
-        assert res['proposed'] <= es.max_proposals_per_round(camp)
-
-    def test_cap_truncates_a_runaway_author(self, monkeypatch, tmp_path):
-        # an author that emits FAR more grammar-valid cells than the reachable space (here by
-        # spanning multiple tickers' full menus) is truncated to the hard ceiling. Use a tiny
-        # one-ticker universe so the ceiling is small and the truncation is observable.
+    def test_a_flooding_author_is_bounded_by_the_grammar_not_the_cap(self, monkeypatch, tmp_path):
+        # The HONEST "the count can't run away": an author proposing the WHOLE menu many times over
+        # for a ticker is canonicalized + deduped by the GRAMMAR GATE to exactly the grammar reach
+        # (grid_universe_size() for one ticker) — below the ceiling, so the cap slice never bites.
+        # The bound is the closed grammar, not the cap (a no-op backstop). (The prior
+        # "cap truncates a runaway" test was vacuous: no author path can exceed the reach the cap
+        # equals, so the slice could never be observed truncating — it passed with the cap deleted.)
         import edge_search as es
         monkeypatch.setattr('edge_search._is_onboarded', lambda tk: True)
         camp = es.Campaign(search=('AAA',))
-        ceiling = es.max_proposals_per_round(camp)            # == grid_universe_size()
         menu = es.enumerate_grammar_templates()
-        # propose the whole menu twice over (dedup will collapse the repeats, but the point is
-        # the count handed to run_proposer_round can never exceed the ceiling regardless).
-        many = [{'overlay': t.overlay, 'ticker': 'AAA', 'params': dict(t.params),
-                 'predicted_sign': t.predicted_sign} for t in menu]
+        flood = [{'overlay': t.overlay, 'ticker': 'AAA', 'params': dict(t.params),
+                  'predicted_sign': t.predicted_sign} for t in menu] * 5   # 5x duplicates
 
         def author(_menu, _corpus, _onboarded):
-            return es.ProposalBatch(tuple(many), model_requested='m', model_served='m-s',
+            return es.ProposalBatch(tuple(flood), model_requested='m', model_served='m-s',
                                     temperature=0.0, prompt_sha='sha')
 
-        # max_batch deliberately set ABOVE the ceiling so the HARD cap is what binds, not max_batch
         res = es.run_proposer_round(camp, path=str(tmp_path / 'l.jsonl'), scorer=self._scorer,
                                     run=False, author=author, max_batch=10_000)
-        assert res['proposed'] <= ceiling
+        assert res['proposed'] == es.grid_universe_size()            # deduped to the grammar reach
+        assert res['proposed'] <= es.max_proposals_per_round(camp)   # under the ceiling (no-op cap)
 
     def test_cap_does_not_truncate_a_legitimate_full_menu_walk(self, monkeypatch, tmp_path):
         # the ceiling must never silently drop a valid full-universe menu-walk: a one-ticker

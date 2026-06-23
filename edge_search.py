@@ -690,22 +690,22 @@ def grid_universe_size() -> int:
 
 
 def max_proposals_per_round(campaign: 'Campaign') -> int:
-    """The HARD per-invocation ceiling on cells a single proposer round may score —
-    the e-LOND BUDGET GUARD (docs/llm_proposer_plan.md, Phase A). It is the full
-    reachable hypothesis space: every closed-grammar template (`grid_universe_size()`)
-    crossed with every committed search ticker. No author — the deterministic
-    menu-walker OR a future LLM — can score MORE cells in one round than the entire
-    grammar x universe permits, so a runaway author (a model hallucinating thousands
-    of proposals) cannot drain the online-FDR budget in a single look (e-LOND power
-    degrades as gamma_t -> 0, so an unbounded stream is the danger the small menu and
-    this cap both guard).
+    """The e-LOND budget ceiling for one proposer round = the CLOSED GRAMMAR'S REACH:
+    every closed-grammar template (`grid_universe_size()`) crossed with every committed
+    search ticker. The INHERENT bound on the online-FDR budget is interlock #1, the closed
+    grammar itself: the grammar gate (`llm_propose_candidates` / `propose_structure_candidates`)
+    canonicalizes + dedups EVERY author's output to grammar-templates x onboarded-tickers, so
+    no author — the deterministic menu-walker OR a future LLM hallucinating thousands of
+    proposals — can score more cells in one round than the grammar permits (e-LOND power
+    degrades as gamma_t -> 0, so an unbounded stream is the danger the SMALL CLOSED MENU
+    already forecloses).
 
-    It is a CEILING, not a target: the menu-walker's natural one-round sweep over the
-    untried space sits at or below it by construction (the grammar is finite), so the
-    cap never silently truncates a legitimate full menu-walk — it only bites an author
-    that proposes off the end of the reachable space. The LLM front-end's `max_batch` is
-    a TIGHTER per-call throttle layered inside this hard ceiling, not a replacement for
-    it (the menu-walker path takes no `max_batch`)."""
+    `run_proposer_round` slices the candidate list to this value as an explicit BACKSTOP — but
+    it is a NO-OP in normal operation: the grammar gate already bounds the count to <= this, so
+    the slice never truncates a real author (a legitimate full menu-walk sits exactly at the
+    reach; a flooding author dedups down to it — pinned by TestProposalsCap). The backstop is
+    there only to bound the budget if the grammar gate ever regressed (e.g. lost dedup). The LLM
+    front-end's `max_batch` is a TIGHTER per-call throttle layered inside it."""
     return grid_universe_size() * len(campaign.search)
 
 
@@ -1705,11 +1705,12 @@ def run_proposer_round(
     else:
         cands, needs_onboard, rejected, batch = llm_propose_candidates(
             author, campaign, corpus, tried, max_batch)
-    # The HARD e-LOND BUDGET GUARD (docs/llm_proposer_plan.md, Phase A) — enforced for
-    # EVERY author path, not just the LLM's `max_batch`. A single round can never score
-    # more cells than the full reachable grammar x universe, so a runaway author cannot
-    # drain the online-FDR budget in one look. It is a CEILING the finite menu-walk sits
-    # under by construction; it bites only an author that ran off the end of the space.
+    # e-LOND budget BACKSTOP (docs/llm_proposer_plan.md, Phase A) — a NO-OP in normal operation:
+    # the closed grammar (interlock #1) is the real bound, since the grammar gate above already
+    # canonicalizes + dedups every author's output to <= grammar-templates x onboarded-tickers.
+    # This slice restates that reach as an explicit ceiling for EVERY author path (not just the
+    # LLM's `max_batch`), there only to bound the online-FDR budget loudly if the gate ever
+    # regressed (e.g. lost dedup). It never truncates a real author (see max_proposals_per_round).
     cands = cands[:max_proposals_per_round(campaign)]
     result: dict[str, Any] = {'proposed': len(cands), 'recorded': 0,
                               'needs_onboard': needs_onboard, 'rejected': rejected,
