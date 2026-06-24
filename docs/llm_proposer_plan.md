@@ -13,6 +13,29 @@ standing rule holds: no LLM author runs until the gates below are met and the ow
 approves. It exists so the two consequential decisions — *where the model call lives* and *how
 the prompt is constructed* — are settled on the record, not improvised at wiring time.
 
+## The simplification: the container is off the LLM path
+
+The container/transport stack — `oracle_server.py`, `proposer_client.py`, `Dockerfile.proposer`,
+`launch_in_container`, `CONTAINER_SEAL_FLAGS`, the round timeout — was built to cage an
+**untrusted *code* proposer**: a process running in the sandbox that could `import edge_search`
+and recompute a statistic privately. The coordinate-emitting LLM is **not** that. It plugs into
+`run_proposer_round` as an in-process `LLMProposer` (`author=`), the same slot the deterministic
+menu-walker fills — it has no engine, no filesystem, no code execution; it is an API call that
+returns text. **So the model does not run in the container, and the transport is not on its path.**
+
+What seals this LLM is *information*, not isolation (next section). That has three consequences:
+
+- The pieces that carry over to the LLM are the **in-process, oracle-side** ones: the recording
+  seam (`score_and_record`), the numberless guard (`assert_numberless` / `BANNED_RESULT_FIELDS`),
+  the scrubbed corpus (`build_proposer_corpus`), the closed grammar, and the lifetime e-LOND ledger.
+- The container/transport (`oracle_server` / `proposer_client` / the image / `launch_in_container`)
+  is **optional, dormant infrastructure** for a hypothetical future *code*-proposer — correct and
+  tested, but not used by the live model and **not a gate on it**.
+- So the "container must-dos" (digest pin, seccomp, the timeout, `--user`) are **not** Phase-B
+  gates. They harden a path the decided LLM never takes. They were mis-listed as gates earlier
+  (a holdover from a rejected design where the proposer made the API call from inside a container
+  with a single-host egress allow-list); that design was routed around.
+
 ## Where the Claude call lives: oracle-side
 
 Three independently-designed architectures converged on the same answer, and an adversarial pass
@@ -94,7 +117,9 @@ so it is the load-bearing seal and must be treated as such:
   ships.
 
 Option (C) remains recorded as the tighter fallback should that single guard ever prove
-insufficient.
+insufficient — but note it presupposes putting a sandboxed prompt-builder *back* in the path (see
+*The simplification*): it trades the oracle-side in-process model for the container/transport. The
+decided design (A) does not use the container at all.
 
 ## The training-leak defense is not ready
 
@@ -116,15 +141,41 @@ the correctness seal — but its survivors stay exploratory and are **never prom
 confirmatory finding** until the holdout is real. This is the same line the `prereg_*` docs
 protect: a passing scout earns a registration, not a headline.
 
+## A cautionary foil: how a published system does it
+
+A recent autonomous-factor system — Huang & Fan, *Beyond Prompting: An Autonomous Framework for
+Systematic Factor Investing via Agentic AI* (arXiv:2603.14288) — is the honor-system version of
+this design, and a useful illustration of why the interlocks above matter. It reports a 3.11 Sharpe
+/ 59.5% returns from an LLM that proposes factor "recipes" run by a deterministic layer. Its
+discipline is real but partial:
+
+- a fixed **`|t| > 3.0`** hurdle (Harvey–Liu–Zhu 2016) plus a Deflated-Sharpe *"heuristic"* — but
+  **the LLM is shown the in-sample IC / Sharpe / t-stats each round** and conditions its next
+  proposals on them, so the search is adaptive and a *fixed* bar cannot control the inflated
+  false-discovery rate;
+- an **economic rationale generated jointly with the formula** — a plausible story, **not** a
+  mechanism checked against the data (the post-hoc-label failure mode);
+- a **temporal OOS freeze** (discovery pre-Dec-2020, blind 2021–2024) — which is *not* out-of-sample
+  for an LLM whose training corpus spans that period (no model-cutoff defense).
+
+Crucially, it uses **no sandbox and no container** — functional separation only. That is the point:
+a real, published system in this space runs without isolation; what it lacks is the **information
+boundary**, the **online FDR control**, the **mechanism check**, and the **leakage defense** —
+precisely the four *this* design enforces (numberless prompt, e-LOND, engine-verified grammar
+signature, time-axis holdout). Read that way, its 3.11 Sharpe is the *output to distrust*, and the
+foil that justifies the interlocks — none of which is a container.
+
 ## The phased plan
 
-- **Phase A — gates (buildable now, activates nothing).** The container must-dos (in
-  `oracle_server.launch_in_container`'s docstring): a wall-clock round timeout around `serve`'s
-  `readline`; a base-image digest pin in `Dockerfile.proposer`; making the `read-gate-container`
-  CI job a *required* check; seccomp + an explicit `--user`. Plus the read-gate gaps the review
-  found: numberless-gate the `propose` reply; make the soft `launch` *refuse* an LLM author (only
-  `launch_in_container` may carry one); a hard rounds cap so a model cannot drain the e-LOND
-  budget; and have the oracle override the model's *self-reported* `model_served`.
+- **Phase A — oracle-side gates (buildable now, activates nothing).** What actually gates the live
+  model, all on the trusted side: the **numberless seal** hardened into the sole prompt guard
+  (`assert_numberless` + the completed ban-set + the leaf-type guard — done in #82); the
+  **activation gate redesigned** for the oracle-side reality (see *What must not happen* — the
+  current `_assert_llm_boundary` precondition is sandbox-specific and would wrongly *refuse* an
+  in-process LLM); and the oracle stamping the **authoritative `model_served`** rather than trusting
+  the model's self-report. The *container* must-dos (digest pin, seccomp, the round timeout `#83`,
+  `--user`) are **not** here — they harden the dormant code-proposer path, not the LLM (see *The
+  simplification* above); pursue them only if a code-proposer is ever wanted.
 - **Phase B — the model wiring (owner's explicit go).** The oracle-side Claude author (the
   `anthropic` client, the numberless prompt + `prompt_sha`, real `model_served` capture into
   `record_provenance`), activating `_resolve_llm_author`. The prompt builder is **(A), oracle-side
@@ -135,13 +186,18 @@ protect: a passing scout earns a registration, not a headline.
 
 ## What must not happen
 
-- No LLM author runs until Phase A's gates are met and the owner approves. Interlock #5
-  (`_assert_llm_boundary`) enforces this today: `_resolve_llm_author()` returns `None`, so
-  `propose --llm` fails closed.
+- No LLM author runs until Phase A's gates are met and the owner approves. `_resolve_llm_author()`
+  returns `None` today, so `propose --llm` fails closed. **But the activation gate needs a redesign
+  for the oracle-side reality:** `_assert_llm_boundary`'s precondition (a) — *the engine is not
+  importable from cwd* — is true only inside the sandbox. An in-process oracle-side LLM runs where
+  the engine *is* importable, so as written that guard would **refuse the very thing the decision
+  wants to run.** The oracle-side gate is a different fail-closed check: the prompt is asserted
+  numberless, the output is coordinate-only and grammar-gated, and every score is recorded — not
+  engine absence.
 - The model never sees a result statistic, and never emits anything but a gated coordinate.
 - A survivor escalates to manual pre-registration, never back into automated proposal — and never
   to a confirmatory claim until Phase C.
 
 ---
 
-Last updated: 2026-06-23.
+Last updated: 2026-06-24.
