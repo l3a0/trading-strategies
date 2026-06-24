@@ -1971,7 +1971,7 @@ class TestProposerReasoning:
     _CELL = {'overlay': 'short_vol', 'ticker': 'AAA',
              'params': {'target_delta': 0.25, 'dte': 30}, 'predicted_sign': 1}
 
-    def test_reasoning_rides_for_display_but_never_persists(self, monkeypatch, tmp_path) -> None:
+    def test_reasoning_audited_in_provenance_but_never_in_the_loop(self, monkeypatch, tmp_path) -> None:
         monkeypatch.setattr('edge_search._is_onboarded', lambda tk: True)
         led = str(tmp_path / 'idea_ledger.jsonl')
         prov = str(tmp_path / 'prov.jsonl')
@@ -1982,11 +1982,13 @@ class TestProposerReasoning:
         assert res['proposed'] == 1 and res['recorded'] == 1            # gate IGNORED 'reasoning', accepted
         # it rides the raw batch (for display) ...
         assert res['batch'].proposals[0]['reasoning'].startswith('sell the rich')
-        # ... but NEVER the ledger, the scrubbed corpus, or the provenance
+        # ... and is AUDITED in the provenance log (coordinates + reasoning) ...
+        prov_row = json.loads(open(prov).read())
+        assert any(p.get('reasoning', '').startswith('sell the rich') for p in prov_row['proposals'])
+        # ... but NEVER the comparison ledger or the scrubbed corpus (the loop a future proposer reads)
         led_row = load_idea_ledger(led)[0]
         assert 'reasoning' not in led_row
         assert all('reasoning' not in r for r in build_proposer_corpus(res['ledger_rows']))
-        assert 'reasoning' not in json.dumps(json.loads(open(prov).read()))
 
     def test_reasoning_scrubbed_from_the_oracle_reply(self, monkeypatch, tmp_path) -> None:
         # the oracle re-scrubs rejected[].proposal to PROPOSAL_FIELDS, so a 'reasoning' an external

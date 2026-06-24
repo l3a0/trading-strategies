@@ -1734,15 +1734,19 @@ def record_provenance(
     """Append ONE row to the proposal-provenance audit trail — a SEPARATE artifact from
     the comparison ledger. It carries the exact model identity (`model_served`, the
     snapshot the API ran, not just the requested alias) + temperature + `prompt_sha` +
-    the cell keys this batch contributed.
+    the round's proposals (each as coordinates + the model's `reasoning`) + the accepted
+    cell keys.
 
-    This is lineage-ADJACENT: provenance is NEVER read by `_ledger_key` or
-    `_data_lineage_hash`, so a model change re-records HERE but does NOT re-key or
-    re-spend the model-blind comparison ledger — the engine scores a cell identically
-    whoever proposed it, and keying the FDR count on the model would re-spend budget on a
-    model bump (the alpha-reset loophole the grammar-exclusion already guards). `round_id`
-    is caller-supplied so the row is deterministic in tests; production passes a
-    timestamped/uuid handle."""
+    This is lineage-ADJACENT: provenance is NEVER read by `_ledger_key`,
+    `_data_lineage_hash`, `build_proposer_corpus`, or the proposer prompt, so a model change
+    re-records HERE but does NOT re-key or re-spend the model-blind comparison ledger — the
+    engine scores a cell identically whoever proposed it, and keying the FDR count on the
+    model would re-spend budget on a model bump (the alpha-reset loophole the
+    grammar-exclusion already guards). The `reasoning` rides this audit row ONLY: it stays
+    excluded from the comparison ledger, the scrubbed corpus (`SAFE_FIELDS`), and the oracle
+    reply (`PROPOSAL_FIELDS`), so it can never reach the engine, the FDR control, or a future
+    proposer — it is auditable here, never evidence. `round_id` is caller-supplied so the row
+    is deterministic in tests; production passes a timestamped/uuid handle."""
     row = {
         'round_id': round_id,
         'model_requested': batch.model_requested,
@@ -1751,6 +1755,12 @@ def record_provenance(
         'transport': batch.transport,     # 'api' | 'claude_code' — provenance, NEVER lineage
         'prompt_sha': batch.prompt_sha,
         'n_proposed': len(batch.proposals),
+        # the round's proposals as coordinates + `reasoning` — the audit trail of WHAT it
+        # proposed and WHY. Lineage-adjacent like the rest of this row (never read by the FDR /
+        # ledger / corpus / proposer), so the reasoning is recoverable for audit without ever
+        # re-entering the loop.
+        'proposals': [{k: p.get(k) for k in (*PROPOSAL_FIELDS, 'reasoning')}
+                      for p in batch.proposals if isinstance(p, dict)],
         'accepted': [list(k) for k in accepted],
     }
     with open(path, 'a') as f:
@@ -2169,13 +2179,15 @@ def _format_llm_round(res: dict[str, Any]) -> str:
     """Owner-facing view of an LLM proposer round: each proposed cell, the model's one-line
     `reasoning`, and the gate's verdict (accepted / rejected-with-reason / needs-onboard).
 
-    The reasoning is DISPLAY-ONLY — it is the model's a-priori economic story, generated from a
-    NUMBERLESS prompt, and it is excluded from every downstream path (not in SAFE_FIELDS or
-    PROPOSAL_FIELDS; never written to the ledger or provenance; not copied into the oracle reply).
-    So it can never reach the engine, the FDR control, or a future proposer's corpus. Read it for
-    INSIGHT, never as EVIDENCE: the t-stat and the kill-gate are the judges — a persuasive story
-    must not promote a cell (the foil paper's failure mode). Returns '' for the menu-walker (no
-    model, no reasoning)."""
+    The reasoning is OWNER-FACING — it is the model's a-priori economic story, generated from a
+    NUMBERLESS prompt. It is excluded from every path a future proposer could read (not in
+    SAFE_FIELDS so it never enters the scrubbed corpus; not in PROPOSAL_FIELDS so the oracle reply
+    re-scrubs it off; never written to the comparison ledger) — so it can never reach the engine,
+    the FDR control, or a future proposer's corpus. It IS recorded to the `proposal_provenance.jsonl`
+    AUDIT log (`record_provenance`), which is lineage-adjacent and read by none of those, so the
+    rationale is recoverable for audit without re-entering the loop. Read it for INSIGHT, never as
+    EVIDENCE: the t-stat and the kill-gate are the judges — a persuasive story must not promote a
+    cell (the foil paper's failure mode). Returns '' for the menu-walker (no model, no reasoning)."""
     batch = res.get('batch')
     if batch is None:
         return ''
