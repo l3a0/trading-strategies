@@ -61,7 +61,10 @@ protects the LLM. None does — for the LLM, the seal is three things:
 
 - the model's prompt contains **no result statistics** — only the grammar menu and the scrubbed
   corpus (coordinates + one-bit verdicts), `assert_numberless`-checked, SURVIVED rows excluded;
-- the model's output is **coordinate-only** (`PROPOSAL_FIELDS`), gated by `StructureCandidate`;
+- the model's output **that gates the engine is coordinate-only** (`PROPOSAL_FIELDS`), gated by
+  `StructureCandidate` — it may also emit an owner-facing `reasoning` string, but that is display-only
+  (printed by `_format_llm_round`; excluded from the gate, ledger, corpus, provenance, and oracle
+  reply), so it reaches no sink and is insight-not-evidence (pinned by `TestProposerReasoning`);
 - every score is **recorded** (`score_and_record`), so every look spends FDR budget.
 
 A model that only ever sees a numberless prompt and only emits a menu choice **cannot recompute a

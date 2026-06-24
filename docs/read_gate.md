@@ -188,6 +188,14 @@ Nothing is exposed by the DEFAULT path, and the LLM path is sealed:
   redaction), pinned by `TestProposerCorpus`. The leak is not in the scrub — it is in the fact that
   the scrub is bypassable by recomputation, which only matters once an *untrusted* author with engine
   access exists.
+- **The model's `reasoning` is display-only.** The prompt asks the model for a one-line rationale per
+  cell, shown in the `propose --llm` preview (`_format_llm_round`) so the owner can see WHY it
+  proposed each. It is the model's a-priori story (generated numberless) and is excluded from every
+  sink — the gate (four coordinates only), the ledger, the scrubbed corpus (`SAFE_FIELDS`), the
+  provenance, and the oracle reply (`PROPOSAL_FIELDS` re-scrub + `assert_numberless`) — so it reaches
+  neither the engine, the FDR control, nor a future proposer. Treat it as insight, never evidence:
+  the t-stat and kill-gate judge, a persuasive story must never promote (pinned by
+  `TestProposerReasoning`).
 
 So the correct status line is: **the deterministic proposer is safe; the LLM proposer is now wired
 (`ClaudeProposer`, Phase B) behind the in-process information boundary (numberless prompt +
