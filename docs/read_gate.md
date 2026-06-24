@@ -15,8 +15,9 @@ coordinate-only output + every-look-recorded — NOT by isolation. A sandboxed N
 sealed container were built first (the supervised-operator MVP, the C-1 import-vector close, the C-2
 container), to cage an untrusted-*code* proposer that could `import edge_search` and recompute the
 answer key. But a coordinate-emitting LLM is not that — it has no engine and no code execution — so
-the container/transport never sat on its path and was **removed.** The CLI `--llm` switch fails
-closed until item 4 wires a model (`_assert_llm_boundary`, now its no-model backstop — the
+the container/transport never sat on its path and was **removed.** The Claude client is now wired
+(`ClaudeProposer`, Phase B) but OFF by default; the CLI `--llm` switch fails closed unless the owner
+activates it by setting `EDGE_SEARCH_LLM_MODEL` (`_assert_llm_boundary`, the no-model backstop — the
 sandbox-specific engine-absent precondition went away with the container).
 
 The full item-4 design — the oracle-side architecture, the correctness-argument seal, the
@@ -168,11 +169,12 @@ it enforces** — it does not claim to hide a number; it makes the number not wo
 
 ## What is safe today (the honest status)
 
-Nothing is exposed *right now*, because the gap is entirely prospective:
+Nothing is exposed by the DEFAULT path, and the LLM path is sealed:
 
-- **The proposer is a deterministic menu-walker.** There is no model to peek, p-hack, or shell out;
-  `run_proposer_round` enumerates the grammar and skips tried cells. The read-gate is a precondition
-  for *activating an LLM author*, not a patch for a live leak.
+- **By default the proposer is the deterministic menu-walker.** There is no model to peek, p-hack,
+  or shell out; `run_proposer_round` enumerates the grammar and skips tried cells. The LLM author is
+  now wired (`ClaudeProposer`, Phase B) but OFF unless `EDGE_SEARCH_LLM_MODEL` is set; activating it
+  invokes the numberless-prompt seal — it does not bypass the read-gate.
 - **Promotion stays CLOSED.** A survivor (`elond_survivor`) escalates to manual pre-registration and
   is *excluded* from the scrubbed corpus (`build_proposer_corpus` drops `SURVIVED` rows); it never
   feeds back into automated proposal. The kill-gate kills; it never crowns.
@@ -181,10 +183,11 @@ Nothing is exposed *right now*, because the gap is entirely prospective:
   the scrub is bypassable by recomputation, which only matters once an *untrusted* author with engine
   access exists.
 
-So the correct status line is: **the deterministic proposer is safe; an LLM proposer is not safe to
-activate until item 4 wires it behind the in-process information boundary (numberless prompt +
-coordinate-only output + every-look-recorded) and the owner approves; a file-hiding read-gate would
-be theater and must not be built or claimed as a control.**
+So the correct status line is: **the deterministic proposer is safe; the LLM proposer is now wired
+(`ClaudeProposer`, Phase B) behind the in-process information boundary (numberless prompt +
+coordinate-only output + every-look-recorded) but OFF by default — it activates only when the owner
+sets `EDGE_SEARCH_LLM_MODEL`, promotion stays CLOSED, and survivors stay exploratory until Phase C;
+a file-hiding read-gate would be theater and must not be built or claimed as a control.**
 
 ## Residual honesty edges (named, not hidden)
 

@@ -19,6 +19,7 @@ swept class is not re-derived. See docs/edge_search.md.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -42,6 +43,7 @@ from edge_search import (
     WIRE_VERSION,
     Campaign,
     Candidate,
+    ClaudeProposer,
     CycleData,
     OverlayGrammar,
     ProposalBatch,
@@ -58,6 +60,7 @@ from edge_search import (
     _cand_key,
     _data_lineage_hash,
     _ledger_key,
+    _parse_proposal_array,
     _render_grammar_menu,
     _resolve_llm_author,
     _vol_confound,
@@ -1611,19 +1614,29 @@ class TestStructureCampaign:
 
 
 class TestLlmCliRefusal:
-    """The read-gate CLI refusal (interlock #5): `propose --llm` must FAIL CLOSED until a model
-    author is configured. Always-run, synthetic — no datasets, no engine. The core pin is that
-    no LLM author can be activated today (item 4, the Claude client, is a later PR); when one is
-    wired, the oracle-side activation gate (numberless prompt + coordinate-only + recorded)
-    governs it — not a sandbox. (The container/transport that once enforced an engine-absent
-    precondition was removed; the decided LLM author is oracle-side and in-process.)"""
+    """The read-gate CLI refusal (interlock #5): `propose --llm` must FAIL CLOSED unless a model
+    author is ACTIVATED. Always-run, synthetic — no datasets, no engine. Phase B wired the Claude
+    client (`ClaudeProposer`), but it is OFF unless EDGE_SEARCH_LLM_MODEL is set, so the default is
+    still no-LLM. When activated, the oracle-side gate (numberless prompt + coordinate-only +
+    recorded) governs it — not a sandbox. (The container/transport that once enforced an
+    engine-absent precondition was removed; the decided LLM author is oracle-side and in-process.)"""
 
-    def test_no_model_author_configured_yet(self) -> None:
-        # item 4 (the real Claude client) is a later PR — the no-model backstop is live until then
+    def test_no_model_author_by_default(self, monkeypatch) -> None:
+        # OFF by default: with EDGE_SEARCH_LLM_MODEL unset, no author resolves and --llm fails closed
+        monkeypatch.delenv('EDGE_SEARCH_LLM_MODEL', raising=False)
         assert _resolve_llm_author() is None
 
-    def test_guard_refuses_when_no_model_configured(self, capsys) -> None:
-        # with no model wired, the guard refuses and the message points at the plan doc
+    def test_resolve_activates_claude_proposer_when_model_set(self, monkeypatch) -> None:
+        # the Phase-B opt-in: setting the model env var activates the in-process Claude client.
+        # Construction is import-free (no anthropic, no key, no network) — the API call is deferred
+        # to __call__, so resolving just yields the configured author object.
+        monkeypatch.setenv('EDGE_SEARCH_LLM_MODEL', 'claude-opus-4-8')
+        author = _resolve_llm_author()
+        assert isinstance(author, ClaudeProposer) and author.model == 'claude-opus-4-8'
+
+    def test_guard_refuses_when_no_model_configured(self, monkeypatch, capsys) -> None:
+        # with no model activated (env var unset), the guard refuses; message points at the plan doc
+        monkeypatch.delenv('EDGE_SEARCH_LLM_MODEL', raising=False)
         with pytest.raises(SystemExit) as exc:
             _assert_llm_boundary()
         assert exc.value.code == 2
@@ -1641,7 +1654,8 @@ class TestLlmCliRefusal:
 
     def test_propose_llm_fails_closed_via_cli(self, monkeypatch, capsys) -> None:
         # the core interlock pin, driven through the CLI entry: `propose --llm` exits non-zero
-        # with the boundary message before any author/engine runs.
+        # with the boundary message before any author/engine runs (env var unset => no author).
+        monkeypatch.delenv('EDGE_SEARCH_LLM_MODEL', raising=False)
         called = []
         monkeypatch.setattr('edge_search.run_proposer_round',
                             lambda *a, **k: called.append((a, k)) or {})
@@ -1672,3 +1686,155 @@ class TestLlmCliRefusal:
         main()
         assert captured['author'] is None                         # menu-walker path
         assert captured['run'] is False and captured['record'] is False  # default = preview
+
+
+# --- stub `anthropic.Anthropic` for the ClaudeProposer tests (no SDK, no key, no network) ---
+class _FakeBlock:
+    def __init__(self, text: str) -> None:
+        self.type = 'text'
+        self.text = text
+
+
+class _FakeResponse:
+    def __init__(self, text: str = '[]', model: str = 'claude-opus-4-8-snap',
+                 stop_reason: str = 'end_turn') -> None:
+        self.content = [_FakeBlock(text)]
+        self.model = model                 # the SERVED snapshot the API reports (-> model_served)
+        self.stop_reason = stop_reason
+        self.stop_details = None
+
+
+class _FakeMessages:
+    def __init__(self, response: _FakeResponse, captured: dict) -> None:
+        self._response = response
+        self._captured = captured
+
+    def create(self, **kwargs):
+        self._captured['kwargs'] = kwargs
+        self._captured['calls'] = self._captured.get('calls', 0) + 1
+        return self._response
+
+
+class _FakeClient:
+    """A stand-in `anthropic.Anthropic`: records the `messages.create(**kwargs)` it received and
+    returns a canned response. Injected via `ClaudeProposer(client=...)` so the contract is
+    exercised with no SDK, no key, and no network."""
+    def __init__(self, response: _FakeResponse, captured: dict) -> None:
+        self.messages = _FakeMessages(response, captured)
+
+
+class TestClaudeProposer:
+    """Phase B — the in-process Claude author (`ClaudeProposer`). Always-run, synthetic: a STUB
+    client captures the request and returns a canned reply, so the prompt build (+ its numberless
+    seal), the request shape (Opus 4.8: adaptive thinking, NO temperature), the coordinate parse,
+    and the model-identity capture are all pinned offline. The live API call is exercised only when
+    the owner activates it (EDGE_SEARCH_LLM_MODEL + a key)."""
+
+    # a valid committed grid point (short_call_25), reused across tests
+    _CELL = {'overlay': 'short_vol', 'ticker': 'MSFT',
+             'params': {'target_delta': 0.25, 'dte': 30}, 'predicted_sign': 1}
+
+    @staticmethod
+    def _scorer(cand):
+        return {'phase': 'structure', 'template': cand.template, 'ticker': cand.ticker,
+                'params': cand.params_dict(), 'predicted_sign': cand.predicted_sign,
+                't_stat_newey_west': 0.5, 'sign_ok': True, 'p_value': 0.3}
+
+    @staticmethod
+    def _client(text: str = '[]', model: str = 'claude-opus-4-8-snap',
+                stop_reason: str = 'end_turn', *, captured: dict) -> _FakeClient:
+        return _FakeClient(_FakeResponse(text, model, stop_reason), captured)
+
+    def test_builds_numberless_prompt_and_emits_coordinate_batch(self) -> None:
+        menu, corpus, onboarded = enumerate_grammar_templates(), [], ('MSFT',)
+        captured: dict = {}
+        proposer = ClaudeProposer('claude-opus-4-8',
+                                  client=self._client(json.dumps([self._CELL]), captured=captured))
+        batch = proposer(menu, corpus, onboarded)
+        # proposals parse straight through; identity captured from the SERVED snapshot, not the alias
+        assert batch.proposals == (self._CELL,)
+        assert batch.model_requested == 'claude-opus-4-8'
+        assert batch.model_served == 'claude-opus-4-8-snap'
+        assert batch.temperature == 0.0                            # sentinel — 4.8 sends no temperature
+        # prompt_sha pins the EXACT prompt build_proposer_prompt produced
+        expected = build_proposer_prompt(menu, corpus, onboarded, max_proposals=16)
+        assert batch.prompt_sha == hashlib.sha256(expected.encode('utf-8')).hexdigest()
+        kw = captured['kwargs']
+        assert kw['model'] == 'claude-opus-4-8'
+        assert kw['thinking'] == {'type': 'adaptive'}              # 4.8: adaptive only
+        assert kw['output_config'] == {'effort': 'max'}            # most thorough reasoning
+        assert 'temperature' not in kw                             # 4.8 rejects temperature; we send none
+        assert kw['messages'][0]['content'] == expected           # the numberless prompt, verbatim
+
+    def test_strips_a_json_code_fence(self) -> None:
+        captured: dict = {}
+        reply = '```json\n' + json.dumps([self._CELL]) + '\n```'
+        batch = ClaudeProposer(client=self._client(reply, captured=captured))(
+            enumerate_grammar_templates(), [], ('MSFT',))
+        assert batch.proposals == (self._CELL,)
+
+    def test_extracts_array_from_surrounding_prose(self) -> None:
+        captured: dict = {}
+        reply = 'Here are my proposals: ' + json.dumps([self._CELL]) + ' done.'
+        batch = ClaudeProposer(client=self._client(reply, captured=captured))(
+            enumerate_grammar_templates(), [], ('MSFT',))
+        assert batch.proposals == (self._CELL,)
+
+    def test_refusal_raises_not_silent_empty(self) -> None:
+        captured: dict = {}
+        client = self._client('[]', stop_reason='refusal', captured=captured)
+        with pytest.raises(RuntimeError, match='refused'):
+            ClaudeProposer(client=client)(enumerate_grammar_templates(), [], ('MSFT',))
+
+    def test_unparseable_reply_raises_not_silent_empty(self) -> None:
+        # a reply with no array must FAIL the round, not propose nothing that reads as 'all tried'
+        captured: dict = {}
+        client = self._client('I could not think of any.', captured=captured)
+        with pytest.raises(ValueError, match='no JSON array'):
+            ClaudeProposer(client=client)(enumerate_grammar_templates(), [], ('MSFT',))
+
+    def test_non_list_json_reply_raises(self) -> None:
+        captured: dict = {}
+        client = self._client(json.dumps({'overlay': 'short_vol'}), captured=captured)
+        with pytest.raises(ValueError, match='not a JSON array'):
+            ClaudeProposer(client=client)(enumerate_grammar_templates(), [], ('MSFT',))
+
+    def test_seal_fires_on_raw_corpus_before_any_api_call(self) -> None:
+        # THE SEAL: a raw answer-key row (banned key) passed as corpus raises inside the prompt
+        # build, BEFORE the client is ever called — no number can reach the model.
+        captured: dict = {}
+        raw = [{'template': 'short_call_25', 'ticker': 'MSFT',
+                'params': {'target_delta': 0.25, 'dte': 30}, 'predicted_sign': 1,
+                't_stat_newey_west': 2.6}]                          # banned key
+        with pytest.raises(ValueError, match='numberless violation'):
+            ClaudeProposer(client=self._client('[]', captured=captured))(
+                enumerate_grammar_templates(), raw, ('MSFT',))
+        assert captured.get('calls', 0) == 0                        # never reached the API
+
+    def test_parse_helper_handles_bare_fenced_and_rejects_garbage(self) -> None:
+        assert _parse_proposal_array('[{"x": 1}]') == [{'x': 1}]
+        assert _parse_proposal_array('```json\n[{"x": 1}]\n```') == [{'x': 1}]
+        with pytest.raises(ValueError, match='no JSON array'):
+            _parse_proposal_array('not json at all')
+        with pytest.raises(ValueError, match='not a JSON array'):
+            _parse_proposal_array('{"x": 1}')                       # object, not a list
+
+    def test_end_to_end_through_run_proposer_round(self, monkeypatch, tmp_path) -> None:
+        # the full Phase-B flow with a stub model: propose -> grammar-gate -> score (injected) ->
+        # lifetime-judge -> record, and the SERVED model id lands in the provenance audit log.
+        monkeypatch.setattr('edge_search._is_onboarded', lambda tk: tk == 'AAA')
+        led = str(tmp_path / 'idea_ledger.jsonl')
+        prov = str(tmp_path / 'proposal_provenance.jsonl')
+        cell = {'overlay': 'short_vol', 'ticker': 'AAA',
+                'params': {'target_delta': 0.25, 'dte': 30}, 'predicted_sign': 1}
+        captured: dict = {}
+        author = ClaudeProposer('claude-opus-4-8',
+                                client=self._client(json.dumps([cell]), captured=captured))
+        res = run_proposer_round(Campaign(search=('AAA',)), path=led, scorer=self._scorer,
+                                 run=True, record=True, author=author,
+                                 round_id='r1', provenance_path=prov)
+        assert res['proposed'] == 1 and res['recorded'] == 1
+        prov_rows = [json.loads(ln) for ln in open(prov)]
+        assert len(prov_rows) == 1
+        assert prov_rows[0]['model_served'] == 'claude-opus-4-8-snap'   # the served snapshot, audited
+        assert prov_rows[0]['temperature'] == 0.0
