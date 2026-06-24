@@ -201,7 +201,19 @@ foil that justifies the interlocks — none of which is a container.
   environment + `anthropic` installed — an OPTIONAL dependency, lazily imported, not in
   requirements.txt). The prompt builder and its seal were already built and tested (Phase A); Phase
   B wraps them in the API client. Pinned by `TestClaudeProposer` (a stub client — no SDK, no key, no
-  network).
+  network). **The DEFAULT transport — the Claude.ai SUBSCRIPTION via Claude Code**
+  (`ClaudeCodeProposer`; `EDGE_SEARCH_LLM_TRANSPORT=api` selects the metered `ClaudeProposer`) — drives
+  `claude -p` under a Max/Pro plan (no key, no `anthropic` dependency). The seal is a LARGER surface
+  for an agent than for a stateless call, so the invocation is hardened: `--disallowedTools "*"`
+  removes every tool from the model's context (deny-first), `--strict-mcp-config` loads no MCP, the
+  subprocess runs from a NEUTRAL temp cwd (so the repo's CLAUDE.md — which carries pinned result
+  numbers — is never in scope), and `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` are scrubbed from the
+  child env (subscription OAuth, no metered call; NOT `--bare`, which would force a key). The API
+  `ClaudeProposer` remains the seal GOLD-STANDARD (stateless, zero context/tools); the subscription
+  path still loads `~/.claude` global config (a global hook could run) and is for exploratory runs
+  with that tradeoff understood. It does not honor `effort='max'` (Claude Code applies its own
+  defaults). `transport` is recorded to the provenance log (lineage-ADJACENT, never re-keys/re-spends
+  the ledger); pinned by `TestClaudeCodeProposer`.
 - **Phase C — confirmatory trust (research-blocked).** The time-axis holdout. Until it is
   operative, LLM survivors stay exploratory.
 
