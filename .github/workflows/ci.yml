@@ -183,15 +183,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # `args` is per-bucket pytest flags. edge-search runs three full-campaign engine passes
-        # (re-tag + the 56-cell structure batch + validate_dailies); `-n auto --dist loadscope`
-        # spreads those CLASSES across the runner's cores so they run concurrently (loadscope keeps
-        # each class — and its module-scoped campaign fixture — on ONE worker, so the campaign runs
-        # once per class, not once per test). The tests are xdist-safe: ledger writes are tmp_path-
-        # scoped and state changes go through monkeypatch (process-isolated per worker).
+        # edge-search's long pole is the 56-cell structure campaign. It parallelizes INTERNALLY via a
+        # per-ticker process pool (STRUCTURE_CAMPAIGN_WORKERS, set below) — NOT xdist. xdist's
+        # class-level parallelism (the re-tag campaign + validate_dailies running CONCURRENTLY with
+        # the structure campaign, each holding a chain store) COMPOUNDS with the campaign pool and
+        # OOMs the ~7GB runner — both `args="-n auto"` × workers=4 and ×3 did. So edge-search runs
+        # serial at the bucket level and lets the campaign pool be the ONE parallelism layer: its peak
+        # is then just the pool's in-flight tickers, with no concurrent store-loader alongside.
+        # `args` stays a per-bucket pytest-flags knob (unused now; kept for the other buckets).
         include:
           - {bucket: vol-premium,   files: "test_vol_premium.py", args: "", campaign_workers: "1"}
-          - {bucket: edge-search,   files: "test_edge_search.py test_validate_dailies.py test_read_gate_wire.py", args: "-n auto --dist loadscope", campaign_workers: "3"}
+          - {bucket: edge-search,   files: "test_edge_search.py test_validate_dailies.py test_read_gate_wire.py", args: "", campaign_workers: "3"}
           - {bucket: trend-explore, files: "test_trend_gate.py test_explorations.py", args: "", campaign_workers: "1"}
     steps:
       - uses: actions/checkout@v4
