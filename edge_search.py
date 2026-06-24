@@ -1559,6 +1559,94 @@ LLMProposer = Callable[
     [list[StructureTemplate], list[dict[str, Any]], tuple[str, ...]], ProposalBatch]
 
 
+def _render_grammar_menu(grammar_menu: Sequence[StructureTemplate]) -> str:
+    """Render the proposable grammar — one row per overlay PRESENT in `grammar_menu`, with its
+    economic family, declared net-greek signature (the a-priori MECHANISM, never a measured
+    result), and parameter grid. The LLM proposes (overlay, a grid point, ticker, sign) from THIS
+    menu; the grid is the only legal value set per knob. Typing is read from `STRUCTURE_GRAMMAR`
+    (the grammar definition — numberless), not from any engine output."""
+    overlays = sorted({t.overlay for t in grammar_menu})
+    lines = ['| overlay | family | mechanism (declared, a-priori) | parameter grid |',
+             '| --- | --- | --- | --- |']
+    for ov in overlays:
+        og = STRUCTURE_GRAMMAR[ov]
+        sig = og.signature
+        mech = (f"vega {sig['net_vega']}, delta {sig['net_delta']}, skew {sig['net_skew']}; "
+                f"{sig['legs']} leg(s), {sig['expirations']} expiry(ies)")
+        grid = '; '.join(f'{k} in ({", ".join(str(v) for v in vals)})'
+                         for k, vals in sorted(og.lattices.items()))
+        lines.append(f'| {ov} | {og.family.value} | {mech} | {grid} |')
+    return '\n'.join(lines)
+
+
+def build_proposer_prompt(
+    grammar_menu: Sequence[StructureTemplate],
+    scrubbed_corpus: Sequence[dict[str, Any]],
+    onboarded_search_tickers: Sequence[str],
+    *,
+    max_proposals: int = 16,
+) -> str:
+    """Assemble the NUMBERLESS prompt the oracle-side LLM author sees — the load-bearing seal of
+    the in-process design (docs/llm_proposer_plan.md, docs/read_gate.md). It is a pure function of
+    the THREE inputs the `LLMProposer` receives — the grammar menu, the scrubbed corpus, the
+    onboarded search tickers — plus static instruction text and the grammar's declared economic
+    typing (`STRUCTURE_GRAMMAR`). It NEVER reads `load_idea_ledger` (the answer key) or any engine
+    output, so no result statistic is in scope to format into the text.
+
+    THE SEAL is `assert_numberless` on the scrubbed-corpus INPUT (run first, below): the effective
+    guard against the #1 builder bug — the raw `load_idea_ledger()` rows passed in place of the
+    scrubbed `build_proposer_corpus()`. Raw rows carry banned KEYS (`t_stat_newey_west`, `p_value`,
+    ...) and FAIL here, loudly, before any API call.
+
+    Note what the seal is NOT: a check on the assembled STRING. `assert_numberless` is a key-NAME
+    guard, so on a string (a leaf) it is a no-op; and a banned-NAME substring scan over the bytes
+    would false-positive (`statistic` is a substring of `t-statistic` in these very instructions).
+    So the seal is the STRUCTURAL assertion on the answer-key-sourced input PLUS building only from
+    allow-listed sources — `render_proposer_corpus` emits only `SAFE_FIELDS`, the menu render emits
+    only the grammar's coordinates + declared mechanism, the instructions are static — NOT a regex
+    over the bytes. The signature excludes the ledger, so there is no stat to leak even by mistake.
+    The one thing the key-name guard CANNOT catch is a number smuggled as a VALUE under a non-banned
+    key (`params={'x': <n>}`) or baked into the verdict string — but the sanctioned corpus never has
+    that shape (params are grammar-gated grid coordinates, verdict a literal), so that boundary
+    belongs to the upstream scrub + grammar gate, not here (pinned by `TestProposerPrompt`).
+
+    `max_proposals` is stated in the prompt so the model self-limits toward the e-LOND budget the
+    harness also caps (`llm_propose_candidates(max_batch=...)`)."""
+    assert_numberless(list(scrubbed_corpus), 'proposer_prompt.corpus')
+    menu = _render_grammar_menu(grammar_menu)
+    tried = render_proposer_corpus(scrubbed_corpus)
+    universe = ', '.join(sorted(onboarded_search_tickers)) or '(none onboarded)'
+    return f"""You are proposing options-overlay experiments for a systematic short-volatility \
+research program. Your job is to nominate (structure, ticker, parameter) experiments that should \
+harvest a REAL, economically-motivated risk premium when delta-hedged.
+
+You will NOT be shown any performance figure, significance value, or return — by design. Propose \
+from economic reasoning about WHY a given structure on a given underlier should earn a premium \
+(variance risk, skew, term structure, carry), and from what has already been ruled out below. You \
+cannot see results; do not ask for them.
+
+## Grammar — the ONLY structures and parameter values you may propose
+{menu}
+
+Every parameter value MUST come from that overlay's grid. `predicted_sign` is +1 (the structure \
+earns a positive delta-hedged premium) or -1 (it pays one out); the committed convention is +1, the \
+seller paid for bearing the risk.
+
+## Universe — the onboarded tickers you may propose on
+{universe}
+
+Propose only these. Naming any other ticker flags it for a human-gated onboarding step, not a trade.
+
+## Already tried — do NOT re-propose these; treat a KILLED verdict as ruled out
+{tried}
+
+## Your task
+Propose up to {max_proposals} NEW (overlay, ticker, params, predicted_sign) cells that are not in \
+the tried list and that you can defend on economic grounds. Output ONLY a JSON array, each element \
+exactly {{"overlay": <str>, "ticker": <str>, "params": {{<knob>: <grid value>, ...}}, \
+"predicted_sign": <+1 or -1>}}. No prose, no commentary, no fields beyond those four."""
+
+
 def llm_propose_candidates(
     author: LLMProposer,
     campaign: Campaign = STRUCTURE_CAMPAIGN,

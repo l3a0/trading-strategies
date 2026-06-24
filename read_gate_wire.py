@@ -86,29 +86,39 @@ def assert_numberless(obj: Any, _path: str = 'reply') -> None:
     list value all raise). Scalars and strings are inspected only as dict KEYS, never as values,
     so a banned NAME appearing as a plain string value does not (and should not) trip the guard.
 
-    LEAF-TYPE GUARD: every leaf must be a JSON primitive (str / int / float / bool / None). A
-    non-primitive leaf — a dataclass or custom object whose ATTRIBUTES (not dict keys) could carry
-    a banned name, or a set/frozenset — is REJECTED, so the guard is self-sufficient as the sole
-    seal and does not rely on a downstream json.dumps failure to catch a smuggled object. (A
-    namedtuple is a tuple, descended above as values; its field names don't survive JSON, so it is
-    not a banned-NAME vector.)"""
+    LEAF-TYPE GUARD: every leaf must be a JSON primitive, checked by EXACT type (str / int / float
+    / bool / None) — not `isinstance`. A subclass of a primitive (notably `numpy.float64`, which
+    subclasses `float` and so would slip an `isinstance` check) is REJECTED, so a statistic smuggled
+    as a numpy scalar under a safe key cannot ride through. A non-primitive leaf — a dataclass or
+    custom object whose ATTRIBUTES (not dict keys) could carry a banned name, or a set/frozenset —
+    is likewise rejected. KEY GUARD: dict keys must be `str` (JSON object keys are strings); a
+    non-str key (e.g. `bytes`) would slip the `BANNED_RESULT_FIELDS` set-intersection, so a banned
+    name could otherwise hide on one. Together these keep the guard self-sufficient as the SOLE
+    seal, not leaning on a downstream json.dumps failure. (A namedtuple is a tuple, descended above
+    as values; its field names don't survive JSON, so it is not a banned-NAME vector.)"""
     if isinstance(obj, dict):
         bad = BANNED_RESULT_FIELDS & obj.keys()
         if bad:
             raise ValueError(f'read-gate numberless violation at {_path}: {sorted(bad)}')
         for k, v in obj.items():
+            if not isinstance(k, str):
+                # JSON object keys are strings; a non-str key (e.g. bytes) would slip the
+                # BANNED_RESULT_FIELDS set-intersection above, so a banned name could ride it.
+                raise ValueError(
+                    f'read-gate numberless violation at {_path}: non-string key of type '
+                    f'{type(k).__name__} (the wire is JSON; a banned name could hide on a non-str key)')
             assert_numberless(v, f'{_path}.{k}')
     elif isinstance(obj, (list, tuple)):
         for i, v in enumerate(obj):
             assert_numberless(v, f'{_path}[{i}]')
-    elif obj is not None and not isinstance(obj, (str, int, float, bool)):
+    elif obj is not None and type(obj) not in (str, int, float, bool):
         # Leaf-type guard — the SOLE seal must be self-sufficient, not lean on a downstream
         # json.dumps failure (docs/llm_proposer_plan.md: oracle-side builder, no kernel backstop).
-        # The numberless object crosses the wire as JSON, so every leaf must be a JSON primitive.
-        # A non-primitive leaf — a dataclass / custom object whose ATTRIBUTES (not dict keys) could
-        # carry a banned field name the key-guard never inspects — is rejected here. (A namedtuple
-        # is a tuple, descended above as values; its field names don't survive JSON, so a banned
-        # NAME cannot ride it.)
+        # EXACT type, not isinstance: a numeric/str SUBCLASS (numpy.float64 subclasses float, so
+        # isinstance would pass it) is rejected uniformly — matching the JSON-only rationale and the
+        # way numpy.int64 (not an int subclass) is already rejected. A non-primitive leaf — a
+        # dataclass / custom object whose ATTRIBUTES could carry a banned name, or a set/frozenset —
+        # is rejected here too. (A namedtuple is a tuple, descended above; its fields don't survive JSON.)
         raise ValueError(
             f'read-gate numberless violation at {_path}: non-primitive leaf of type '
             f'{type(obj).__name__} (a banned field could hide in its attributes; the wire is JSON)')
