@@ -2070,9 +2070,19 @@ class ClaudeCodeProposer:
         with tempfile.TemporaryDirectory() as neutral_cwd:   # no repo CLAUDE.md in scope
             out = subprocess.run(cmd, env=env, cwd=neutral_cwd,
                                  capture_output=True, text=True, timeout=self.timeout)
-        if out.returncode != 0:
-            raise RuntimeError(f'claude -p failed (rc={out.returncode}): {(out.stderr or "")[:500]}')
-        return _json.loads(out.stdout)
+        try:
+            payload = _json.loads(out.stdout) if (out.stdout or '').strip() else {}
+        except _json.JSONDecodeError:
+            payload = {}
+        # `claude -p --output-format json` reports API/auth errors in STDOUT json (`is_error` +
+        # `result` + `api_error_status`), NOT stderr — so surface that, falling back to stderr/stdout.
+        # A 401 here means the standalone CLI isn't authenticated: run `claude setup-token` and export
+        # CLAUDE_CODE_OAUTH_TOKEN (this transport passes it through), or `claude login`.
+        if out.returncode != 0 or payload.get('is_error'):
+            detail = (payload.get('result') or (out.stderr or '').strip()
+                      or (out.stdout or '').strip() or '(no output)')
+            raise RuntimeError(f'claude -p failed (rc={out.returncode}): {detail[:500]}')
+        return payload
 
     def __call__(self, menu: list[StructureTemplate], corpus: list[dict[str, Any]],
                  onboarded: tuple[str, ...]) -> ProposalBatch:

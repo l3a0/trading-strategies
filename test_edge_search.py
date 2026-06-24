@@ -1893,11 +1893,22 @@ class TestClaudeCodeProposer:
         assert cmd[cmd.index('--model') + 1] == 'claude-opus-4-8'
         assert cmd[cmd.index('--output-format') + 1] == 'json'
 
-    def test_subprocess_nonzero_exit_raises(self, monkeypatch) -> None:
+    def test_subprocess_nonzero_exit_surfaces_stderr(self, monkeypatch) -> None:
         import types
         monkeypatch.setattr('subprocess.run', lambda *a, **k: types.SimpleNamespace(
             returncode=1, stdout='', stderr='boom'))
-        with pytest.raises(RuntimeError, match='claude -p failed'):
+        with pytest.raises(RuntimeError, match='boom'):                     # detail surfaced, not swallowed
+            ClaudeCodeProposer('claude-opus-4-8')._run('PROMPT')
+
+    def test_api_error_in_stdout_json_is_surfaced(self, monkeypatch) -> None:
+        # claude -p reports API/auth errors in STDOUT json (is_error/result), NOT stderr — the
+        # message must surface that (e.g. the 401 an unauthenticated standalone CLI returns).
+        import types
+        err = ('{"type":"result","is_error":true,'
+               '"result":"Failed to authenticate. API Error: 401 Invalid authentication credentials"}')
+        monkeypatch.setattr('subprocess.run', lambda *a, **k: types.SimpleNamespace(
+            returncode=1, stdout=err, stderr=''))
+        with pytest.raises(RuntimeError, match='401'):
             ClaudeCodeProposer('claude-opus-4-8')._run('PROMPT')
 
     def test_unparseable_reply_raises(self) -> None:
