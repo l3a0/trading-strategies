@@ -24,15 +24,20 @@ and the network is dead (`--network none`). Pinned by `test_read_gate_container.
 `TestProposerImageSeal` (engine absent by import AND by abspath, network dead, proposer code still
 runs) plus `TestContainerRoundTrip` (a live `launch_in_container`↔`proposer_client` round-trip that
 records exactly one comparison + read-only-mount / no-docker-socket hardening pins). What remains is
-the **real model author** (a temperature-0 Claude call behind the boundary) AND its production
-wiring: `launch_in_container` exists and is pinned, but no production entrypoint uses it yet — the
-CLI `main()` still drives the soft `launch`, and only the test exercises the container path. Item 4
-plugs the model into a `launch_in_container` caller and closes the container's remaining must-dos (a
-round timeout, a base-image digest pin, making the seal CI job a required check, seccomp). An LLM
-author must NOT be activated until that lands. The full item-4 design — where the Claude call lives
-(oracle-side), why that trades the container's kernel isolation for a *correctness argument* for the
-LLM, the prompt-builder leak surface + its three location options, and the unsolved training-leak
-(time-axis-holdout) blocker — is recorded in [llm_proposer_plan.md](llm_proposer_plan.md). The
+the **real model author** (a temperature-0 Claude call) — and a SIMPLIFICATION the design surfaced:
+**the model runs ORACLE-SIDE and IN-PROCESS** (as an `LLMProposer` in `run_proposer_round`), **not
+in the container.** The container/transport built above (`oracle_server` / `proposer_client` /
+`launch_in_container`) seals an untrusted-*code* proposer; a coordinate-emitting LLM is sealed by
+*information* — a numberless prompt + coordinate-only output + every-look-recorded — so it never
+takes the container path. The container is therefore **optional, dormant infrastructure** for a
+hypothetical code-proposer: not a gate on the live model, and its must-dos (digest pin, seccomp, the
+round timeout, `--user`) are **not** Phase-B gates. The full item-4 design — the oracle-side
+architecture, the correctness-argument seal, the activation-gate redesign the oracle-side move
+forces (`_assert_llm_boundary`'s engine-absent precondition would wrongly *refuse* an in-process
+LLM), the unsolved training-leak (time-axis-holdout) blocker, and a cautionary foil (Huang & Fan,
+arXiv:2603.14288 — a published autonomous-factor system that is the honor-system version, missing
+exactly these interlocks) — is recorded in [llm_proposer_plan.md](llm_proposer_plan.md). An LLM
+author must NOT be activated until the oracle-side gates are met and the owner approves. The
 residual analysis below is unchanged.
 
 ## Why this doc exists
