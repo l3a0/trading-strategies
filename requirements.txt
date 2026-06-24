@@ -4,6 +4,7 @@ matplotlib
 yfinance
 pytest
 pytest-cov
+pytest-xdist
 ruff
 pyright
 pandas-stubs

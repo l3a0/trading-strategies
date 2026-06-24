@@ -98,8 +98,7 @@ code and data the proposer must be able to run — so fencing the files where it
    `python -c "print(open('vault/idea_ledger.jsonl').read())"`, nor against `cp`-to-a-fresh-name,
    `base64`, `od`, `tail`, or a symlink. Bash deny is pattern-based with no obfuscation resistance.
 
-4. **The test pins ARE the answer key, in plaintext.** `TestStructureCampaign` /
-   `TestNvdaStructureCampaign` pin the exact t-stats (`pytest.approx(2.17, …)`, `−0.96`, `−2.09`,
+4. **The test pins ARE the answer key, in plaintext.** `TestStructureCampaign` pins the exact t-stats (`pytest.approx(2.17, …)`, `−0.96`, `−2.09`,
    …). Worse, **CLAUDE.md mandates pinning every campaign re-pin into a regression test** — so new
    un-denied leak surfaces are *guaranteed by the repo's own discipline*. A hardcoded two-file deny
    list cannot keep up, and a Read-deny on a `.py` file is defeated by *running* it
