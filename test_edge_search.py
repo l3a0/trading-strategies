@@ -57,7 +57,6 @@ from edge_search import (
     _cooldown_null,
     _cand_key,
     _data_lineage_hash,
-    _engine_importable_from_cwd,
     _ledger_key,
     _resolve_llm_author,
     _vol_confound,
@@ -1528,76 +1527,37 @@ class TestNvdaStructureCampaign:
 
 
 class TestLlmCliRefusal:
-    """The read-gate CLI refusal (interlock #5): `propose --llm` must FAIL CLOSED unless BOTH
-    (a) the engine is unimportable from cwd AND (b) a model author is configured. Always-run,
-    synthetic — no datasets, no engine. The core pin is that an LLM author cannot be activated
-    from the engine checkout; the only sanctioned home is proposer_client inside the
-    oracle_server sandbox (docs/read_gate.md), where C-1 makes `import edge_search` raise."""
+    """The read-gate CLI refusal (interlock #5): `propose --llm` must FAIL CLOSED until a model
+    author is configured. Always-run, synthetic — no datasets, no engine. The core pin is that
+    no LLM author can be activated today (item 4, the Claude client, is a later PR); when one is
+    wired, the oracle-side activation gate (numberless prompt + coordinate-only + recorded)
+    governs it — not a sandbox. (The container/transport that once enforced an engine-absent
+    precondition was removed; the decided LLM author is oracle-side and in-process.)"""
 
     def test_no_model_author_configured_yet(self) -> None:
-        # item 4 (the real Claude client) is a later PR — backstop (b) is live until then
+        # item 4 (the real Claude client) is a later PR — the no-model backstop is live until then
         assert _resolve_llm_author() is None
 
-    def test_engine_importable_from_repo_cwd(self) -> None:
-        # the subprocess probe sees edge_search from the repo checkout -> precondition (a) fails
-        assert _engine_importable_from_cwd() is True
-
-    def test_engine_unimportable_from_clean_cwd(self, monkeypatch, tmp_path) -> None:
-        # from a directory that is NOT the engine checkout, the scrubbed-env probe can't
-        # import edge_search (no PYTHONPATH leak) -> precondition (a) PASSES
-        monkeypatch.chdir(tmp_path)
-        assert _engine_importable_from_cwd() is False
-
-    def test_probe_reports_reachable_when_engine_present_but_deps_broken(
-            self, monkeypatch, tmp_path) -> None:
-        # The SERIOUS-fix regression pin: the probe measures PRESENCE (find_spec), not
-        # importability. A PRESENT engine whose body fails to import (missing dep / syntax error)
-        # must still read as reachable (True -> refuse), never as "absent". A stand-in edge_search.py
-        # whose first line imports a nonexistent module would make a bare `import edge_search` probe
-        # exit non-zero (and the old `returncode == 0` logic return False -> spuriously pass (a));
-        # find_spec locates the file WITHOUT running it, so it correctly reports reachable.
-        (tmp_path / 'edge_search.py').write_text(
-            'import a_module_that_surely_does_not_exist_zzz\n')
-        monkeypatch.chdir(tmp_path)
-        assert _engine_importable_from_cwd() is True
-
-    def test_guard_refuses_from_repo_naming_a(self, capsys) -> None:
-        # (a) fails from the repo: the guard refuses and the message names precondition (a)
+    def test_guard_refuses_when_no_model_configured(self, capsys) -> None:
+        # with no model wired, the guard refuses and the message points at the plan doc
         with pytest.raises(SystemExit) as exc:
             _assert_llm_boundary()
         assert exc.value.code == 2
         err = capsys.readouterr().err
-        assert 'REFUSED' in err
-        assert '(a)' in err and 'importable' in err
-        assert 'docs/read_gate.md' in err and 'oracle_server' in err
+        assert 'REFUSED' in err and 'no model author' in err
+        assert 'docs/llm_proposer_plan.md' in err
 
-    def test_a_and_b_independent_b_is_the_backstop(self, monkeypatch, tmp_path, capsys) -> None:
-        # in a clean cwd (a) PASSES, but (b) still refuses (no model) -> the two are independent
-        # and (b) is the current backstop. The message names (b), NOT (a).
-        monkeypatch.chdir(tmp_path)
-        assert _engine_importable_from_cwd() is False             # (a) passes here
-        with pytest.raises(SystemExit) as exc:
-            _assert_llm_boundary()
-        assert exc.value.code == 2
-        err = capsys.readouterr().err
-        assert '(b)' in err and 'no model author' in err
-        assert '(a) the engine IS importable' not in err          # (a) did NOT fail here
-
-    def test_a_fails_even_when_b_passes(self, capsys) -> None:
-        # supply a configured author (simulating item 4): (b) passes, but (a) still fails from
-        # the repo -> wiring a model never unlocks running it from the engine checkout
+    def test_guard_passes_when_a_model_is_configured(self) -> None:
+        # supply a configured author (simulating item 4): the guard returns it. No sandbox
+        # precondition remains — the seal for a wired author is the oracle-side info boundary,
+        # not engine-absence, so a configured author always clears this CLI tripwire.
         def author(menu, corpus, onboarded):                      # a stand-in LLMProposer
             return None
-        with pytest.raises(SystemExit) as exc:
-            _assert_llm_boundary(author=author)
-        assert exc.value.code == 2
-        err = capsys.readouterr().err
-        assert '(a) the engine IS importable' in err              # (a) is the failure here
-        assert 'no model author' not in err                       # (b) passed
+        assert _assert_llm_boundary(author=author) is author
 
     def test_propose_llm_fails_closed_via_cli(self, monkeypatch, capsys) -> None:
-        # the core interlock pin, driven through the CLI entry: `propose --llm` from the repo
-        # exits non-zero with the boundary message before any author/engine runs.
+        # the core interlock pin, driven through the CLI entry: `propose --llm` exits non-zero
+        # with the boundary message before any author/engine runs.
         called = []
         monkeypatch.setattr('edge_search.run_proposer_round',
                             lambda *a, **k: called.append((a, k)) or {})
@@ -1606,7 +1566,7 @@ class TestLlmCliRefusal:
             main()
         assert exc.value.code == 2
         err = capsys.readouterr().err
-        assert 'REFUSED' in err and '(a)' in err and '(b)' in err
+        assert 'REFUSED' in err and 'no model author' in err
         assert called == []                                       # never reached the proposer
 
     def test_menu_walker_propose_path_unaffected(self, monkeypatch) -> None:
