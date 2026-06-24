@@ -18,7 +18,13 @@ answer key. But a coordinate-emitting LLM is not that — it has no engine and n
 the container/transport never sat on its path and was **removed.** The Claude client is now wired
 (`ClaudeProposer`, Phase B) but OFF by default; the CLI `--llm` switch fails closed unless the owner
 activates it by setting `EDGE_SEARCH_LLM_MODEL` (`_assert_llm_boundary`, the no-model backstop — the
-sandbox-specific engine-absent precondition went away with the container).
+sandbox-specific engine-absent precondition went away with the container). Two transports are wired:
+a Claude.ai SUBSCRIPTION via Claude Code (`ClaudeCodeProposer`, the DEFAULT) and the metered API
+(`ClaudeProposer`, `EDGE_SEARCH_LLM_TRANSPORT=api`). The API call — stateless, zero context, zero tools — is the
+seal GOLD-STANDARD; the subscription path uses `claude -p` (an *agent*), so it must actively suppress
+its tools (`--disallowedTools "*"`) and its auto-loaded context (a neutral temp cwd, so the repo's
+CLAUDE.md — which carries pinned numbers — is never in scope), a hardened-but-larger trusted surface.
+Both transports preserve the seal proper.
 
 The full item-4 design — the oracle-side architecture, the correctness-argument seal, the
 training-leak (time-axis-holdout) blocker, and a cautionary foil (Huang & Fan, arXiv:2603.14288 — a

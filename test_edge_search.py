@@ -43,6 +43,7 @@ from edge_search import (
     WIRE_VERSION,
     Campaign,
     Candidate,
+    ClaudeCodeProposer,
     ClaudeProposer,
     CycleData,
     OverlayGrammar,
@@ -1627,10 +1628,11 @@ class TestLlmCliRefusal:
         assert _resolve_llm_author() is None
 
     def test_resolve_activates_claude_proposer_when_model_set(self, monkeypatch) -> None:
-        # the Phase-B opt-in: setting the model env var activates the in-process Claude client.
-        # Construction is import-free (no anthropic, no key, no network) — the API call is deferred
-        # to __call__, so resolving just yields the configured author object.
+        # the API transport (EDGE_SEARCH_LLM_TRANSPORT=api; the DEFAULT is now claude_code) yields the
+        # in-process Claude client. Construction is import-free (no anthropic, no key, no network) —
+        # the API call is deferred to __call__, so resolving just yields the configured author object.
         monkeypatch.setenv('EDGE_SEARCH_LLM_MODEL', 'claude-opus-4-8')
+        monkeypatch.setenv('EDGE_SEARCH_LLM_TRANSPORT', 'api')
         author = _resolve_llm_author()
         assert isinstance(author, ClaudeProposer) and author.model == 'claude-opus-4-8'
 
@@ -1838,3 +1840,94 @@ class TestClaudeProposer:
         assert len(prov_rows) == 1
         assert prov_rows[0]['model_served'] == 'claude-opus-4-8-snap'   # the served snapshot, audited
         assert prov_rows[0]['temperature'] == 0.0
+
+
+class TestClaudeCodeProposer:
+    """Phase B alt-transport: the SUBSCRIPTION path (`ClaudeCodeProposer`, `claude -p`). Always-run,
+    synthetic — an injected `runner` (prompt -> json dict) replaces the subprocess, so the prompt
+    build (+ seal), the coordinate parse, the provenance transport tag, and — critically — the
+    SEAL-HARDENED invocation (api key scrubbed, ALL tools denied, single turn, never --bare) are
+    pinned offline. The live `claude -p` call is exercised only when the owner activates it."""
+
+    _CELL = {'overlay': 'short_vol', 'ticker': 'MSFT',
+             'params': {'target_delta': 0.25, 'dte': 30}, 'predicted_sign': 1}
+
+    @staticmethod
+    def _scorer(cand):
+        return {'phase': 'structure', 'template': cand.template, 'ticker': cand.ticker,
+                'params': cand.params_dict(), 'predicted_sign': cand.predicted_sign,
+                't_stat_newey_west': 0.5, 'sign_ok': True, 'p_value': 0.3}
+
+    @staticmethod
+    def _runner(result_text: str, model: str = 'claude-opus-4-8-snap'):
+        def runner(prompt: str) -> dict:
+            return {'result': result_text, 'model': model}
+        return runner
+
+    def test_emits_coordinate_batch_with_subscription_transport(self) -> None:
+        menu, corpus, onboarded = enumerate_grammar_templates(), [], ('MSFT',)
+        proposer = ClaudeCodeProposer('claude-opus-4-8',
+                                      runner=self._runner(json.dumps([self._CELL])))
+        batch = proposer(menu, corpus, onboarded)
+        assert batch.proposals == (self._CELL,)
+        assert batch.model_requested == 'claude-opus-4-8'
+        assert batch.model_served == 'claude-opus-4-8-snap'
+        assert batch.transport == 'claude_code'                    # the provenance tag
+        assert batch.temperature == 0.0
+        expected = build_proposer_prompt(menu, corpus, onboarded, max_proposals=16)
+        assert batch.prompt_sha == hashlib.sha256(expected.encode('utf-8')).hexdigest()
+
+    def test_invocation_scrubs_key_and_denies_all_tools(self, monkeypatch) -> None:
+        # THE SEAL: the constructed `claude -p` argv removes EVERY tool and scrubs the API key (so the
+        # subscription is used AND no metered call is made), single-turn, and never --bare.
+        monkeypatch.setenv('ANTHROPIC_API_KEY', 'sk-should-be-scrubbed')
+        monkeypatch.setenv('ANTHROPIC_AUTH_TOKEN', 'tok-should-be-scrubbed')
+        cmd, env = ClaudeCodeProposer('claude-opus-4-8')._build_invocation('THE_PROMPT')
+        assert 'ANTHROPIC_API_KEY' not in env and 'ANTHROPIC_AUTH_TOKEN' not in env  # subscription; no metered call
+        assert cmd[cmd.index('--disallowedTools') + 1] == '*'                        # every tool removed from context
+        assert '--strict-mcp-config' in cmd                                          # no MCP servers load
+        assert cmd[cmd.index('--max-turns') + 1] == '1'                              # single completion
+        assert '--bare' not in cmd                                                   # bare would force an API key
+        assert '--dangerously-skip-permissions' not in cmd                          # never bypass permissions
+        assert cmd[:3] == ['claude', '-p', 'THE_PROMPT']
+        assert cmd[cmd.index('--model') + 1] == 'claude-opus-4-8'
+        assert cmd[cmd.index('--output-format') + 1] == 'json'
+
+    def test_subprocess_nonzero_exit_raises(self, monkeypatch) -> None:
+        import types
+        monkeypatch.setattr('subprocess.run', lambda *a, **k: types.SimpleNamespace(
+            returncode=1, stdout='', stderr='boom'))
+        with pytest.raises(RuntimeError, match='claude -p failed'):
+            ClaudeCodeProposer('claude-opus-4-8')._run('PROMPT')
+
+    def test_unparseable_reply_raises(self) -> None:
+        proposer = ClaudeCodeProposer('claude-opus-4-8', runner=self._runner('I have no array'))
+        with pytest.raises(ValueError, match='no JSON array'):
+            proposer(enumerate_grammar_templates(), [], ('MSFT',))
+
+    def test_resolve_selects_transport(self, monkeypatch) -> None:
+        monkeypatch.setenv('EDGE_SEARCH_LLM_MODEL', 'claude-opus-4-8')
+        monkeypatch.setenv('EDGE_SEARCH_LLM_TRANSPORT', 'claude_code')
+        assert isinstance(_resolve_llm_author(), ClaudeCodeProposer)
+        monkeypatch.setenv('EDGE_SEARCH_LLM_TRANSPORT', 'api')
+        assert isinstance(_resolve_llm_author(), ClaudeProposer)
+        monkeypatch.delenv('EDGE_SEARCH_LLM_TRANSPORT', raising=False)               # default = claude_code
+        assert isinstance(_resolve_llm_author(), ClaudeCodeProposer)
+        monkeypatch.setenv('EDGE_SEARCH_LLM_TRANSPORT', 'bogus')
+        with pytest.raises(ValueError, match='EDGE_SEARCH_LLM_TRANSPORT'):
+            _resolve_llm_author()
+
+    def test_end_to_end_records_transport_in_provenance(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setattr('edge_search._is_onboarded', lambda tk: tk == 'AAA')
+        led = str(tmp_path / 'idea_ledger.jsonl')
+        prov = str(tmp_path / 'proposal_provenance.jsonl')
+        cell = {'overlay': 'short_vol', 'ticker': 'AAA',
+                'params': {'target_delta': 0.25, 'dte': 30}, 'predicted_sign': 1}
+        author = ClaudeCodeProposer('claude-opus-4-8', runner=self._runner(json.dumps([cell])))
+        res = run_proposer_round(Campaign(search=('AAA',)), path=led, scorer=self._scorer,
+                                 run=True, record=True, author=author,
+                                 round_id='r1', provenance_path=prov)
+        assert res['proposed'] == 1 and res['recorded'] == 1
+        prov_rows = [json.loads(ln) for ln in open(prov)]
+        assert prov_rows[0]['transport'] == 'claude_code'              # the transport, audited
+        assert prov_rows[0]['model_served'] == 'claude-opus-4-8-snap'

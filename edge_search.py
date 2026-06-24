@@ -1553,6 +1553,7 @@ class ProposalBatch:
     model_served: str             # the EXACT snapshot the API reports it ran — the audit id
     temperature: float            # 0.0 for reproducibility
     prompt_sha: str               # hash of the exact prompt, so a proposal is reconstructable
+    transport: str = 'api'        # 'api' (ClaudeProposer) | 'claude_code' (subscription); PROVENANCE, not lineage
 
 
 # (grammar_menu, scrubbed_corpus, onboarded_search_tickers) -> ProposalBatch
@@ -1746,6 +1747,7 @@ def record_provenance(
         'model_requested': batch.model_requested,
         'model_served': batch.model_served,
         'temperature': batch.temperature,
+        'transport': batch.transport,     # 'api' | 'claude_code' — provenance, NEVER lineage
         'prompt_sha': batch.prompt_sha,
         'n_proposed': len(batch.proposals),
         'accepted': [list(k) for k in accepted],
@@ -1999,20 +2001,124 @@ class ClaudeProposer:
         )
 
 
+class ClaudeCodeProposer:
+    """Phase B ALT-TRANSPORT: an `LLMProposer` that drives Claude Code (`claude -p`) under a
+    Claude.ai SUBSCRIPTION (Max/Pro) instead of the metered API (`ClaudeProposer`). Same numberless
+    prompt, same coordinate-only output, same downstream gate -> score -> judge -> record — only the
+    transport differs. Selected by EDGE_SEARCH_LLM_TRANSPORT=claude_code (still gated on
+    EDGE_SEARCH_LLM_MODEL); records `transport='claude_code'` to the provenance log.
+
+    THE SEAL IS A LARGER SURFACE HERE — read this. Claude Code is an AGENT, not a stateless API call:
+    by default it (a) offers tools (bash/read/edit/web) and (b) auto-loads working-dir + ~/.claude
+    context (CLAUDE.md, settings, MCP). BOTH are seal-hostile — a tool-enabled run could
+    `cat idea_ledger.jsonl` (the answer key), and THIS repo's CLAUDE.md carries pinned result numbers,
+    so loading it would feed the proposer the very statistics the numberless prompt withholds. So the
+    invocation is HARDENED into a pure prompt->text completion equivalent to the API call
+    (`_build_invocation`, unit-tested):
+
+      * `--disallowedTools "*"` removes EVERY tool from the model's context (deny-first precedence —
+        the strongest control; the model never even sees a tool, so there is no Read/Bash/`cat`) plus
+        `--strict-mcp-config` (no `--mcp-config` => zero MCP servers load) and `--max-turns 1`;
+      * the subprocess runs from a NEUTRAL temp cwd, so the repo's CLAUDE.md (and its pinned numbers)
+        is never in scope — and no global `~/.claude/CLAUDE.md` exists;
+      * `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` are SCRUBBED from the child env, both so the
+        subscription OAuth is used (a set key would override it) and so no metered call is made. NOT
+        `--bare`: bare skips OAuth/keychain and would force an API key, defeating the subscription.
+
+    RESIDUAL SURFACE (named, not hidden): because subscription auth needs non-`--bare`, Claude Code
+    still reads `~/.claude` global settings — a global hook could run. That is user-controlled config,
+    not an attacker vector, but it makes this a LARGER trusted surface than the API path. **The API
+    `ClaudeProposer` remains the seal gold-standard** (one stateless numberless call, zero context,
+    zero tools). The seal proper — numberless prompt, coordinate-only output, every-look-recorded — is
+    preserved on either transport. Effort/thinking knobs are NOT exposed the way the raw API is
+    (Claude Code applies its own defaults), so this transport does not honor `effort='max'`; record
+    which transport ran so the two are not conflated. `anthropic` is NOT needed here (no API client) —
+    only the `claude` CLI on PATH and a subscription login. Promotion stays CLOSED, survivors
+    EXPLORATORY pending Phase C."""
+
+    _DENY_ALL_TOOLS = '*'   # --disallowedTools "*" removes every tool from the model's context
+
+    def __init__(self, model: str = 'claude-opus-4-8', *, runner: Any | None = None,
+                 max_proposals: int = 16, timeout: int = 600) -> None:
+        self.model = model
+        self._runner = runner       # injectable (prompt -> json dict) for tests; None -> real subprocess
+        self.max_proposals = max_proposals
+        self.timeout = timeout
+
+    def _build_invocation(self, prompt: str) -> tuple[list[str], dict[str, str]]:
+        """The `claude -p` argv + the SCRUBBED child env. Factored out so the seal-critical
+        construction (api key scrubbed, ALL tools denied, single turn, no `--bare`) is unit-testable
+        without spawning a subprocess. The neutral cwd is applied separately in `_run`."""
+        import os
+        env = {k: v for k, v in os.environ.items()
+               if k not in ('ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN')}   # force subscription OAuth
+        cmd = ['claude', '-p', prompt,
+               '--model', self.model,
+               '--output-format', 'json',
+               '--disallowedTools', self._DENY_ALL_TOOLS,   # remove EVERY tool from the model's context
+               '--strict-mcp-config',                       # + no --mcp-config => zero MCP servers
+               '--max-turns', '1']                          # single completion; errors if it tries to loop
+        return cmd, env
+
+    def _run(self, prompt: str) -> dict[str, Any]:
+        if self._runner is not None:
+            return self._runner(prompt)
+        import json as _json
+        import subprocess
+        import tempfile
+        cmd, env = self._build_invocation(prompt)
+        with tempfile.TemporaryDirectory() as neutral_cwd:   # no repo CLAUDE.md in scope
+            out = subprocess.run(cmd, env=env, cwd=neutral_cwd,
+                                 capture_output=True, text=True, timeout=self.timeout)
+        if out.returncode != 0:
+            raise RuntimeError(f'claude -p failed (rc={out.returncode}): {(out.stderr or "")[:500]}')
+        return _json.loads(out.stdout)
+
+    def __call__(self, menu: list[StructureTemplate], corpus: list[dict[str, Any]],
+                 onboarded: tuple[str, ...]) -> ProposalBatch:
+        # build_proposer_prompt runs the numberless SEAL on `corpus` (raises before any subprocess
+        # if a raw answer-key row slipped in). No result statistic is in scope here.
+        prompt = build_proposer_prompt(menu, corpus, onboarded, max_proposals=self.max_proposals)
+        prompt_sha = hashlib.sha256(prompt.encode('utf-8')).hexdigest()
+        payload = self._run(prompt)
+        text = payload.get('result', '')
+        served = payload.get('model') or self.model   # the served snapshot if reported, else the alias
+        return ProposalBatch(
+            tuple(_parse_proposal_array(text)),
+            model_requested=self.model,
+            model_served=served,
+            temperature=0.0,              # sentinel: no temperature on this path either
+            prompt_sha=prompt_sha,
+            transport='claude_code',
+        )
+
+
 def _resolve_llm_author() -> LLMProposer | None:
     """The activated LLM author, or None if none is activated (the default — `--llm` fails closed).
-    Phase B wires the in-process Claude client (`ClaudeProposer`); set the EDGE_SEARCH_LLM_MODEL
-    environment variable to a model id to activate it. This is the owner's deliberate per-run opt-in
-    (ANTHROPIC_API_KEY must also be in the environment and `anthropic` installed). With the var UNSET
-    this returns None, so the default — no LLM runs, the menu-walker is the proposer — is unchanged.
-    Activation does not relax the standing limits: promotion stays CLOSED (a survivor escalates to
-    manual pre-registration) and survivors stay EXPLORATORY until the Phase-C time-axis holdout
-    exists (docs/llm_proposer_plan.md)."""
+    Phase B wires two transports, both gated on EDGE_SEARCH_LLM_MODEL and selected by
+    EDGE_SEARCH_LLM_TRANSPORT (default `claude_code`):
+
+      * `claude_code` (DEFAULT) — Claude Code (`claude -p`) under a Claude.ai SUBSCRIPTION
+        (`ClaudeCodeProposer`); needs the `claude` CLI on PATH + a subscription login, no API key.
+        Hardened to a no-tools, no-context completion, but a larger trusted surface (see that class).
+      * `api` — the in-process Claude API client (`ClaudeProposer`); needs ANTHROPIC_API_KEY +
+        `anthropic` installed. Metered, and the seal gold-standard (stateless, zero context/tools).
+
+    With EDGE_SEARCH_LLM_MODEL UNSET this returns None, so the default — no LLM runs, the menu-walker
+    is the proposer — is unchanged. Activation does not relax the standing limits: promotion stays
+    CLOSED and survivors stay EXPLORATORY until the Phase-C time-axis holdout exists
+    (docs/llm_proposer_plan.md)."""
     import os
     model = os.environ.get('EDGE_SEARCH_LLM_MODEL')
     if not model:
         return None
-    return ClaudeProposer(model=model)
+    transport = os.environ.get('EDGE_SEARCH_LLM_TRANSPORT', 'claude_code')
+    if transport == 'api':
+        return ClaudeProposer(model=model)
+    if transport == 'claude_code':
+        return ClaudeCodeProposer(model=model)
+    raise ValueError(
+        f"unknown EDGE_SEARCH_LLM_TRANSPORT={transport!r} (expected 'api' or 'claude_code')")
 
 
 def _assert_llm_boundary(author: LLMProposer | None = None) -> LLMProposer:
