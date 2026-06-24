@@ -1646,7 +1646,8 @@ Propose only these. Naming any other ticker flags it for a human-gated onboardin
 Propose up to {max_proposals} NEW (overlay, ticker, params, predicted_sign) cells that are not in \
 the tried list and that you can defend on economic grounds. Output ONLY a JSON array, each element \
 exactly {{"overlay": <str>, "ticker": <str>, "params": {{<knob>: <grid value>, ...}}, \
-"predicted_sign": <+1 or -1>}}. No prose, no commentary, no fields beyond those four."""
+"predicted_sign": <+1 or -1>, "reasoning": <str>}}, where `reasoning` is ONE sentence naming the risk \
+premium you expect to harvest and why. No prose outside the JSON; no fields beyond those five."""
 
 
 def llm_propose_candidates(
@@ -1803,9 +1804,14 @@ def run_proposer_round(
     # LLM's `max_batch`), there only to bound the online-FDR budget loudly if the gate ever
     # regressed (e.g. lost dedup). It never truncates a real author (see max_proposals_per_round).
     cands = cands[:max_proposals_per_round(campaign)]
+    # `batch` carries the RAW author proposals (incl. any `reasoning` field) for OWNER-FACING display
+    # only (`_format_llm_round`). It is None for the menu-walker. The reasoning rides here and nowhere
+    # else: it never enters the scored candidate, the ledger, the scrubbed corpus (SAFE_FIELDS), or
+    # the oracle reply (PROPOSAL_FIELDS) — so it cannot reach the engine, the FDR control, or a future
+    # proposer. score_and_record builds its own reply and does NOT copy this key.
     result: dict[str, Any] = {'proposed': len(cands), 'recorded': 0,
                               'needs_onboard': needs_onboard, 'rejected': rejected,
-                              'candidates': cands, 'rows': [], 'ledger_rows': []}
+                              'candidates': cands, 'rows': [], 'ledger_rows': [], 'batch': batch}
     # Provenance records the PROPOSAL EVENT (which model ran + what it accepted), so it
     # fires on every recorded round the author was invoked — INCLUDING a round that
     # accepted zero cells (all tried/rejected): the model still ran, and a complete audit
@@ -2159,6 +2165,46 @@ def _assert_llm_boundary(author: LLMProposer | None = None) -> LLMProposer:
     return resolved
 
 
+def _format_llm_round(res: dict[str, Any]) -> str:
+    """Owner-facing view of an LLM proposer round: each proposed cell, the model's one-line
+    `reasoning`, and the gate's verdict (accepted / rejected-with-reason / needs-onboard).
+
+    The reasoning is DISPLAY-ONLY — it is the model's a-priori economic story, generated from a
+    NUMBERLESS prompt, and it is excluded from every downstream path (not in SAFE_FIELDS or
+    PROPOSAL_FIELDS; never written to the ledger or provenance; not copied into the oracle reply).
+    So it can never reach the engine, the FDR control, or a future proposer's corpus. Read it for
+    INSIGHT, never as EVIDENCE: the t-stat and the kill-gate are the judges — a persuasive story
+    must not promote a cell (the foil paper's failure mode). Returns '' for the menu-walker (no
+    model, no reasoning)."""
+    batch = res.get('batch')
+    if batch is None:
+        return ''
+    why = {(p.get('overlay'), p.get('ticker'), json.dumps(p.get('params'), sort_keys=True)):
+           str(p.get('reasoning', '')).strip()
+           for p in batch.proposals if isinstance(p, dict)}
+
+    def _why(overlay: str, ticker: str, params: dict[str, Any]) -> str:
+        return why.get((overlay, ticker, json.dumps(params, sort_keys=True)), '')
+
+    lines: list[str] = []
+    for c in res['candidates']:
+        lines.append(f'  [accepted] {c.ticker:<5} {c.template:<24} {c.params_dict()} '
+                     f'sign={c.predicted_sign:+d}')
+        r = _why(c.overlay, c.ticker, c.params_dict())
+        if r:
+            lines.append(f'             why: {r}')
+    for rj in res['rejected']:
+        p = rj['proposal'] if isinstance(rj['proposal'], dict) else {}
+        lines.append(f'  [rejected: {rj["reason"]}] {p.get("ticker")} {p.get("overlay")} '
+                     f'{p.get("params")}')
+        r = str(p.get('reasoning', '')).strip()
+        if r:
+            lines.append(f'             why: {r}')
+    if res['needs_onboard']:
+        lines.append(f'  [needs onboard — human-gated fetch, not run] {res["needs_onboard"]}')
+    return '\n'.join(lines)
+
+
 def main() -> None:
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == 'structure':
@@ -2195,7 +2241,10 @@ def main() -> None:
               f'{" — running engine, a while cold ..." if run else " (preview)"}', flush=True)
         res = run_proposer_round(run=run, record=record, author=author)
         print(f'proposed {res["proposed"]} untried cell(s) across onboarded search tickers')
-        if res['needs_onboard']:
+        detail = _format_llm_round(res) if author is not None else ''
+        if detail:
+            print(detail)                                     # LLM: per-cell reasoning + gate verdict
+        elif res['needs_onboard']:                            # menu-walker: just the onboard flag
             print(f'  needs onboard (NOT run — human-gated fetch): {res["needs_onboard"]}')
         if run:
             print(f'  ran + lifetime-judged {len(res["rows"])} cell(s); '

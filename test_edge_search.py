@@ -60,6 +60,7 @@ from edge_search import (
     _cooldown_null,
     _cand_key,
     _data_lineage_hash,
+    _format_llm_round,
     _ledger_key,
     _parse_proposal_array,
     _render_grammar_menu,
@@ -985,9 +986,11 @@ class TestProposerPrompt:
 
     # --- the prompt is a well-formed, coordinate-only instruction --------------
 
-    def test_states_the_coordinate_only_output_contract(self) -> None:
+    def test_states_the_output_contract_with_reasoning(self) -> None:
+        # coordinate-gated output PLUS an owner-facing `reasoning` field (display-only; see
+        # TestProposerReasoning for the proof it never enters the scored/recorded/fed-back loop).
         prompt = build_proposer_prompt(enumerate_grammar_templates(), [], ('MSFT',))
-        for field in ('overlay', 'ticker', 'params', 'predicted_sign'):
+        for field in ('overlay', 'ticker', 'params', 'predicted_sign', 'reasoning'):
             assert field in prompt
         assert 'JSON' in prompt and 'No prose' in prompt
 
@@ -1942,3 +1945,75 @@ class TestClaudeCodeProposer:
         prov_rows = [json.loads(ln) for ln in open(prov)]
         assert prov_rows[0]['transport'] == 'claude_code'              # the transport, audited
         assert prov_rows[0]['model_served'] == 'claude-opus-4-8-snap'
+
+
+class TestProposerReasoning:
+    """The owner-facing `reasoning` field: surfaced in the preview, SEALED out of every downstream
+    path. Always-run, synthetic (stub author, injected scorer, temp ledger). Pins both that the
+    model's rationale reaches the display AND that it never reaches the gate, the ledger, the
+    scrubbed corpus, the provenance, or the oracle reply — so it cannot influence the engine, the
+    FDR control, or a future proposer (it is the foil paper's 'plausible story', kept strictly as
+    insight, never evidence)."""
+
+    @staticmethod
+    def _scorer(cand):
+        return {'phase': 'structure', 'template': cand.template, 'ticker': cand.ticker,
+                'params': cand.params_dict(), 'predicted_sign': cand.predicted_sign,
+                't_stat_newey_west': 0.5, 'sign_ok': True, 'p_value': 0.3}
+
+    @staticmethod
+    def _author(proposals):
+        def author(menu, corpus, onboarded):
+            return ProposalBatch(tuple(proposals), model_requested='m', model_served='m-snap',
+                                 temperature=0.0, prompt_sha='s')
+        return author
+
+    _CELL = {'overlay': 'short_vol', 'ticker': 'AAA',
+             'params': {'target_delta': 0.25, 'dte': 30}, 'predicted_sign': 1}
+
+    def test_reasoning_rides_for_display_but_never_persists(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setattr('edge_search._is_onboarded', lambda tk: True)
+        led = str(tmp_path / 'idea_ledger.jsonl')
+        prov = str(tmp_path / 'prov.jsonl')
+        cell = {**self._CELL, 'reasoning': 'sell the rich short-vol variance premium on AAA'}
+        res = run_proposer_round(Campaign(search=('AAA',)), path=led, scorer=self._scorer,
+                                 run=True, record=True, author=self._author([cell]),
+                                 round_id='r1', provenance_path=prov)
+        assert res['proposed'] == 1 and res['recorded'] == 1            # gate IGNORED 'reasoning', accepted
+        # it rides the raw batch (for display) ...
+        assert res['batch'].proposals[0]['reasoning'].startswith('sell the rich')
+        # ... but NEVER the ledger, the scrubbed corpus, or the provenance
+        led_row = load_idea_ledger(led)[0]
+        assert 'reasoning' not in led_row
+        assert all('reasoning' not in r for r in build_proposer_corpus(res['ledger_rows']))
+        assert 'reasoning' not in json.dumps(json.loads(open(prov).read()))
+
+    def test_reasoning_scrubbed_from_the_oracle_reply(self, monkeypatch, tmp_path) -> None:
+        # the oracle re-scrubs rejected[].proposal to PROPOSAL_FIELDS, so a 'reasoning' an external
+        # caller attaches never rides the numberless reply (and assert_numberless still passes).
+        monkeypatch.setattr('edge_search._is_onboarded', lambda tk: True)
+        led = str(tmp_path / 'idea_ledger.jsonl')
+        prov = str(tmp_path / 'p.jsonl')
+        bad = {'overlay': 'short_vol', 'ticker': 'TLT',                 # sealed -> rejected
+               'params': {'target_delta': 0.25, 'dte': 30}, 'predicted_sign': 1,
+               'reasoning': 'this must be scrubbed'}
+        model = {'model_requested': 'm', 'model_served': 'm-snap', 'temperature': 0.0, 'prompt_sha': 's'}
+        reply = score_and_record([bad], round_id='r', model=model,
+                                 campaign=Campaign(search=('AAA',), sealed=('TLT',)),
+                                 path=led, scorer=self._scorer, provenance_path=prov)
+        assert reply['rejected']
+        assert all('reasoning' not in r['proposal'] for r in reply['rejected'])
+        assert 'reasoning' not in json.dumps(reply)
+
+    def test_format_llm_round_surfaces_reasoning(self) -> None:
+        menu = enumerate_grammar_templates()
+        t = next(t for t in menu if t.name == 'short_call_25')
+        cand = StructureCandidate(t.name, 'AAA', t.overlay, t.params, t.predicted_sign)
+        batch = ProposalBatch(({'overlay': t.overlay, 'ticker': 'AAA', 'params': dict(t.params),
+                                'predicted_sign': t.predicted_sign,
+                                'reasoning': 'harvest the variance premium'},),
+                              model_requested='m', model_served='m', temperature=0.0, prompt_sha='s')
+        out = _format_llm_round({'candidates': [cand], 'rejected': [], 'needs_onboard': [], 'batch': batch})
+        assert 'accepted' in out and 'harvest the variance premium' in out
+        # the menu-walker (no model -> batch None) shows no reasoning block
+        assert _format_llm_round({'candidates': [], 'rejected': [], 'needs_onboard': [], 'batch': None}) == ''
