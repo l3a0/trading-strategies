@@ -1550,6 +1550,55 @@ class TestStructureCampaign:
         msft = self._cell(rows, 'calendar', 'MSFT')
         assert msft['t_stat_newey_west'] == pytest.approx(-0.45, abs=0.10)
 
+    # --- NVDA's eight cells, read from the full 56-cell campaign. NVDA is one of the seven search
+    # tickers, so a separate single-ticker NVDA campaign would just RECOMPUTE these — the engine
+    # scores each cell identically in any batch (deterministic, no cross-cell dependence; only the
+    # e-LOND/BY verdict is batch-relative, and NVDA has 0 survivors in both contexts). Folding the
+    # NVDA pins here drops that redundant campaign run.
+
+    def test_nvda_eight_cells_trade_including_calendar(self, structure_campaign) -> None:
+        # NVDA's chain lists far calls at the near strike, so the calendar trades here (unlike MSFT,
+        # which needed the far backfill). All eight NVDA structures are real measurements.
+        nvda = [r for r in structure_campaign if r['ticker'] == 'NVDA']
+        assert len(nvda) == len(STRUCTURE_TEMPLATES)                 # 8 cells: NVDA x every template
+        assert all(not r.get('measurement_invalid') for r in nvda)
+
+    def test_nvda_every_cell_wrong_signed_except_calendar(self, structure_campaign) -> None:
+        # every template predicts +1; on NVDA every cell EXCEPT the far-DTE calendar is wrong-signed,
+        # and the TERM calendar (far_dte=90) is mildly positive (~+0.67) but far from significant.
+        rows = structure_campaign
+        noncal = [r for r in rows if r['ticker'] == 'NVDA' and r['template'] != 'calendar']
+        assert all(r['t_stat_newey_west'] < 0 for r in noncal)
+        assert all(r['sign_ok'] is False for r in noncal)
+        cal = self._cell(rows, 'calendar', 'NVDA')
+        assert cal['t_stat_newey_west'] > 0 and cal['sign_ok'] is True   # the lone correctly-signed NVDA cell
+        assert not cal['elond_survivor'] and not cal['by_survivor']      # but no edge (insignificant)
+
+    def test_nvda_cell_t_nw_and_p_values(self, structure_campaign) -> None:
+        # each NVDA cell's HAC-t + asymptotic one-sided p (identical to a single-ticker NVDA run —
+        # the score is batch-independent): short-vol x2 / straddle / iron-condor / strangle / SKEW
+        # risk-reversal / CARRY credit-spread / TERM calendar.
+        rows = structure_campaign
+
+        def c(t):
+            return self._cell(rows, t, 'NVDA')
+        assert c('short_call_25')['t_stat_newey_west'] == pytest.approx(-0.96, abs=0.05)
+        assert c('short_call_25')['p_value'] == pytest.approx(0.8315, abs=0.01)
+        assert c('short_call_atm')['t_stat_newey_west'] == pytest.approx(-0.96, abs=0.05)
+        assert c('short_call_atm')['p_value'] == pytest.approx(0.8315, abs=0.01)
+        assert c('straddle')['t_stat_newey_west'] == pytest.approx(-1.22, abs=0.05)
+        assert c('straddle')['p_value'] == pytest.approx(0.8888, abs=0.01)
+        assert c('iron_condor')['t_stat_newey_west'] == pytest.approx(-1.47, abs=0.05)
+        assert c('iron_condor')['p_value'] == pytest.approx(0.9292, abs=0.01)
+        assert c('strangle')['t_stat_newey_west'] == pytest.approx(-1.33, abs=0.05)
+        assert c('strangle')['p_value'] == pytest.approx(0.9082, abs=0.01)
+        assert c('risk_reversal')['t_stat_newey_west'] == pytest.approx(-0.19, abs=0.05)
+        assert c('risk_reversal')['p_value'] == pytest.approx(0.5753, abs=0.01)
+        assert c('credit_spread')['t_stat_newey_west'] == pytest.approx(-0.06, abs=0.05)
+        assert c('credit_spread')['p_value'] == pytest.approx(0.5239, abs=0.01)
+        assert c('calendar')['t_stat_newey_west'] == pytest.approx(0.67, abs=0.05)
+        assert c('calendar')['p_value'] == pytest.approx(0.2514, abs=0.01)
+
     @pytest.mark.skipif(not _have_dailies('QQQ'), reason='needs qqq_option_dailies.csv (+ _puts)')
     def test_puts_merge_keeps_window_on_calls_span(self) -> None:
         """The merge is purely ADDITIVE on the measurement window. QQQ's puts file starts 2011 but
@@ -1559,101 +1608,6 @@ class TestStructureCampaign:
         merged ticker's window still begins at its calls-file start (2016 for QQQ), not the puts'."""
         _store, dates, _prices = _load_ticker_data('QQQ')
         assert dates[0] >= '2016-01-01'   # the QQQ calls-file start, NOT the 2011 puts start
-
-
-# --------------------------------------------------------------------------- #
-# Per-onboarded-ticker single-ticker structure campaigns
-# --------------------------------------------------------------------------- #
-# As each new ticker is onboarded and its store published, its single-ticker
-# structure campaign (the onboarding smoke test) gets a CI-reproducible pin here
-# — same engine-re-run phase, run on its own chain alone (BY over its 6 template
-# cells). EXPLORATORY, not a registered verdict: pinned so the onboarding sweep
-# is not re-derived. Every onboarded ticker so far reads 0/6 survivors with
-# every cell wrong-signed (t_NW < 0), the recurring lesson that a bare short-vol,
-# spread, or skew structure carries no edge on these chains.
-
-
-@pytest.fixture(scope='module')
-def nvda_structure_campaign():
-    if not _have_dailies('NVDA'):
-        pytest.skip('needs NVDA option dailies (or its committed .gz twin)')
-    return run_structure_campaign(Campaign(search=('NVDA',)))
-
-
-@pytest.mark.skipif(
-    not _have_dailies('NVDA'),
-    reason='needs NVDA option dailies (or its committed .gz twin)',
-)
-class TestNvdaStructureCampaign:
-    """Pin NVDA's structure cells as a focused per-ticker check — NVDA is also one
-    of the seven search tickers in the main 56-cell campaign, so this isolates it
-    on the published chain: all eight structures (short-vol x2 / straddle / iron-condor /
-    strangle / risk-reversal / credit-spread / calendar) run on NVDA alone, scored by the HAC-t
-    asymptotic null; e-LOND is the control (BY a diagnostic) over the 8 template cells.
-    EXPLORATORY, not a registered verdict. Deterministic (overlays + closed-form p, no
-    RNG); the LIVE CHAIN_CLEAN_START applies."""
-
-    @staticmethod
-    def _cell(rows, template):
-        return next(r for r in rows if r['template'] == template and r['ticker'] == 'NVDA')
-
-    def test_batch_all_scored_none_invalid(self, nvda_structure_campaign) -> None:
-        rows = nvda_structure_campaign
-        assert len(rows) == len(STRUCTURE_TEMPLATES)   # 8 cells: NVDA x every template
-        assert all(r['ticker'] == 'NVDA' for r in rows)
-        # NVDA's chain DOES list far calls at the near strike, so the calendar trades here
-        # (unlike MSFT in the full campaign) — every NVDA cell is a real measurement.
-        assert sum(r.get('measurement_invalid', False) for r in rows) == 0
-
-    def test_no_survivor(self, nvda_structure_campaign) -> None:
-        """The decisive output: no NVDA structure candidate is flagged by e-LOND (the
-        control), nor survives the BY diagnostic."""
-        rows = nvda_structure_campaign
-        assert sum(r['elond_survivor'] for r in rows) == 0   # e-LOND control
-        assert sum(r['clean_survivor'] for r in rows) == 0   # BY diagnostic
-        assert sum(r['by_survivor'] for r in rows) == 0
-
-    def test_every_cell_wrong_signed(self, nvda_structure_campaign) -> None:
-        """Every template predicts positive premium (t_NW>0); on NVDA every cell EXCEPT the
-        far-DTE calendar is wrong-signed (t_NW<0) — short-vol, straddle, iron-condor, strangle,
-        the SKEW risk reversal, and the CARRY credit spread. The TERM calendar (far_dte=90 on the
-        far-DTE backfill) reads mildly POSITIVE (t_NW ~+0.67) but is far from significant (p~0.25),
-        so no structure carries a real edge on NVDA's runaway chain."""
-        rows = nvda_structure_campaign
-        noncal = [r for r in rows if r['template'] != 'calendar']
-        assert all(r['t_stat_newey_west'] < 0 for r in noncal)
-        assert all(r['sign_ok'] is False for r in noncal)
-        cal = self._cell(rows, 'calendar')
-        assert cal['t_stat_newey_west'] > 0 and cal['sign_ok'] is True   # the one correctly-signed cell
-        assert not cal['elond_survivor'] and not cal['by_survivor']      # but no edge (insignificant)
-
-    def test_cell_t_nw_and_p_values(self, nvda_structure_campaign) -> None:
-        """Pin each cell's HAC-t and its asymptotic (one-sided upper-tail) p."""
-        rows = nvda_structure_campaign
-        sc25 = self._cell(rows, 'short_call_25')
-        assert sc25['t_stat_newey_west'] == pytest.approx(-0.96, abs=0.05)
-        assert sc25['p_value'] == pytest.approx(0.8315, abs=0.01)
-        scatm = self._cell(rows, 'short_call_atm')
-        assert scatm['t_stat_newey_west'] == pytest.approx(-0.96, abs=0.05)
-        assert scatm['p_value'] == pytest.approx(0.8315, abs=0.01)
-        strad = self._cell(rows, 'straddle')
-        assert strad['t_stat_newey_west'] == pytest.approx(-1.22, abs=0.05)
-        assert strad['p_value'] == pytest.approx(0.8888, abs=0.01)
-        ic = self._cell(rows, 'iron_condor')
-        assert ic['t_stat_newey_west'] == pytest.approx(-1.47, abs=0.05)
-        assert ic['p_value'] == pytest.approx(0.9292, abs=0.01)
-        strangle = self._cell(rows, 'strangle')                    # widening 1
-        assert strangle['t_stat_newey_west'] == pytest.approx(-1.33, abs=0.05)
-        assert strangle['p_value'] == pytest.approx(0.9082, abs=0.01)
-        rr = self._cell(rows, 'risk_reversal')                     # widening 2 (SKEW)
-        assert rr['t_stat_newey_west'] == pytest.approx(-0.19, abs=0.05)
-        assert rr['p_value'] == pytest.approx(0.5753, abs=0.01)
-        cs = self._cell(rows, 'credit_spread')                     # widening 3 (CARRY)
-        assert cs['t_stat_newey_west'] == pytest.approx(-0.06, abs=0.05)
-        assert cs['p_value'] == pytest.approx(0.5239, abs=0.01)
-        cal = self._cell(rows, 'calendar')                         # widening 4 (TERM, far_dte=90 backfill)
-        assert cal['t_stat_newey_west'] == pytest.approx(0.67, abs=0.05)
-        assert cal['p_value'] == pytest.approx(0.2514, abs=0.01)
 
 
 class TestLlmCliRefusal:

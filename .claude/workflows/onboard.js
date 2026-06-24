@@ -107,7 +107,7 @@ async function onboardOne(tk) {
   // Campaign + triage are part of THIS ticker's lifecycle. Only a clean/repaired ticker is
   // campaigned (it has a sound store to score); an auto-clean (safe mode) or human-flag ticker
   // stops at the gate. The campaign is the SINGLE-TICKER onboarding smoke test — this ticker
-  // ALONE, TLT sealed (the per-ticker check pinned by TestNvdaStructureCampaign) — NOT the
+  // ALONE, TLT sealed (a single-ticker run_structure_campaign) — NOT the
   // cross-sectional batch; folding the ticker into STRUCTURE_SEARCH (which re-pins the whole
   // 28-cell campaign under one FDR pass) stays the deliberate human step flagged below.
   let rows = [], survivors = [], critiques = []
@@ -115,7 +115,8 @@ async function onboardOne(tk) {
     const camp = await agent(
       `SAFE — read-only. Run the engine-re-run STRUCTURE campaign on ${tk} ALONE (the single-ticker
        onboarding smoke test, TLT sealed by omission — a 1-ticker search never includes it), and
-       return every cell. This mirrors the pinned per-ticker check (TestNvdaStructureCampaign).
+       return every cell. (Once a ticker joins STRUCTURE_SEARCH, its cells are pinned within the
+       full TestStructureCampaign; a fresh onboard runs this single-ticker shape.)
        JSON-emitting command:
          ${PY} -c "import json,edge_search as e; rows=e.run_structure_campaign(e.Campaign(search=('${tk}',))); print(json.dumps([{k:r.get(k) for k in ('template','ticker','t_stat_newey_west','p_value','elond_survivor','by_survivor','measurement_invalid')} for r in rows]))"
        Parse the JSON array; rename t_stat_newey_west -> t_nw. Return rows. (~10-20s; let it finish.)`,

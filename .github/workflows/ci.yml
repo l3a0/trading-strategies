@@ -183,10 +183,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # `args` is per-bucket pytest flags. edge-search runs three full-campaign engine passes
+        # (re-tag + the 56-cell structure batch + validate_dailies); `-n auto --dist loadscope`
+        # spreads those CLASSES across the runner's cores so they run concurrently (loadscope keeps
+        # each class — and its module-scoped campaign fixture — on ONE worker, so the campaign runs
+        # once per class, not once per test). The tests are xdist-safe: ledger writes are tmp_path-
+        # scoped and state changes go through monkeypatch (process-isolated per worker).
         include:
-          - {bucket: vol-premium,   files: "test_vol_premium.py"}
-          - {bucket: edge-search,   files: "test_edge_search.py test_validate_dailies.py test_read_gate_wire.py"}
-          - {bucket: trend-explore, files: "test_trend_gate.py test_explorations.py"}
+          - {bucket: vol-premium,   files: "test_vol_premium.py", args: ""}
+          - {bucket: edge-search,   files: "test_edge_search.py test_validate_dailies.py test_read_gate_wire.py", args: "-n auto --dist loadscope"}
+          - {bucket: trend-explore, files: "test_trend_gate.py test_explorations.py", args: ""}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -231,7 +237,7 @@ jobs:
       - name: Verify chain-data checksum
         run: sha256sum -c data_checksums.sha256
       - name: Experiment, scout & edge-search tests (${{ matrix.bucket }})
-        run: pytest ${{ matrix.files }} -v
+        run: pytest ${{ matrix.files }} -v ${{ matrix.args }}
 
   # Required-check gate: the `main` ruleset requires a status check literally named
   # "scouts". This thin job re-exposes it — it runs ALWAYS (so it still reports when a
