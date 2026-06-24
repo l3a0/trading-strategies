@@ -1030,61 +1030,11 @@ def _ticker_scale_ratio(loaded: tuple[Any, list[str], list[float]]) -> float | N
     return scale_ratio(atm, pxd)
 
 
-def _resolve_campaign_workers(workers: int | None, n_tickers: int) -> int:
-    """The structure campaign's per-ticker process-pool size. Default 1 (SERIAL — the safe,
-    unchanged behaviour); set the `STRUCTURE_CAMPAIGN_WORKERS` env var (or pass `workers=`) to
-    parallelize the per-ticker engine passes — the campaign's dominant cost — across that many
-    processes. Capped at `n_tickers` (no idle workers), floored at 1. Each worker holds exactly ONE
-    ticker's store, so this is ALSO the peak memory in tickers: keep it small enough for the runner
-    (the per-ticker design exists because holding all stores at once OOM'd a ~7GB CI runner)."""
-    if workers is None:
-        import os
-        try:
-            workers = int(os.environ.get('STRUCTURE_CAMPAIGN_WORKERS', '1'))
-        except ValueError:
-            workers = 1
-    return max(1, min(workers, n_tickers))
-
-
-def _score_ticker_cells(
-    task: tuple[str, list[tuple[int, 'StructureCandidate']], float],
-) -> list[tuple[int, dict[str, Any]]]:
-    """Score ONE ticker's campaign cells — the unit of both the per-ticker memory bound and the
-    optional process pool. Loads the ticker's store(s) once (canonical, plus the far-DTE store
-    lazily for any TERM cell) and frees them on return. PURE + DETERMINISTIC (overlays + closed-form
-    p, no RNG, no shared state, no writes), so it is result-identical whether run serially in this
-    process or in a pool worker. Each row is returned with its ENUMERATION INDEX `i`, so the parent
-    reassembles the exact stream order before the (serial) e-LOND/BY pass. The scale guard runs once
-    per ticker (price/chain scale is DTE-window-independent), gating every one of that ticker's cells."""
-    from validate_dailies import SCALE_TOL
-    ticker, cells, capital = task
-    canon = _load_ticker_data(ticker, include_far=False)
-    ratio = _ticker_scale_ratio(canon)
-    bad = round(ratio, 3) if (ratio is not None and abs(ratio - 1.0) > SCALE_TOL) else None
-    far_store: tuple[Any, list[str], list[float]] | None = None
-    out: list[tuple[int, dict[str, Any]]] = []
-    for i, c in cells:
-        if bad is not None:
-            out.append((i, {'phase': 'structure', 'template': c.template, 'overlay': c.overlay,
-                            'ticker': c.ticker,
-                            'params': c.params_dict(), 'predicted_sign': c.predicted_sign,
-                            'measurement_invalid': True, 'scale_ratio': bad,
-                            't_stat_newey_west': None, 'sign_ok': False, 'p_value': None}))
-        elif _uses_far_chain(c.overlay):
-            if far_store is None:
-                far_store = _load_ticker_data(ticker, include_far=True)
-            out.append((i, structure_kill_gate(c, far_store, capital)))
-        else:
-            out.append((i, structure_kill_gate(c, canon, capital)))
-    return out
-
-
 def run_structure_campaign(campaign: Campaign = STRUCTURE_CAMPAIGN,
                            q: float = FDR_Q,
                            capital: float = STRUCTURE_CAPITAL,
                            scorer: Callable[[StructureCandidate], dict[str, Any]] | None = None,
                            candidates: Sequence[StructureCandidate] | None = None,
-                           workers: int | None = None,
                            ) -> list[dict[str, Any]]:
     """Enumerate the template x ticker structure batch, run each engine overlay,
     score by the HAC t-stat's asymptotic p, and judge the whole batch by BY.
@@ -1098,41 +1048,47 @@ def run_structure_campaign(campaign: Campaign = STRUCTURE_CAMPAIGN,
     FDR/flagging path without the engine. `candidates` overrides the enumerated batch (the
     menu-walker proposer passes its proposed cells); None = the committed cross-section.
     NOTE: the e-LOND pass here is PER-BATCH (the head-of-stream view); the proposer re-judges
-    over the lifetime stream via judge_against_lifetime_stream before recording (#3b).
-
-    `workers` (or the STRUCTURE_CAMPAIGN_WORKERS env var) parallelizes the per-ticker engine passes
-    across a bounded process pool — default 1 = serial. Result-identical either way; the pool size
-    caps peak memory at that many tickers (see _score_ticker_cells / _resolve_campaign_workers)."""
+    over the lifetime stream via judge_against_lifetime_stream before recording (#3b)."""
+    from validate_dailies import SCALE_TOL
     cands = enumerate_structure_candidates(campaign) if candidates is None else list(candidates)
     if scorer is not None:
         rows = [scorer(c) for c in cands]
     else:
-        # Score ticker-by-ticker via _score_ticker_cells — each ticker's store loads ONCE and is
-        # freed before the next, so the campaign holds at most ONE ticker's data PER WORKER, not all
-        # seven. Holding all seven canonical stores at once already sat near a CI runner's ~7GB
-        # ceiling; the far-DTE calendar backfill tipped it over (the OOM that killed the edge-search
-        # bucket). The per-ticker units run either serially OR across a BOUNDED process pool
-        # (`workers` / STRUCTURE_CAMPAIGN_WORKERS) — the per-ticker engine passes are the campaign's
-        # dominant cost. RESULT-IDENTICAL either way: each cell is scored against its own ticker's
-        # data (scoring is order-independent), rows carry their enumeration index, and the parent
-        # reassembles them in ENUMERATION order — exactly what the e-LOND/BY stream below reads, so
-        # the verdict is byte-for-byte what a serial hold-one-ticker pass produced. The pool size
-        # caps peak memory at `workers` tickers, preserving the OOM fix's per-ticker bound.
+        # Score TICKER-BY-TICKER, loading each ticker's store(s) ONCE and freeing them before the
+        # next ticker — so the campaign holds at most ONE ticker's data at a time, not all seven.
+        # Holding all seven canonical stores at once already sat near a CI runner's ~7GB ceiling; the
+        # far-DTE calendar backfill (even loaded at min_dte=60, _load_ticker_data) tipped it over — the
+        # OOM that killed the edge-search bucket. Per-ticker loading caps the peak at one ticker's
+        # canonical store (plus its far-augmented calendar store) and frees it on the way out.
+        # RESULT-IDENTICAL: each cell is scored against its own ticker's data (scoring is order-
+        # independent), and the rows are reassembled in ENUMERATION order — exactly what the e-LOND/BY
+        # stream below reads — so the verdict is byte-for-byte what a hold-everything pass produced. A
+        # ticker's price/chain SCALE is DTE-window-independent, so the canonical load's ratio gates
+        # every one of that ticker's cells; the far-augmented store is loaded lazily, only if the
+        # ticker has a TERM cell, and reused across any such cells.
+        scored: dict[int, dict[str, Any]] = {}
         by_ticker: dict[str, list[tuple[int, StructureCandidate]]] = {}
         for i, c in enumerate(cands):
             by_ticker.setdefault(c.ticker, []).append((i, c))
-        tasks = [(tkr, cells, capital) for tkr, cells in by_ticker.items()]
-        n_workers = _resolve_campaign_workers(workers, len(tasks))
-        if n_workers <= 1:
-            results = [_score_ticker_cells(t) for t in tasks]
-        else:
-            import multiprocessing as mp
-            with mp.get_context('fork').Pool(n_workers) as pool:
-                results = pool.map(_score_ticker_cells, tasks)
-        scored: dict[int, dict[str, Any]] = {}
-        for ticker_rows in results:
-            for i, row in ticker_rows:
-                scored[i] = row
+        for tkr, cells in by_ticker.items():
+            canon = _load_ticker_data(tkr, include_far=False)
+            ratio = _ticker_scale_ratio(canon)
+            bad = round(ratio, 3) if (ratio is not None and abs(ratio - 1.0) > SCALE_TOL) else None
+            far_store: tuple[Any, list[str], list[float]] | None = None
+            for i, c in cells:
+                if bad is not None:
+                    scored[i] = {'phase': 'structure', 'template': c.template, 'overlay': c.overlay,
+                                 'ticker': c.ticker,
+                                 'params': c.params_dict(), 'predicted_sign': c.predicted_sign,
+                                 'measurement_invalid': True, 'scale_ratio': bad,
+                                 't_stat_newey_west': None, 'sign_ok': False, 'p_value': None}
+                elif _uses_far_chain(c.overlay):
+                    if far_store is None:
+                        far_store = _load_ticker_data(tkr, include_far=True)
+                    scored[i] = structure_kill_gate(c, far_store, capital)
+                else:
+                    scored[i] = structure_kill_gate(c, canon, capital)
+            canon = far_store = None  # drop this ticker's stores before loading the next
         rows = [scored[i] for i in range(len(cands))]
     # e-LOND is the FDR CONTROL OF RECORD (#3b, docs/prereg_fdr_budget.md): the
     # campaign's cells form the stream in enumeration order; a cell is FLAGGED (a

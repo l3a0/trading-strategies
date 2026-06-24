@@ -1359,42 +1359,6 @@ class TestStructurePhase:
         assert elond[0]['ticker'] == 'AAA' and elond[0]['template'] == 'short_call_25'
         assert all(r['e_value'] == 0.0 for r in invalid)
 
-    def test_per_ticker_pool_is_result_identical_to_serial(self, monkeypatch) -> None:
-        """The per-ticker process pool (workers>1) must produce a BYTE-IDENTICAL result to the
-        serial path (workers=1) — the core correctness claim of the parallelization. Each ticker is
-        scored on its own data, rows carry their enumeration index, and the parent reassembles the
-        stream in order before the (serial) e-LOND/BY. Exercised with fast deterministic fakes for
-        the engine: the `fork` pool inherits the monkeypatched module state, so the workers run the
-        same fakes — no engine, no data, no 180-DTE backfill needed."""
-        import edge_search as es
-
-        def fake_load(ticker, end=es.STRUCTURE_END, include_far=False):
-            return (ticker, [ticker], [1.0])   # a trivial store stand-in (the fakes never read it)
-
-        def fake_scale(loaded):
-            return 1.0                          # always scale-valid (exercise the scored path)
-
-        def fake_gate(cand, loaded, capital=es.STRUCTURE_CAPITAL):
-            # a deterministic per-cell t from the (ticker, template) coordinates — process- and
-            # order-independent, so serial and parallel must agree exactly.
-            t = float((len(cand.ticker) * 7 + len(cand.template) * 3) % 11 - 5) + 0.25
-            return {'phase': 'structure', 'template': cand.template, 'overlay': cand.overlay,
-                    'ticker': cand.ticker, 'params': cand.params_dict(),
-                    'predicted_sign': cand.predicted_sign, 'n_days': 100,
-                    't_stat_newey_west': t, 'nw_lag': 3, 'sharpe': t / 2,
-                    'ann_excess_return_pct': t, 'sign_ok': bool(t > 0),
-                    'p_value': round(_asymptotic_p(t, cand.predicted_sign), 4)}
-
-        monkeypatch.setattr(es, '_load_ticker_data', fake_load)
-        monkeypatch.setattr(es, '_ticker_scale_ratio', fake_scale)
-        monkeypatch.setattr(es, 'structure_kill_gate', fake_gate)
-
-        serial = run_structure_campaign(workers=1)
-        parallel = run_structure_campaign(workers=4)          # min(4, 7 tickers) -> a real fork pool
-        assert parallel == serial                             # byte-identical, incl. e-LOND/BY verdicts
-        assert len(serial) == len(STRUCTURE_TEMPLATES) * len(STRUCTURE_SEARCH)   # all 56 cells scored
-        assert all(r['t_stat_newey_west'] is not None for r in serial)          # the scored path ran
-
     def test_measurement_invalid_does_not_shrink_by_denominator(self) -> None:
         """A cell flagged measurement_invalid must still consume a BY comparison
         (p=None counts toward n), so flagging it can never loosen the rejection bar
