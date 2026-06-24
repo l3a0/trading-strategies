@@ -1,17 +1,19 @@
-# The LLM proposer author — design (item 4, not built)
+# The LLM proposer author — design (item 4, WIRED in Phase B)
 
 ## What this is
 
-The read-gate apparatus (see [read_gate.md](read_gate.md)) is feature-complete through the
-kernel-seal container integration. The last piece is **item 4: replacing the deterministic
-menu-walker proposer with a real LLM author** — a temperature-0 Claude call that reads the
-scrubbed scoreboard + the grammar and proposes coordinate-only `(overlay, ticker, params,
-predicted_sign)` cells.
+The read-gate apparatus (see [read_gate.md](read_gate.md)) is feature-complete. The last piece —
+**item 4: replacing the deterministic menu-walker proposer with a real LLM author** — is now WIRED
+(Phase B, `ClaudeProposer`): a Claude call (Opus 4.8: adaptive thinking + `effort`, no temperature)
+that reads the scrubbed scoreboard + the grammar and proposes coordinate-only `(overlay, ticker,
+params, predicted_sign)` cells.
 
-This doc records the design **before any of it is built**. Nothing here activates a model. The
-standing rule holds: no LLM author runs until the gates below are met and the owner explicitly
-approves. It exists so the two consequential decisions — *where the model call lives* and *how
-the prompt is constructed* — are settled on the record, not improvised at wiring time.
+This doc records the design and its wiring. The client (`ClaudeProposer`) is built and tested, but
+**OFF by default** — it activates only when `EDGE_SEARCH_LLM_MODEL` is set (the owner's deliberate
+per-run opt-in). The standing rule holds even when activated: a survivor never auto-promotes
+(promotion is CLOSED, escalating to manual pre-registration) and survivors stay exploratory until
+Phase C is real. The doc keeps the two consequential decisions — *where the model call lives* and
+*how the prompt is constructed* — on the record.
 
 ## The simplification: the container is off the LLM path
 
@@ -187,25 +189,32 @@ foil that justifies the interlocks — none of which is a container.
   model's self-report. The *container*
   must-dos (digest pin, seccomp, a round timeout, `--user`, and making the `read-gate-container` CI job a required check) are moot — the container was removed; they
   would only matter if a code-proposer were ever rebuilt (see *The simplification* above).
-- **Phase B — the model wiring (owner's explicit go).** Only the live API call remains: the
-  `anthropic` client that takes `build_proposer_prompt`'s output, hashes it (`prompt_sha`), calls
-  Claude at temperature 0, parses the coordinate-only JSON, and captures the real `model_served`
-  into `record_provenance` — activating `_resolve_llm_author`. The prompt builder and its seal are
-  already built and tested (Phase A); Phase B only wraps them in the API client. Gated on Phase A
-  and on the owner accepting the seal reframe above.
+- **Phase B — the model wiring (DONE; owner's go 2026-06-24).** The `anthropic` client
+  (`ClaudeProposer`) takes `build_proposer_prompt`'s output, hashes it (`prompt_sha`), calls Claude
+  (Opus 4.8 default: adaptive thinking + `effort`, **no `temperature`** — the 4.8 family rejects it,
+  so the recorded `temperature` is a documented `0.0` sentinel; the reconstructable identity is
+  `model_served` + `prompt_sha`), parses the coordinate-only JSON (`_parse_proposal_array` —
+  tolerant of a code fence, RAISES on an unrecoverable reply rather than silently proposing
+  nothing), and captures the SERVED `model_served` (the API's `response.model`, not the alias) into
+  `record_provenance`. It is wired into `_resolve_llm_author` but **OFF by default**: it activates
+  only when `EDGE_SEARCH_LLM_MODEL` is set (the owner's per-run opt-in; `ANTHROPIC_API_KEY` in the
+  environment + `anthropic` installed — an OPTIONAL dependency, lazily imported, not in
+  requirements.txt). The prompt builder and its seal were already built and tested (Phase A); Phase
+  B wraps them in the API client. Pinned by `TestClaudeProposer` (a stub client — no SDK, no key, no
+  network).
 - **Phase C — confirmatory trust (research-blocked).** The time-axis holdout. Until it is
   operative, LLM survivors stay exploratory.
 
 ## What must not happen
 
-- No LLM author runs until Phase A's gates are met and the owner approves. `_resolve_llm_author()`
-  returns `None` today, so `propose --llm` fails closed on **the (b)-only no-model check**:
-  `_assert_llm_boundary` refuses unless a model author is configured. The sandbox-specific
-  precondition (a) — *the engine is not importable from cwd* — was **removed with the container** (it
-  was true only inside the sandbox, so against an in-process oracle-side LLM it would have **refused
-  the very thing the decision wants to run**). When a model is wired, the fail-closed seal is the
-  oracle-side correctness argument: the prompt is asserted numberless, the output is coordinate-only
-  and grammar-gated, and every score is recorded — not engine absence.
+- No LLM author runs unless the owner activates it. `_resolve_llm_author()` returns `None` UNLESS
+  `EDGE_SEARCH_LLM_MODEL` is set, so by default `propose --llm` still fails closed on **the (b)-only
+  no-model check**: `_assert_llm_boundary` refuses unless a model author is activated. The
+  sandbox-specific precondition (a) — *the engine is not importable from cwd* — was **removed with
+  the container** (it was true only inside the sandbox, so against an in-process oracle-side LLM it
+  would have **refused the very thing the decision wants to run**). When activated, the fail-closed
+  seal is the oracle-side correctness argument: the prompt is asserted numberless, the output is
+  coordinate-only and grammar-gated, and every score is recorded — not engine absence.
 - The model never sees a result statistic, and never emits anything but a gated coordinate.
 - A survivor escalates to manual pre-registration, never back into automated proposal — and never
   to a confirmatory claim until Phase C.

@@ -61,6 +61,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from datetime import datetime
@@ -1899,42 +1900,143 @@ def score_and_record(
     return reply
 
 
-# --- the read-gate CLI refusal (interlock #5: no LLM author runs until one is wired) ---
-# `--llm` is the switch that WOULD select the LLM author. Until item 4 wires a real model
-# (the in-process Claude `LLMProposer`, oracle-side), this guard makes activating it FAIL
-# CLOSED. The seal for that future author is the oracle-side correctness argument — a
-# numberless prompt, coordinate-only output, every score recorded (docs/llm_proposer_plan.md,
-# docs/read_gate.md) — NOT a sandbox; the container/transport path was removed (it had sealed
-# an untrusted-CODE proposer, which the coordinate-emitting LLM never was).
+# --- the read-gate LLM author (Phase B): the in-process Claude client + the CLI refusal ---
+# `--llm` selects the LLM author over the menu-walker. The in-process Claude client
+# (`ClaudeProposer`, below) is now WIRED, but it is OFF BY DEFAULT: it activates only when
+# EDGE_SEARCH_LLM_MODEL is set (the owner's deliberate per-run opt-in), so with that var unset
+# `_assert_llm_boundary` still FAILS CLOSED. The seal for the wired author is the oracle-side
+# correctness argument — a numberless prompt, coordinate-only output, every score recorded
+# (docs/llm_proposer_plan.md, docs/read_gate.md) — NOT a sandbox; the container/transport path was
+# removed (it had sealed an untrusted-CODE proposer, which the coordinate-emitting LLM never was).
+def _parse_proposal_array(text: str) -> list[dict[str, Any]]:
+    """Parse the model's reply into the coordinate-dict list the gate consumes. The prompt asks for
+    ONLY a JSON array; this tolerates a ```json fence or surrounding whitespace, and RAISES (loudly)
+    if no array is recoverable — so a malformed reply fails the round rather than silently producing
+    zero proposals that read as 'nothing left to try'. Per-PROPOSAL validity (off-grammar, sealed,
+    sign) is the downstream grammar gate's job (`llm_propose_candidates`); this only guarantees the
+    top-level shape is a list to hand it."""
+    s = text.strip()
+    fence = re.search(r'```(?:json)?\s*(.*?)```', s, re.DOTALL)
+    if fence:
+        s = fence.group(1).strip()
+    try:
+        data = json.loads(s)
+    except json.JSONDecodeError:
+        m = re.search(r'\[.*\]', s, re.DOTALL)   # last-ditch: the outermost bracketed array
+        if m is None:
+            raise ValueError(f'LLM proposer reply has no JSON array: {text[:200]!r}')
+        data = json.loads(m.group(0))            # a still-malformed extract re-raises, loudly
+    if not isinstance(data, list):
+        raise ValueError(f'LLM proposer reply is not a JSON array: got {type(data).__name__}')
+    return data
+
+
+class ClaudeProposer:
+    """Phase B — the oracle-side, in-process LLM author: an `anthropic` client that turns the
+    NUMBERLESS prompt into COORDINATE-ONLY proposals. It is an `LLMProposer` (callable with
+    `(menu, corpus, onboarded) -> ProposalBatch`), the same slot the deterministic menu-walker
+    fills, so the gate -> score -> lifetime-judge -> record path downstream is byte-identical.
+
+    THE SEAL is `build_proposer_prompt`'s `assert_numberless` on the corpus input, which runs inside
+    the prompt build below — this object adds NO result-bearing context of its own. The model sees
+    only the grammar menu + the scrubbed corpus + the onboarded universe, and emits only
+    `{overlay, ticker, params, predicted_sign}`; `llm_propose_candidates` grammar-gates every
+    proposal afterward.
+
+    NOT ACTIVATED by merely existing: `_resolve_llm_author` constructs one only when
+    EDGE_SEARCH_LLM_MODEL is set, and the API call needs ANTHROPIC_API_KEY in the environment +
+    `anthropic` installed (an OPTIONAL dependency, imported lazily in `__call__` — not in
+    requirements.txt, so the engine suite never pulls it in). Construction is cheap and import-free
+    so the gate/contract is testable with a stub `client=` and no network. Promotion stays CLOSED (a
+    survivor escalates to manual pre-registration) and survivors stay EXPLORATORY until the Phase-C
+    time-axis holdout exists — activation changes neither.
+
+    Model defaults to Claude Opus 4.8. The 4.8 family takes NO `temperature` parameter (sending one
+    is a 400) — depth/exploration is governed by adaptive thinking + `effort` (default `max`, the
+    most thorough reasoning — hypothesis quality matters more than per-round cost here), so none is
+    sent. The frozen wire contract still carries a `temperature` field (REQUIRED_MODEL_FIELDS), so
+    the recorded value is a documented sentinel (`0.0`); the reconstructable identity is
+    `model_served` + `prompt_sha`."""
+
+    def __init__(self, model: str = 'claude-opus-4-8', *, client: Any | None = None,
+                 max_proposals: int = 16, effort: str = 'max', max_tokens: int = 16000) -> None:
+        self.model = model
+        self._client = client          # injectable for tests; None -> lazily build anthropic.Anthropic()
+        self.max_proposals = max_proposals
+        self.effort = effort
+        self.max_tokens = max_tokens
+
+    def _make_client(self) -> Any:
+        if self._client is not None:
+            return self._client
+        import anthropic   # optional dependency — only needed when an LLM round actually runs
+        return anthropic.Anthropic()   # resolves ANTHROPIC_API_KEY / profile from the environment
+
+    def __call__(self, menu: list[StructureTemplate], corpus: list[dict[str, Any]],
+                 onboarded: tuple[str, ...]) -> ProposalBatch:
+        # build_proposer_prompt runs the numberless SEAL on `corpus` (raises before any API call if
+        # a raw answer-key row slipped in). No result statistic is in scope here.
+        prompt = build_proposer_prompt(menu, corpus, onboarded, max_proposals=self.max_proposals)
+        prompt_sha = hashlib.sha256(prompt.encode('utf-8')).hexdigest()
+        resp = self._make_client().messages.create(
+            model=self.model,
+            max_tokens=self.max_tokens,
+            thinking={'type': 'adaptive'},          # 4.8: adaptive only; NO temperature/sampling params
+            output_config={'effort': self.effort},  # low|medium|high|xhigh|max
+            messages=[{'role': 'user', 'content': prompt}],
+        )
+        if getattr(resp, 'stop_reason', None) == 'refusal':
+            raise RuntimeError(
+                f'LLM proposer refused (stop_details={getattr(resp, "stop_details", None)}); '
+                'no proposals produced')
+        text = ''.join(b.text for b in resp.content if getattr(b, 'type', None) == 'text')
+        return ProposalBatch(
+            tuple(_parse_proposal_array(text)),
+            model_requested=self.model,
+            model_served=resp.model,      # the EXACT served snapshot the API reports — the audit id
+            temperature=0.0,              # sentinel: the 4.8 family sends no temperature (see class docstring)
+            prompt_sha=prompt_sha,
+        )
+
+
 def _resolve_llm_author() -> LLMProposer | None:
-    """The configured LLM author, or None if none is wired. Item 4 (the real Claude client)
-    is a LATER PR: there is no model yet, so this returns None and `--llm` fails closed. When
-    item 4 lands it returns the gated `LLMProposer`, and the oracle-side activation gate
-    (numberless prompt + coordinate-only output + recorded) governs whether it may run."""
-    return None
+    """The activated LLM author, or None if none is activated (the default — `--llm` fails closed).
+    Phase B wires the in-process Claude client (`ClaudeProposer`); set the EDGE_SEARCH_LLM_MODEL
+    environment variable to a model id to activate it. This is the owner's deliberate per-run opt-in
+    (ANTHROPIC_API_KEY must also be in the environment and `anthropic` installed). With the var UNSET
+    this returns None, so the default — no LLM runs, the menu-walker is the proposer — is unchanged.
+    Activation does not relax the standing limits: promotion stays CLOSED (a survivor escalates to
+    manual pre-registration) and survivors stay EXPLORATORY until the Phase-C time-axis holdout
+    exists (docs/llm_proposer_plan.md)."""
+    import os
+    model = os.environ.get('EDGE_SEARCH_LLM_MODEL')
+    if not model:
+        return None
+    return ClaudeProposer(model=model)
 
 
 def _assert_llm_boundary(author: LLMProposer | None = None) -> LLMProposer:
-    """FAIL CLOSED unless a model author is configured, returning the author when one is.
+    """FAIL CLOSED unless a model author is activated, returning the author when one is.
 
-    Precondition — A MODEL AUTHOR IS ACTUALLY CONFIGURED: `author` (or `_resolve_llm_author()`
-    when not supplied) must be a real `LLMProposer`. Item 4 (the Claude client) is a later PR,
-    so today there is no model and `--llm` fails closed here — the current backstop that keeps
-    NO LLM running.
+    Precondition — A MODEL AUTHOR IS ACTUALLY ACTIVATED: `author` (or `_resolve_llm_author()` when
+    not supplied) must be a real `LLMProposer`. The Claude client is now wired (`ClaudeProposer`),
+    but it is OFF unless EDGE_SEARCH_LLM_MODEL is set — so with that var unset `_resolve_llm_author()`
+    returns None and `--llm` still fails closed here, the backstop that keeps NO LLM running by
+    default.
 
     On failure: print a message (pointing at docs/llm_proposer_plan.md) to stderr and
-    `raise SystemExit(2)`. When item 4 wires the in-process author, the load-bearing seal is the
-    oracle-side correctness argument — a numberless prompt, coordinate-only output, every score
-    recorded — NOT engine-absence. The sandbox-specific 'engine not importable from cwd' check
-    went away with the container/transport (docs/llm_proposer_plan.md, docs/read_gate.md)."""
+    `raise SystemExit(2)`. For a wired-and-activated author the load-bearing seal is the oracle-side
+    correctness argument — a numberless prompt, coordinate-only output, every score recorded —
+    NOT engine-absence. The sandbox-specific 'engine not importable from cwd' check went away with
+    the container/transport (docs/llm_proposer_plan.md, docs/read_gate.md)."""
     import sys
     resolved = author if author is not None else _resolve_llm_author()
     if resolved is None:
         print(
             'REFUSED: --llm cannot activate an LLM proposer here: no model author is '
-            'configured (the LLM client is a later PR — see docs/llm_proposer_plan.md). When '
-            'one is wired, the oracle-side activation gate governs it: a numberless prompt, '
-            'coordinate-only output, and every score recorded.',
+            'configured (set EDGE_SEARCH_LLM_MODEL to activate the wired Claude client — see '
+            'docs/llm_proposer_plan.md). When activated, the oracle-side gate governs it: a '
+            'numberless prompt, coordinate-only output, and every score recorded.',
             file=sys.stderr,
         )
         raise SystemExit(2)
@@ -1958,22 +2060,24 @@ def main() -> None:
                   f'{IDEA_LEDGER_PATH} (deduped; e-LOND judged over the lifetime stream)')
         return
     if len(sys.argv) > 1 and sys.argv[1] == 'propose':
-        # Phase 1: the deterministic menu-walker proposer (no LLM). Default is a cheap
-        # PREVIEW (propose untried cells, run nothing); --run scores them; --record records.
+        # Default proposer is the deterministic menu-walker (no LLM); `--llm` selects the wired
+        # Claude author (`ClaudeProposer`), which is OFF unless EDGE_SEARCH_LLM_MODEL is set.
+        # Default is a cheap PREVIEW (propose untried cells, run nothing); --run scores them;
+        # --record records.
         record = '--record' in sys.argv
         run = record or '--run' in sys.argv
+        author = None
         if '--llm' in sys.argv:
-            # The switch that WOULD select the LLM author over the menu-walker. It is
-            # FAIL-CLOSED: `_assert_llm_boundary` refuses (exits non-zero) unless the engine
-            # is unimportable from cwd AND a model author is configured — neither holds from
-            # the engine checkout, and item 4 (the model client) is a later PR. So this raises
-            # SystemExit before any author runs; reaching run_proposer_round below means the
-            # menu-walker path (author=None).
-            _assert_llm_boundary()
-        print(f'Menu-walker proposer (deterministic, no LLM); grammar = '
-              f'{grid_universe_size()} templates'
+            # FAIL-CLOSED: `_assert_llm_boundary` exits non-zero unless a model author is activated
+            # (EDGE_SEARCH_LLM_MODEL set). When activated it returns the `ClaudeProposer`, passed to
+            # run_proposer_round below; the oracle-side seal (numberless prompt + coordinate-only
+            # output + recorded) governs it. With the var unset this raises SystemExit before any
+            # author runs.
+            author = _assert_llm_boundary()
+        kind = 'LLM (Claude)' if author is not None else 'Menu-walker (deterministic, no LLM)'
+        print(f'{kind} proposer; grammar = {grid_universe_size()} templates'
               f'{" — running engine, a while cold ..." if run else " (preview)"}', flush=True)
-        res = run_proposer_round(run=run, record=record)
+        res = run_proposer_round(run=run, record=record, author=author)
         print(f'proposed {res["proposed"]} untried cell(s) across onboarded search tickers')
         if res['needs_onboard']:
             print(f'  needs onboard (NOT run — human-gated fetch): {res["needs_onboard"]}')
