@@ -58,11 +58,13 @@ from edge_search import (
     _cand_key,
     _data_lineage_hash,
     _ledger_key,
+    _render_grammar_menu,
     _resolve_llm_author,
     _vol_confound,
     benjamini_yekutieli,
     build_cycle_data,
     build_proposer_corpus,
+    build_proposer_prompt,
     enumerate_candidates,
     enumerate_grammar_templates,
     enumerate_structure_candidates,
@@ -910,6 +912,134 @@ class TestProposerCorpus:
         assert len(corpus) == 1
         assert 'p_value' not in corpus[0] and 'statistic' not in corpus[0]
         assert corpus[0]['verdict'] == 'KILLED' and corpus[0]['template'] == 'straddle'
+
+
+class TestProposerPrompt:
+    """The oracle-side PROMPT BUILDER (`build_proposer_prompt`) — the load-bearing seal of the
+    in-process LLM-author design (docs/llm_proposer_plan.md; no model wired yet). Always-run,
+    synthetic — no engine, no datasets. The seal is a STRUCTURAL `assert_numberless` on the
+    scrubbed-corpus INPUT (raw answer-key rows carry banned keys -> fire) plus build-only-from-
+    allow-listed-sources — NOT a scan of the assembled string (a key-name guard no-ops on a
+    string; a banned-NAME substring scan false-positives, 'statistic' inside 't-statistic')."""
+
+    @staticmethod
+    def _raw_ledger_row(template='short_vol', ticker='MSFT'):
+        # a row as it lives in idea_ledger.jsonl — carries the answer key.
+        return {'phase': 'structure', 'template': template, 'ticker': ticker,
+                'params': {'target_delta': 0.25, 'dte': 30}, 'predicted_sign': 1,
+                'statistic_kind': 't_nw', 'statistic': 7.654321, 'p_value': 0.0123456,
+                't_stat_newey_west': 7.654321, 'elond_survivor': False, 'by_survivor': False,
+                'measurement_invalid': False, 'fdr_q': 0.10, 'end': '2026-06-06',
+                'data_lineage_hash': 'abcd1234'}
+
+    def _scrubbed(self, **kw):
+        return build_proposer_corpus([self._raw_ledger_row(**kw)])
+
+    # --- the seal: numberless on the answer-key-sourced INPUT ------------------
+
+    def test_raw_ledger_rows_as_corpus_fire_numberless(self) -> None:
+        # THE leak test: the #1 builder bug is passing load_idea_ledger() (raw, with t-stats)
+        # where build_proposer_corpus() (scrubbed) belongs. Raw rows carry banned KEYS, so the
+        # builder RAISES before assembling anything — never silently shipping a number to a model.
+        with pytest.raises(ValueError, match='numberless'):
+            build_proposer_prompt(enumerate_grammar_templates(),
+                                  [self._raw_ledger_row()], ('MSFT',))
+
+    def test_one_banned_key_slipping_an_otherwise_scrubbed_row_still_fires(self) -> None:
+        # defense-in-depth: a single banned field NAME on an otherwise-scrubbed row is caught
+        # (the guard is the name, so a future SAFE_FIELDS slip cannot pass silently).
+        row = {'phase': 'structure', 'template': 'short_vol', 'ticker': 'MSFT',
+               'params': {'dte': 30}, 'predicted_sign': 1, 'verdict': 'KILLED',
+               't_stat_newey_west': 2.1}
+        with pytest.raises(ValueError, match='numberless'):
+            build_proposer_prompt(enumerate_grammar_templates(), [row], ('MSFT',))
+
+    def test_scrubbed_corpus_is_accepted(self) -> None:
+        prompt = build_proposer_prompt(enumerate_grammar_templates(), self._scrubbed(),
+                                       ('MSFT', 'SPY'))
+        assert isinstance(prompt, str) and prompt
+
+    def test_no_result_magnitude_reaches_the_prompt(self) -> None:
+        # end-to-end: a raw KILLED row's distinctive result magnitudes must NOT appear in the
+        # assembled prompt (the scrub drops them; the builder renders only the scrubbed view).
+        prompt = build_proposer_prompt(enumerate_grammar_templates(), self._scrubbed(), ('MSFT',))
+        assert '7.654321' not in prompt and '0.0123456' not in prompt
+        # but the hypothesis coordinates + the one-bit verdict DO reach it
+        assert 'short_vol' in prompt and 'target_delta=0.25' in prompt and 'KILLED' in prompt
+
+    # --- the builder cannot reach the answer key by construction ---------------
+
+    def test_builder_never_references_the_answer_key(self) -> None:
+        # STRUCTURAL proof it can't read a stat: neither the builder nor its menu helper names the
+        # raw-ledger loader or any engine scorer in its bytecode. The corpus arrives as a (scrubbed)
+        # ARG; the builder loads nothing — so there is no answer key in scope to format into text.
+        names = (set(build_proposer_prompt.__code__.co_names)
+                 | set(_render_grammar_menu.__code__.co_names))
+        for forbidden in ('load_idea_ledger', 'structure_kill_gate', 'short_vol_statistics',
+                          'run_real_structure_overlay', 'load_chain_store'):
+            assert forbidden not in names
+
+    # --- the prompt is a well-formed, coordinate-only instruction --------------
+
+    def test_states_the_coordinate_only_output_contract(self) -> None:
+        prompt = build_proposer_prompt(enumerate_grammar_templates(), [], ('MSFT',))
+        for field in ('overlay', 'ticker', 'params', 'predicted_sign'):
+            assert field in prompt
+        assert 'JSON' in prompt and 'No prose' in prompt
+
+    def test_carries_the_grammar_and_economic_typing(self) -> None:
+        # the menu's overlays AND their economic families appear, so the model proposes from
+        # MECHANISM (the point of an LLM author over the menu-walker), not from results.
+        prompt = build_proposer_prompt(enumerate_grammar_templates(), [], ('MSFT',))
+        assert 'short_vol' in prompt and 'calendar' in prompt           # overlays
+        assert 'variance' in prompt and 'term' in prompt                # families (economic typing)
+
+    def test_lists_only_the_onboarded_universe(self) -> None:
+        prompt = build_proposer_prompt(enumerate_grammar_templates(), [], ('MSFT', 'SPY'))
+        assert 'MSFT' in prompt and 'SPY' in prompt
+
+    def test_states_the_proposal_cap(self) -> None:
+        prompt = build_proposer_prompt(enumerate_grammar_templates(), [], ('MSFT',), max_proposals=5)
+        assert 'up to 5' in prompt
+
+    def test_empty_corpus_still_builds(self) -> None:
+        prompt = build_proposer_prompt(enumerate_grammar_templates(), [], ('MSFT',))
+        assert 'no comparisons recorded yet' in prompt
+
+    # --- accepted boundaries (red-teamed; pinned so a future change that reopens them is visible) -
+
+    def test_malicious_caller_value_smuggle_is_the_known_accepted_boundary(self) -> None:
+        # The key-NAME guard cannot catch a number smuggled as a VALUE under a non-banned key, nor a
+        # stat baked into the verdict string — both pass assert_numberless and render. This is a
+        # NON-leak ONLY because the sanctioned corpus never has that shape: params comes from the
+        # grammar-gated StructureCandidate (grid coords only) and verdict is a literal
+        # KILLED/SURVIVED/INVALID. Pinned so a future SAFE_FIELDS widening admitting a free-text or
+        # result-derived value would visibly reopen it (this test would have to change). The seal
+        # against this vector is the upstream grammar gate + the scrub shaping the corpus, not the
+        # builder; '2.34' is not a grid value, so it can only have come from the smuggle.
+        smuggled = [{'phase': 'structure', 'template': 'short_vol', 'ticker': 'MSFT',
+                     'params': {'dte': 30, 't_stat_hint': 2.34}, 'predicted_sign': 1,
+                     'verdict': 'KILLED (t=2.34)'}]
+        prompt = build_proposer_prompt(enumerate_grammar_templates(), smuggled, ('MSFT',))
+        assert '2.34' in prompt
+
+    def test_banned_key_or_non_primitive_inside_params_still_fires(self) -> None:
+        # the seal recurses INTO params: a banned KEY or a non-primitive leaf nested there is caught
+        # (the value-smuggle above slips only because t_stat_hint is not a banned name).
+        for bad_params in ({'dte': 30, 'sharpe': 2.34}, {'dte': 30, 'x': {1, 2}}):
+            row = [{'phase': 'structure', 'template': 'short_vol', 'ticker': 'MSFT',
+                    'params': bad_params, 'predicted_sign': 1, 'verdict': 'KILLED'}]
+            with pytest.raises(ValueError, match='numberless'):
+                build_proposer_prompt(enumerate_grammar_templates(), row, ('MSFT',))
+
+    def test_doctored_template_name_cannot_inject_into_the_menu(self) -> None:
+        # _render_grammar_menu reads ONLY STRUCTURE_GRAMMAR[t.overlay] for the typing + grid — a
+        # doctored template NAME on a real overlay is discarded, so a caller passing a poisoned menu
+        # cannot inject a string into the render (and an off-menu overlay raises at construction).
+        poisoned = [StructureTemplate('short_vol__t_stat_2.54_LEAK', 'short_vol',
+                                      (('target_delta', 0.25), ('dte', 30)), 1)]
+        menu = _render_grammar_menu(poisoned)
+        assert 't_stat_2.54_LEAK' not in menu and 'short_vol' in menu
 
 
 class TestMenuWalkerProposer:

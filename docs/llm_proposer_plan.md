@@ -79,11 +79,12 @@ checks and the coordinate-only gate, which must therefore be the hardest-tested 
 
 ## The prompt builder is the leak surface — three options
 
-The correctness argument lives or dies in **whatever code constructs the model's prompt**. There
-is no such code today; writing it is part of item 4. Its inputs are already numberless —
-`enumerate_grammar_templates()` (the menu) and `build_proposer_corpus(load_idea_ledger())` (the
-scrubbed corpus; the `SAFE_FIELDS` allow-list drops every statistic). The risk is entirely in
-**where the builder runs and what it reads**:
+The correctness argument lives or dies in **whatever code constructs the model's prompt**. That
+code is now built — `build_proposer_prompt` (Phase A; no model wired) — a pure function of the
+three inputs the `LLMProposer` receives: `enumerate_grammar_templates()` (the menu),
+`build_proposer_corpus(load_idea_ledger())` (the scrubbed corpus; the `SAFE_FIELDS` allow-list
+drops every statistic), and the onboarded search tickers. It was decided (A) oracle-side; the risk
+is entirely in **where the builder runs and what it reads**:
 
 - **(A) Oracle-side builder.** Simplest, and what the three designs assumed. But the builder runs
   in the trusted process that *also* holds the raw `idea_ledger.jsonl` (with the t-stats) and the
@@ -106,17 +107,23 @@ the trusted side, where it has the full context to assemble the model's prompt, 
 constrained to the sealed box. (Option (C) was the tighter design on the seal axis; (A) was chosen
 for the construction flexibility, with the tradeoff accepted explicitly.)
 
-Because (A) has **no kernel backstop**, `assert_numberless` is now the *sole* guard on the prompt —
-so it is the load-bearing seal and must be treated as such:
+Because (A) has **no kernel backstop**, the numberless guard is the load-bearing seal — and
+building it (`build_proposer_prompt`) sharpened *where* the guard must run:
 
-- it runs on the **assembled prompt string** (the exact bytes sent to the API), not merely the
-  structured inputs;
-- the builder reads **only** `build_proposer_corpus(load_idea_ledger())` (the scrubbed projection)
-  and `enumerate_grammar_templates()` — **never** the raw `load_idea_ledger()` or any engine output;
-- it is the **most-tested code in the system** — every banned-field shape, nested/stringified
-  values, and explicitly the "read the raw ledger instead of the scrubbed corpus" mistake;
-- a leak is fail-closed: a non-numberless prompt **raises before the API call**, never silently
-  ships.
+- it runs on the structured **corpus input** (`assert_numberless(list(scrubbed_corpus))`), the
+  answer-key-sourced input, BEFORE rendering — **not** on the assembled prompt string. A key-name
+  guard is a no-op on a string (a leaf), and a banned-NAME substring scan over the bytes would
+  false-positive (`statistic` is a substring of `t-statistic` in the instructions themselves). The
+  effective catch for the #1 bug — the raw `load_idea_ledger()` rows passed in place of the scrubbed
+  `build_proposer_corpus()` — is that those rows carry banned KEYS and fail the structural assert.
+- The builder reads **only** the scrubbed corpus + `enumerate_grammar_templates()` + the grammar's
+  declared typing (`STRUCTURE_GRAMMAR`) — **never** the raw `load_idea_ledger()` or any engine
+  output, pinned structurally by a `co_names` test (the answer key is not even in scope to format).
+- It is among the **most-tested code in the system** (`TestProposerPrompt`): raw-rows-fire, a single
+  banned key slipping the scrub, the no-result-magnitude-reaches-the-prompt end-to-end, and the
+  answer-key-unreachable-by-construction proof.
+- A leak is fail-closed: a non-numberless corpus **raises before any prompt is assembled**, never
+  silently ships.
 
 Option (C) remains recorded as the tighter fallback should that single guard ever prove
 insufficient — but note it presupposes putting a sandboxed prompt-builder *back* in the path (see
@@ -172,16 +179,20 @@ foil that justifies the interlocks — none of which is a container.
 - **Phase A — oracle-side gates (buildable now, activates nothing).** What actually gates the live
   model, all on the trusted side: the **numberless seal** hardened into the sole prompt guard
   (`assert_numberless` + the completed ban-set + the leaf-type guard — done in #82); the
-  **activation gate simplified** to its no-model backstop (the sandbox-specific engine-absent
-  precondition was removed with the container — see *What must not happen*); and the oracle stamping
-  the **authoritative `model_served`** rather than trusting the model's self-report. The *container*
+  **prompt builder** (`build_proposer_prompt` — the numberless prompt assembled from the menu +
+  scrubbed corpus + onboarded tickers, sealed by `assert_numberless` on the corpus input, pinned by
+  `TestProposerPrompt`); the **activation gate simplified** to its no-model backstop (the
+  sandbox-specific engine-absent precondition was removed with the container — see *What must not
+  happen*); and the oracle stamping the **authoritative `model_served`** rather than trusting the
+  model's self-report. The *container*
   must-dos (digest pin, seccomp, a round timeout, `--user`, and making the `read-gate-container` CI job a required check) are moot — the container was removed; they
   would only matter if a code-proposer were ever rebuilt (see *The simplification* above).
-- **Phase B — the model wiring (owner's explicit go).** The oracle-side Claude author (the
-  `anthropic` client, the numberless prompt + `prompt_sha`, real `model_served` capture into
-  `record_provenance`), activating `_resolve_llm_author`. The prompt builder is **(A), oracle-side
-  (decided)**, so `assert_numberless` on the assembled prompt is the load-bearing seal and is built
-  + tested first. Gated on Phase A and on the owner accepting the seal reframe above.
+- **Phase B — the model wiring (owner's explicit go).** Only the live API call remains: the
+  `anthropic` client that takes `build_proposer_prompt`'s output, hashes it (`prompt_sha`), calls
+  Claude at temperature 0, parses the coordinate-only JSON, and captures the real `model_served`
+  into `record_provenance` — activating `_resolve_llm_author`. The prompt builder and its seal are
+  already built and tested (Phase A); Phase B only wraps them in the API client. Gated on Phase A
+  and on the owner accepting the seal reframe above.
 - **Phase C — confirmatory trust (research-blocked).** The time-axis holdout. Until it is
   operative, LLM survivors stay exploratory.
 

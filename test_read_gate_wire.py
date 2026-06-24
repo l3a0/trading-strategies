@@ -183,6 +183,26 @@ class TestLeafTypeGuard:
         assert assert_numberless(
             {'a': 'str', 'b': 1, 'c': 2.5, 'd': True, 'e': None, 'f': [1, 'x', None]}) is None
 
+    def test_a_primitive_subclass_leaf_is_rejected_exact_type(self):
+        # numpy.float64 subclasses float, so an isinstance check would wave it through (the
+        # red-team's GAP 1) — the EXACT-type check rejects it, restoring the guard's JSON-only
+        # self-sufficiency. A plain float subclass stands in for np.float64 (no numpy import in the
+        # dependency-free contract test); native floats of the same value still pass.
+        class _NpFloat(float):
+            pass
+        with pytest.raises(ValueError, match='non-primitive leaf'):
+            assert_numberless({'params': {'target_delta': _NpFloat(2.13)}})
+        assert assert_numberless({'params': {'target_delta': 2.13}}) is None
+
+    def test_a_non_str_dict_key_is_rejected(self):
+        # a banned name on a bytes (or int) key slips `BANNED_RESULT_FIELDS & keys()` — str never
+        # equals bytes (the red-team's GAP 2). JSON object keys are strings, so a non-str key is
+        # rejected outright, so a banned name cannot hide on one.
+        with pytest.raises(ValueError, match='non-string key'):
+            assert_numberless({b't_stat_newey_west': 2.1})
+        with pytest.raises(ValueError, match='non-string key'):
+            assert_numberless({'corpus': [{42: 'x'}]})
+
 
 class TestErrorMessage:
     """The raise must name the offending field and a path, so a leak in CI is debuggable."""
