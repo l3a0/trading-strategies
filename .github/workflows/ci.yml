@@ -183,16 +183,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # `args` is per-bucket pytest flags. edge-search runs three full-campaign engine passes
-        # (re-tag + the 56-cell structure batch + validate_dailies); `-n auto --dist loadscope`
-        # spreads those CLASSES across the runner's cores so they run concurrently (loadscope keeps
-        # each class — and its module-scoped campaign fixture — on ONE worker, so the campaign runs
-        # once per class, not once per test). The tests are xdist-safe: ledger writes are tmp_path-
-        # scoped and state changes go through monkeypatch (process-isolated per worker).
+        # edge-search's long pole is the 56-cell structure campaign. It parallelizes INTERNALLY via a
+        # per-ticker process pool (STRUCTURE_CAMPAIGN_WORKERS, set below) — NOT xdist. xdist's
+        # class-level parallelism (the re-tag campaign + validate_dailies running CONCURRENTLY with
+        # the structure campaign, each holding a chain store) COMPOUNDS with the campaign pool and
+        # OOMs the ~7GB runner — both `args="-n auto"` × workers=4 and ×3 did. So edge-search runs
+        # serial at the bucket level and lets the campaign pool be the ONE parallelism layer: its peak
+        # is then just the pool's in-flight tickers, with no concurrent store-loader alongside.
+        # `args` stays a per-bucket pytest-flags knob (unused now; kept for the other buckets).
         include:
-          - {bucket: vol-premium,   files: "test_vol_premium.py", args: ""}
-          - {bucket: edge-search,   files: "test_edge_search.py test_validate_dailies.py test_read_gate_wire.py", args: "-n auto --dist loadscope"}
-          - {bucket: trend-explore, files: "test_trend_gate.py test_explorations.py", args: ""}
+          - {bucket: vol-premium,   files: "test_vol_premium.py", args: "", campaign_workers: "1"}
+          - {bucket: edge-search,   files: "test_edge_search.py test_validate_dailies.py test_read_gate_wire.py", args: "", campaign_workers: "2"}
+          - {bucket: trend-explore, files: "test_trend_gate.py test_explorations.py", args: "", campaign_workers: "1"}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -237,6 +239,14 @@ jobs:
       - name: Verify chain-data checksum
         run: sha256sum -c data_checksums.sha256
       - name: Experiment, scout & edge-search tests (${{ matrix.bucket }})
+        # STRUCTURE_CAMPAIGN_WORKERS parallelizes the 56-cell structure campaign's per-ticker engine
+        # passes — the bucket's long pole — across N processes (edge-search only). Each worker holds
+        # ONE ticker's store, so N also caps peak memory in tickers; **dial DOWN if the runner OOMs**
+        # (the per-ticker design exists because holding all stores at once OOM'd a ~7GB runner).
+        # Result-identical to serial (pinned by TestStructurePhase::
+        # test_per_ticker_pool_is_result_identical_to_serial).
+        env:
+          STRUCTURE_CAMPAIGN_WORKERS: ${{ matrix.campaign_workers }}
         run: pytest ${{ matrix.files }} -v ${{ matrix.args }}
 
   # Required-check gate: the `main` ruleset requires a status check literally named
