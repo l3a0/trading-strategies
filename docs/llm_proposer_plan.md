@@ -15,10 +15,10 @@ the prompt is constructed* — are settled on the record, not improvised at wiri
 
 ## The simplification: the container is off the LLM path
 
-The container/transport stack — `oracle_server.py`, `proposer_client.py`, `Dockerfile.proposer`,
-`launch_in_container`, `CONTAINER_SEAL_FLAGS`, the round timeout — was built to cage an
-**untrusted *code* proposer**: a process running in the sandbox that could `import edge_search`
-and recompute a statistic privately. The coordinate-emitting LLM is **not** that. It plugs into
+The container/transport stack — a trusted NDJSON server, an engine-free proposer client, a sealed
+container image, and their launch/seal helpers (all now removed; recoverable from git history) —
+was built to cage an **untrusted *code* proposer**: a process running in the sandbox that could
+`import edge_search` and recompute a statistic privately. The coordinate-emitting LLM is **not** that. It plugs into
 `run_proposer_round` as an in-process `LLMProposer` (`author=`), the same slot the deterministic
 menu-walker fills — it has no engine, no filesystem, no code execution; it is an API call that
 returns text. **So the model does not run in the container, and the transport is not on its path.**
@@ -28,32 +28,34 @@ What seals this LLM is *information*, not isolation (next section). That has thr
 - The pieces that carry over to the LLM are the **in-process, oracle-side** ones: the recording
   seam (`score_and_record`), the numberless guard (`assert_numberless` / `BANNED_RESULT_FIELDS`),
   the scrubbed corpus (`build_proposer_corpus`), the closed grammar, and the lifetime e-LOND ledger.
-- The container/transport (`oracle_server` / `proposer_client` / the image / `launch_in_container`)
-  is **optional, dormant infrastructure** for a hypothetical future *code*-proposer — correct and
-  tested, but not used by the live model and **not a gate on it**.
-- So the "container must-dos" (digest pin, seccomp, the timeout, `--user`) are **not** Phase-B
+- The container/transport (a trusted NDJSON server + an engine-free proposer client + the sealed
+  image) was **built, then removed** — it cages a *code*-proposer the decided LLM never is, so it
+  never sat on the live model's path. It stays recoverable from git history as the blueprint should
+  a code-running proposer ever be wanted.
+- So the "container must-dos" (digest pin, seccomp, a round timeout, `--user`, and making the `read-gate-container` CI job a required check) are **not** Phase-B
   gates. They harden a path the decided LLM never takes. They were mis-listed as gates earlier
   (a holdover from a rejected design where the proposer made the API call from inside a container
-  with a single-host egress allow-list); that design was routed around.
+  with a single-host egress allow-list); that design was routed around, and the container with it.
 
-## Where the Claude call lives: oracle-side
+## Where the Claude call lives: oracle-side, in-process
 
-Three independently-designed architectures converged on the same answer, and an adversarial pass
-confirmed it: **the API call is issued by the trusted oracle process** (the one that already
-holds the engine, chains, ledger, and network), not from inside the sandboxed proposer.
+**The API call is issued by the trusted oracle process** — the one that already holds the engine,
+chains, ledger, and network — as an in-process `LLMProposer` plugged into `run_proposer_round`.
+There is no separate proposer process: the model is an API call that returns coordinates, so
+`ANTHROPIC_API_KEY` and all egress simply live where the rest of the engine does.
 
-The reason is a hard constraint. `proposer_client.run_proposer_loop` invokes its `author` seam
-*inside* the proposer process — but that process is spawned by `launch_in_container` under
-`--network none` with no host env and no key. A Claude call needs network and a key. So the call
-cannot happen inside the sealed container; it moves to the trusted side. `ANTHROPIC_API_KEY` and
-all egress stay on the oracle; the proposer container stays `--network none`, unchanged (it is
-the CI-certified seal `CONTAINER_SEAL_FLAGS` pins).
+This was not always the plan. Three independently-designed architectures still converge on
+oracle-side, but an earlier one ran the proposer as a *sandboxed* process and had to answer "where
+does the network call happen?" — the sandbox was `--network none` with no key, so the call could
+not originate inside it. That tension is what the removal dissolves: with no sandbox, the call is
+just an ordinary oracle-side API call, and the seal is the information boundary (next section), not
+a sandbox's network cut.
 
 ## The seal changes shape — say it loudly
 
-Moving the LLM oracle-side **trades the container's kernel isolation for a correctness argument**,
-and this must be stated plainly because it is easy to assume the kernel jail still protects the
-LLM. It does not — for the LLM, the seal is now three things:
+The oracle-side, in-process design **trades the kernel isolation a container would give for a
+correctness argument**, and this must be stated plainly because it is easy to assume a kernel jail
+protects the LLM. None does — for the LLM, the seal is three things:
 
 - the model's prompt contains **no result statistics** — only the grammar menu and the scrubbed
   corpus (coordinates + one-bit verdicts), `assert_numberless`-checked, SURVIVED rows excluded;
@@ -66,15 +68,14 @@ output*. But it is a different kind of guarantee than the container provides:
 
 | Guarantee | Holds even if… |
 | --- | --- |
-| **Kernel isolation** (the C-2 container) | …there is a bug — the OS backstops it. |
+| **Kernel isolation** (a sandbox/container) | …there is a bug — the OS backstops it. |
 | **Correctness argument** (the LLM oracle-side) | …only if the argument is airtight — no OS backstop. |
 
-The C-2 container was built to cage an untrusted-*code* proposer that could read the ledger or run
-the engine. An LLM emitting coordinates from a numberless prompt is sealed by *information*, not
-isolation — so the container becomes **vestigial for the LLM path**. That is an acceptable trade
-for coordinate-only output, but it relocates the load-bearing guarantee onto the
-`assert_numberless` checks and the coordinate-only gate, which must therefore be the
-hardest-tested code in the system.
+A container was built to cage an untrusted-*code* proposer that could read the ledger or run the
+engine. An LLM emitting coordinates from a numberless prompt is sealed by *information*, not
+isolation — so for the LLM path the container was **removed**. That is an acceptable trade for
+coordinate-only output, but it relocates the load-bearing guarantee onto the `assert_numberless`
+checks and the coordinate-only gate, which must therefore be the hardest-tested code in the system.
 
 ## The prompt builder is the leak surface — three options
 
@@ -89,8 +90,9 @@ scrubbed corpus; the `SAFE_FIELDS` allow-list drops every statistic). The risk i
   engine. A bug — calling `load_idea_ledger()` (raw) instead of `build_proposer_corpus(...)`
   (scrubbed), or appending a "helpful" statistic — leaks a number into the prompt, and the *only*
   catch is an `assert_numberless` on the assembled prompt. No kernel backstop.
-- **(B) Builder inside the container that also calls the API.** Ruled out: the container is
-  `--network none` with no key, so it cannot make the call.
+- **(B) Builder inside the container that also calls the API.** Ruled out (and moot now the
+  container is removed): a sandboxed proposer would be `--network none` with no key, so it could
+  not make the call.
 - **(C) Build in the sealed container, relay to the oracle to call.** The proposer builds the
   prompt inside the container, which holds *only* the scrubbed seeds (`menu.json` + `corpus.json`)
   — the raw ledger is absent, so a builder bug **physically cannot leak a statistic**. It sends
@@ -170,12 +172,11 @@ foil that justifies the interlocks — none of which is a container.
 - **Phase A — oracle-side gates (buildable now, activates nothing).** What actually gates the live
   model, all on the trusted side: the **numberless seal** hardened into the sole prompt guard
   (`assert_numberless` + the completed ban-set + the leaf-type guard — done in #82); the
-  **activation gate redesigned** for the oracle-side reality (see *What must not happen* — the
-  current `_assert_llm_boundary` precondition is sandbox-specific and would wrongly *refuse* an
-  in-process LLM); and the oracle stamping the **authoritative `model_served`** rather than trusting
-  the model's self-report. The *container* must-dos (digest pin, seccomp, the round timeout `#83`,
-  `--user`) are **not** here — they harden the dormant code-proposer path, not the LLM (see *The
-  simplification* above); pursue them only if a code-proposer is ever wanted.
+  **activation gate simplified** to its no-model backstop (the sandbox-specific engine-absent
+  precondition was removed with the container — see *What must not happen*); and the oracle stamping
+  the **authoritative `model_served`** rather than trusting the model's self-report. The *container*
+  must-dos (digest pin, seccomp, a round timeout, `--user`, and making the `read-gate-container` CI job a required check) are moot — the container was removed; they
+  would only matter if a code-proposer were ever rebuilt (see *The simplification* above).
 - **Phase B — the model wiring (owner's explicit go).** The oracle-side Claude author (the
   `anthropic` client, the numberless prompt + `prompt_sha`, real `model_served` capture into
   `record_provenance`), activating `_resolve_llm_author`. The prompt builder is **(A), oracle-side
@@ -187,13 +188,13 @@ foil that justifies the interlocks — none of which is a container.
 ## What must not happen
 
 - No LLM author runs until Phase A's gates are met and the owner approves. `_resolve_llm_author()`
-  returns `None` today, so `propose --llm` fails closed. **But the activation gate needs a redesign
-  for the oracle-side reality:** `_assert_llm_boundary`'s precondition (a) — *the engine is not
-  importable from cwd* — is true only inside the sandbox. An in-process oracle-side LLM runs where
-  the engine *is* importable, so as written that guard would **refuse the very thing the decision
-  wants to run.** The oracle-side gate is a different fail-closed check: the prompt is asserted
-  numberless, the output is coordinate-only and grammar-gated, and every score is recorded — not
-  engine absence.
+  returns `None` today, so `propose --llm` fails closed on **the (b)-only no-model check**:
+  `_assert_llm_boundary` refuses unless a model author is configured. The sandbox-specific
+  precondition (a) — *the engine is not importable from cwd* — was **removed with the container** (it
+  was true only inside the sandbox, so against an in-process oracle-side LLM it would have **refused
+  the very thing the decision wants to run**). When a model is wired, the fail-closed seal is the
+  oracle-side correctness argument: the prompt is asserted numberless, the output is coordinate-only
+  and grammar-gated, and every score is recorded — not engine absence.
 - The model never sees a result statistic, and never emits anything but a gated coordinate.
 - A survivor escalates to manual pre-registration, never back into automated proposal — and never
   to a confirmatory claim until Phase C.

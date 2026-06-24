@@ -1738,15 +1738,16 @@ def run_proposer_round(
 
 
 # --- the read-gate oracle seam (the one-bit entry point across the boundary) ---
-# The PROPOSER (untrusted, sandboxed — docs/read_gate.md) may reach the engine ONLY
-# through score_and_record: it sends coordinate-only proposals + its self-reported model
-# identity; the oracle scores -> lifetime-judges -> records (BEFORE replying) -> and hands
-# back ONLY the scrubbed one-bit scoreboard. The t-stat-bearing rows never cross back. This
-# is the seam the oracle server + proposer client (the next PRs) bolt onto; PR1 builds and
-# pins it IN-PROCESS so the boundary's contract is frozen before the transport exists. The
-# contract itself (WIRE_VERSION, BANNED_RESULT_FIELDS, assert_numberless, the field lists)
-# lives in the dependency-free read_gate_wire so the proposer can share it without importing
-# the engine.
+# score_and_record is the IN-PROCESS oracle seam: a caller sends coordinate-only proposals +
+# its self-reported model identity; the oracle scores -> lifetime-judges -> records (BEFORE
+# replying) -> and hands back ONLY the scrubbed one-bit scoreboard. The t-stat-bearing rows
+# never cross back, so "every look is a recorded look" holds by construction. The decided LLM
+# author is oracle-side and IN-PROCESS (docs/llm_proposer_plan.md): the boundary it crosses is
+# this INFORMATION seal — a numberless reply + coordinate-only input — not a separate process.
+# (The container/transport that once wrapped this seam for an untrusted-CODE proposer was
+# removed; the coordinate-emitting LLM never needed isolation.) The frozen contract
+# (WIRE_VERSION, BANNED_RESULT_FIELDS, assert_numberless, the field lists) lives in the
+# dependency-free read_gate_wire.
 def score_and_record(
     proposals: Sequence[dict[str, Any]],
     *,
@@ -1810,108 +1811,42 @@ def score_and_record(
     return reply
 
 
-# --- the read-gate CLI refusal (interlock #5: an LLM author can't run from the engine) ---
-# An LLM proposer must be PHYSICALLY UNABLE to run from this checkout — the only sanctioned
-# home is `proposer_client` inside the oracle_server sandbox, where C-1 closed the import
-# vector so `import edge_search` raises. `--llm` is the switch that WOULD select the LLM
-# author; this guard makes activating it from the engine FAIL CLOSED. It does NOT replace the
-# process boundary (docs/read_gate.md, "The architecture that works") — it is the runtime
-# tripwire that refuses to even start an author outside that boundary.
+# --- the read-gate CLI refusal (interlock #5: no LLM author runs until one is wired) ---
+# `--llm` is the switch that WOULD select the LLM author. Until item 4 wires a real model
+# (the in-process Claude `LLMProposer`, oracle-side), this guard makes activating it FAIL
+# CLOSED. The seal for that future author is the oracle-side correctness argument — a
+# numberless prompt, coordinate-only output, every score recorded (docs/llm_proposer_plan.md,
+# docs/read_gate.md) — NOT a sandbox; the container/transport path was removed (it had sealed
+# an untrusted-CODE proposer, which the coordinate-emitting LLM never was).
 def _resolve_llm_author() -> LLMProposer | None:
     """The configured LLM author, or None if none is wired. Item 4 (the real Claude client)
-    is a LATER PR: there is no model yet, so this returns None and `--llm` fails closed on
-    precondition (b). When item 4 lands it returns the gated `LLMProposer`, and the import
-    precondition (a) keeps enforcing — wiring a model never unlocks running it from the repo."""
+    is a LATER PR: there is no model yet, so this returns None and `--llm` fails closed. When
+    item 4 lands it returns the gated `LLMProposer`, and the oracle-side activation gate
+    (numberless prompt + coordinate-only output + recorded) governs whether it may run."""
     return None
 
 
-def _engine_importable_from_cwd() -> bool:
-    """True iff the engine module `edge_search` is REACHABLE on the import path a sandboxed
-    proposer would see here — i.e. cwd (or a non-scrubbed path) puts `edge_search` on `sys.path`.
-
-    Measures PRESENCE via `importlib.util.find_spec` in a subprocess, NOT a real `import`. This
-    is the load-bearing distinction: `find_spec` locates `edge_search.py` WITHOUT executing its
-    body, so a missing dependency (numpy), a mid-edit syntax error, or a stripped venv var can't
-    make a PRESENT engine read as absent. (A bare `import edge_search` probe gets this wrong: from
-    the engine checkout with numpy uninstalled it raises `No module named 'numpy'` from inside
-    edge_search.py — a non-zero exit that naively reads as "engine absent", silently disarming the
-    guard. Same vacuity class as the C-1 import-vector test.) The probe uses cwd=getcwd() (so the
-    engine checkout's cwd is on `sys.path[0]`) and the same `oracle_server._scrubbed_env()` that
-    `launch` spawns the proposer with — so a PYTHONPATH the proposer would NOT receive can't
-    inflate the result. (It does NOT replicate `launch`'s sandbox-seed; this is a CLI tripwire,
-    not the launch path.)
-
-    FAIL CLOSED: returns True (engine reachable -> the guard REFUSES) unless the probe is CERTAIN
-    the module is absent (`find_spec` returned None -> exit 1). ANY ambiguity — `find_spec` raised,
-    `oracle_server` failed to import, an odd exit code — returns True. Only the unambiguous
-    "absent" (exit 1), which is what the C-1 sandbox produces, returns False."""
-    import os
-    import subprocess
-    import sys
-
-    # find_spec, not import: exit 0 = module FOUND, exit 1 = unambiguously NOT found; a find_spec
-    # exception -> found=True (assume present, fail closed) so it never reads as exit 1.
-    probe = (
-        'import importlib.util as u, sys\n'
-        'try:\n'
-        '    found = u.find_spec("edge_search") is not None\n'
-        'except Exception:\n'
-        '    found = True\n'
-        'sys.exit(0 if found else 1)\n'
-    )
-    try:
-        import oracle_server  # local: oracle_server imports edge_search, so import only at call time
-        proc = subprocess.run(
-            [sys.executable, '-c', probe],
-            cwd=os.getcwd(),
-            env=oracle_server._scrubbed_env(),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-    except Exception:
-        return True                # can't even run the probe -> refuse (fail closed)
-    return proc.returncode != 1    # exit 1 is the ONLY "certainly absent"; all else -> reachable
-
-
 def _assert_llm_boundary(author: LLMProposer | None = None) -> LLMProposer:
-    """FAIL CLOSED unless an LLM author may run HERE, returning the author when it may.
+    """FAIL CLOSED unless a model author is configured, returning the author when one is.
 
-    Two independent preconditions, BOTH required (refuse if either fails):
+    Precondition — A MODEL AUTHOR IS ACTUALLY CONFIGURED: `author` (or `_resolve_llm_author()`
+    when not supplied) must be a real `LLMProposer`. Item 4 (the Claude client) is a later PR,
+    so today there is no model and `--llm` fails closed here — the current backstop that keeps
+    NO LLM running.
 
-      (a) THE ENGINE IS NOT IMPORTABLE FROM CWD. Checked via `_engine_importable_from_cwd`
-          (a scrubbed-env subprocess probe). From the engine checkout `import edge_search`
-          SUCCEEDS, so the guard REFUSES — correct: you cannot launch an LLM author from the
-          repo. It passes only inside the oracle_server sandbox (C-1's closed import vector),
-          where the proposer runs as `proposer_client` and the engine is absent.
-      (b) A MODEL AUTHOR IS ACTUALLY CONFIGURED. `author` (or `_resolve_llm_author()` when not
-          supplied) must be a real `LLMProposer`. Item 4 (the Claude client) is a later PR, so
-          today there is no model and `--llm` ALSO fails closed here — the current backstop.
-
-    On either failure: print a message naming BOTH preconditions (pointing at docs/read_gate.md
-    + oracle_server) to stderr and `raise SystemExit(2)`. The two are independent: from a dir
-    where the engine is absent (a) passes but (b) still refuses until item 4 wires the client."""
+    On failure: print a message (pointing at docs/llm_proposer_plan.md) to stderr and
+    `raise SystemExit(2)`. When item 4 wires the in-process author, the load-bearing seal is the
+    oracle-side correctness argument — a numberless prompt, coordinate-only output, every score
+    recorded — NOT engine-absence. The sandbox-specific 'engine not importable from cwd' check
+    went away with the container/transport (docs/llm_proposer_plan.md, docs/read_gate.md)."""
     import sys
     resolved = author if author is not None else _resolve_llm_author()
-    importable = _engine_importable_from_cwd()
-    if importable or resolved is None:
-        reasons = []
-        if importable:
-            reasons.append(
-                '  (a) the engine IS importable from the current directory — an LLM author '
-                'must NOT run from the engine checkout')
-        if resolved is None:
-            reasons.append(
-                '  (b) no model author is configured (the LLM client is a later PR)')
+    if resolved is None:
         print(
-            'REFUSED: --llm cannot activate an LLM proposer here. Both preconditions must '
-            'hold; the following failed:\n'
-            + '\n'.join(reasons)
-            + '\n  (a) requires the engine to be UNIMPORTABLE from cwd (true only inside the '
-            'oracle_server sandbox, where the import vector is closed);\n'
-            '  (b) requires a configured model author.\n'
-            'Run the proposer THROUGH the read-gate boundary, never bare: launch it as '
-            'proposer_client inside the oracle_server sandbox (oracle_server.launch / '
-            'prepare_sandbox). See docs/read_gate.md ("The architecture that works").',
+            'REFUSED: --llm cannot activate an LLM proposer here: no model author is '
+            'configured (the LLM client is a later PR — see docs/llm_proposer_plan.md). When '
+            'one is wired, the oracle-side activation gate governs it: a numberless prompt, '
+            'coordinate-only output, and every score recorded.',
             file=sys.stderr,
         )
         raise SystemExit(2)

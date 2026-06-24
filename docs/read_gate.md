@@ -2,43 +2,29 @@
 
 ## Status (built so far)
 
-**The in-process seam (#72), the transport, the import-vector closure (C-1), AND the container
-integration (C-2) are BUILT; only the real LLM author remains.** `edge_search.score_and_record` is
-the oracle seam (score → lifetime-judge → record → return only the one-bit scoreboard).
-`oracle_server.py` (`serve` / `launch` / `launch_in_container` / `prepare_sandbox`, fail-closed via
-`assert_sandbox_clean`) + `proposer_client.py` (`run_proposer_loop`, imports only `read_gate_wire`)
-are the NDJSON transport + the sandbox — pinned by `test_oracle_server.py` / `test_proposer_client.py`,
-including a real `launch`↔`proposer_client` end-to-end. The soft `launch` (the supervised-operator
-MVP) is HONEST about not being airtight: a same-machine `cwd` is not a kernel jail (the repo-root
-engine + answer-key ledger stay reachable by absolute path). The IMPORT recompute vector is CLOSED
-(track C-1): `prepare_sandbox` copies the proposer's engine-free code into the sandbox and `launch`
-runs it with `cwd=sandbox`, so `sys.path[0]` holds no engine and `import edge_search` raises (pinned
-by `test_oracle_server.py::TestImportVectorClosed`). What `launch` left open — the absolute-path read
-+ the subprocess — is now CLOSED by the **container** (track C-2): `launch_in_container` spawns the
-proposer INSIDE the sealed image (`Dockerfile.proposer`, which bakes in only the engine-free code)
-under `CONTAINER_SEAL_FLAGS` — the single shared flag set the seal test imports — with the per-run
-seed dir bind-mounted READ-ONLY at `/sandbox` (cwd), NO host env forwarded (`docker run` starts a
-fresh env, so no token / PYTHONPATH / `-e` rides in), and NO other host mount (notably not
-`/var/run/docker.sock`). The engine + answer-key ledger are then kernel-unreachable (mount namespace)
-and the network is dead (`--network none`). Pinned by `test_read_gate_container.py` (docker-gated, CI):
-`TestProposerImageSeal` (engine absent by import AND by abspath, network dead, proposer code still
-runs) plus `TestContainerRoundTrip` (a live `launch_in_container`↔`proposer_client` round-trip that
-records exactly one comparison + read-only-mount / no-docker-socket hardening pins). What remains is
-the **real model author** (a temperature-0 Claude call) — and a SIMPLIFICATION the design surfaced:
-**the model runs ORACLE-SIDE and IN-PROCESS** (as an `LLMProposer` in `run_proposer_round`), **not
-in the container.** The container/transport built above (`oracle_server` / `proposer_client` /
-`launch_in_container`) seals an untrusted-*code* proposer; a coordinate-emitting LLM is sealed by
-*information* — a numberless prompt + coordinate-only output + every-look-recorded — so it never
-takes the container path. The container is therefore **optional, dormant infrastructure** for a
-hypothetical code-proposer: not a gate on the live model, and its must-dos (digest pin, seccomp, the
-round timeout, `--user`) are **not** Phase-B gates. The full item-4 design — the oracle-side
-architecture, the correctness-argument seal, the activation-gate redesign the oracle-side move
-forces (`_assert_llm_boundary`'s engine-absent precondition would wrongly *refuse* an in-process
-LLM), the unsolved training-leak (time-axis-holdout) blocker, and a cautionary foil (Huang & Fan,
-arXiv:2603.14288 — a published autonomous-factor system that is the honor-system version, missing
-exactly these interlocks) — is recorded in [llm_proposer_plan.md](llm_proposer_plan.md). An LLM
-author must NOT be activated until the oracle-side gates are met and the owner approves. The
-residual analysis below is unchanged.
+**The in-process information boundary is BUILT; the container/transport was built then REMOVED;
+only the real LLM author remains.** `edge_search.score_and_record` is the oracle seam (score →
+lifetime-judge → record → return only the one-bit scoreboard), with `assert_numberless` /
+`BANNED_RESULT_FIELDS` (in the dependency-free `read_gate_wire.py`) the load-bearing guard that no
+result statistic rides back. That seam, the scrubbed corpus, the closed grammar, and the lifetime
+e-LOND ledger ARE the information boundary — and they are what the decided LLM author uses.
+
+**A SIMPLIFICATION the design surfaced, now enacted: the model runs ORACLE-SIDE and IN-PROCESS** (as
+an `LLMProposer` in `run_proposer_round`), sealed by *information* — a numberless prompt +
+coordinate-only output + every-look-recorded — NOT by isolation. A sandboxed NDJSON transport and a
+sealed container were built first (the supervised-operator MVP, the C-1 import-vector close, the C-2
+container), to cage an untrusted-*code* proposer that could `import edge_search` and recompute the
+answer key. But a coordinate-emitting LLM is not that — it has no engine and no code execution — so
+the container/transport never sat on its path and was **removed.** The CLI `--llm` switch fails
+closed until item 4 wires a model (`_assert_llm_boundary`, now its no-model backstop — the
+sandbox-specific engine-absent precondition went away with the container).
+
+The full item-4 design — the oracle-side architecture, the correctness-argument seal, the
+training-leak (time-axis-holdout) blocker, and a cautionary foil (Huang & Fan, arXiv:2603.14288 — a
+published autonomous-factor system that is the honor-system version, missing exactly these
+interlocks) — is recorded in [llm_proposer_plan.md](llm_proposer_plan.md). An LLM author must NOT be
+activated until the oracle-side gates are met and the owner approves. The residual analysis below is
+unchanged.
 
 ## Why this doc exists
 
@@ -145,33 +131,41 @@ record. Whether the proposer can *read* a number it already paid for is then irr
 This is why the honest control is about the **boundary around scoring**, not the **secrecy of the
 ledger**.
 
-## The architecture that works: a sandboxed proposer + a recording oracle
+## The architecture that works: a recording oracle + an information boundary
 
-Two processes with a real boundary between them — a separate checkout, container, or service, **not**
-a `settings.json` deny inside one repo the agent fully controls.
+The fix is not to hide the number — it is to make every look at it a *counted* look, and to keep the
+proposer from ever holding the number in the first place. Two pieces do that:
 
-- **The proposer process** holds *only* the scrubbed corpus (`build_proposer_corpus` output:
-  coordinates + the one-bit verdict) and the closed grammar (`enumerate_grammar_templates`). It has
-  **no engine, no chains, no ledger, no test files, no git history of any of them**. It cannot
-  compute a t-stat because it does not possess the function or its inputs. Its output is a list of
-  proposed `(template, ticker, params)` cells — coordinates only.
+- **The recording oracle** (trusted) holds the engine, the chains, and the ledger. It receives a
+  proposed cell, runs `structure_kill_gate`, **records the result to the lifetime stream via
+  `judge_against_lifetime_stream` + `record_trials` before returning anything**, and hands back
+  *only the one-bit verdict* — never the statistic. Every call is a counted look by construction;
+  there is no score-without-record path. `edge_search.score_and_record` is this seam, in-process.
 
-- **The oracle process** (trusted, the proposer cannot reach its filesystem) holds the engine, the
-  chains, and the ledger. It receives a proposed cell, runs `structure_kill_gate`, **records the
-  result to the lifetime stream via `judge_against_lifetime_stream` + `record_trials` before
-  returning anything**, and hands back to the proposer *only the one-bit verdict* — never the
-  statistic. Every call is a counted look by construction; there is no score-without-record path
-  because the proposer has no engine to score with privately.
+- **The information boundary** keeps the proposer numberless: it sees *only* the scrubbed corpus
+  (`build_proposer_corpus`: coordinates + the one-bit verdict) and the closed grammar
+  (`enumerate_grammar_templates`), and it emits *only* coordinates (`PROPOSAL_FIELDS`), gated by
+  `StructureCandidate`. `assert_numberless` is the load-bearing guard that no result statistic rides
+  into the proposer's view. A proposer that only ever sees a numberless input and emits a menu
+  choice **cannot recompute a score or chase a seen winner.**
 
-- **The boundary** is the load-bearing part. It must be a genuine process / filesystem / network
-  isolation: the proposer runs where the engine and data are absent. A path-deny inside a shared
-  checkout is not this — see the dead-end above. The oracle is the *only* code with read access to
-  the answer key, and it is invoked by a trusted harness, not authored by the proposer.
+For the **decided proposer — a coordinate-emitting LLM** — that information boundary is the whole
+seal, and it is **in-process**: the model is an API call that returns text; it has no engine, no
+filesystem, no code execution, so there is nothing to isolate. The seal is a *correctness argument*
+(numberless in, coordinates out, every look recorded), not a kernel jail.
 
-Under this shape the three things the file-gate failed at all become non-issues: the proposer cannot
-re-derive (no engine), cannot read history (no repo), and cannot self-record-and-read (the oracle
-returns one bit). And critically, it is **honest about what it enforces** — it does not claim to hide
-a number; it makes the number not worth hiding.
+A stronger boundary is needed only for an **untrusted-*code* proposer** — one that could `import
+edge_search` and recompute the answer key privately. That requires genuine process / filesystem /
+network isolation: the proposer runs where the engine and data are absent (a separate checkout, a
+sandbox, a container — **not** a `settings.json` deny inside one repo the agent fully controls; see
+the dead-end above). That isolation layer *was* built — an NDJSON transport + the C-1 import-vector
+close + the C-2 sealed container — and then **removed**, because the decided LLM never needed it. It
+remains the blueprint should a code-running proposer ever be wanted.
+
+Under either shape the three things the file-gate failed at become non-issues: the proposer cannot
+re-derive (it holds no engine — by its nature, or by isolation), cannot read history (no repo), and
+cannot self-record-and-read (the oracle returns one bit). And critically, it is **honest about what
+it enforces** — it does not claim to hide a number; it makes the number not worth hiding.
 
 ## What is safe today (the honest status)
 
@@ -189,15 +183,18 @@ Nothing is exposed *right now*, because the gap is entirely prospective:
   access exists.
 
 So the correct status line is: **the deterministic proposer is safe; an LLM proposer is not safe to
-activate until the sandbox-proposer + recording-oracle boundary exists; a file-hiding read-gate would
+activate until item 4 wires it behind the in-process information boundary (numberless prompt +
+coordinate-only output + every-look-recorded) and the owner approves; a file-hiding read-gate would
 be theater and must not be built or claimed as a control.**
 
 ## Residual honesty edges (named, not hidden)
 
 - **Private recomputation is unpreventable inside a shared checkout.** Even a "no score without
   record" change to the *sanctioned* API (`run_proposer_round`) does not stop a proposer calling the
-  raw `structure_kill_gate` / `short_vol_statistics`. Only the process boundary closes this; short of
-  it, the honesty is honor-system and the proposer must be trusted (i.e. deterministic).
+  raw `structure_kill_gate` / `short_vol_statistics`. A process boundary would close this for an
+  untrusted-*code* proposer; short of it the honesty is honor-system and the proposer must be unable
+  to recompute — either trusted-by-construction (the deterministic menu-walker, or a
+  coordinate-emitting LLM that holds no engine) or isolated. The decided LLM is the former.
 - **The sealed vault is the same shape of problem.** `STRUCTURE_SEALED` (`TLT`) is held out only
   because `run_structure_campaign` does not iterate it — the data file is in the repo and loadable.
   A real seal needs the same boundary (the sealed chains live where the search process cannot reach
@@ -214,10 +211,11 @@ be theater and must not be built or claimed as a control.**
 - `build_proposer_corpus` / `scrub_ledger_row` / `SAFE_FIELDS` / `run_proposer_round` in
   `edge_search.py` — the (correct, airtight-for-what-it-covers) scrub, and the proposer loop the
   oracle architecture slots into unchanged.
-- `edge_search.score_and_record` — the in-process realization of the oracle SEAM (PR1, the
-  first build of this architecture): the single entry point that scores → lifetime-judges →
-  records BEFORE replying and hands back only the scrubbed one-bit scoreboard. The contract it
-  speaks (`WIRE_VERSION`, `BANNED_RESULT_FIELDS`, `assert_numberless`, `REQUIRED_MODEL_FIELDS`,
-  `PROPOSAL_FIELDS`) lives in the dependency-free `read_gate_wire.py` so the sandboxed proposer
-  shares it without importing the engine. The transport + the sandbox (the wall around the seam)
-  are the remaining build; this seam is what they bolt onto.
+- `edge_search.score_and_record` — the in-process realization of the oracle SEAM: the single entry
+  point that scores → lifetime-judges → records BEFORE replying and hands back only the scrubbed
+  one-bit scoreboard. The contract it speaks (`WIRE_VERSION`, `BANNED_RESULT_FIELDS`,
+  `assert_numberless`, `REQUIRED_MODEL_FIELDS`, `PROPOSAL_FIELDS`) lives in the dependency-free
+  `read_gate_wire.py` so a future in-process LLM author can carry it without importing the engine.
+  This seam + the numberless guard ARE the information boundary; the decided LLM author is
+  oracle-side and in-process, so no transport or sandbox is needed (the container/transport that
+  once wrapped this seam for an untrusted-code proposer was removed).

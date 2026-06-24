@@ -185,7 +185,7 @@ jobs:
       matrix:
         include:
           - {bucket: vol-premium,   files: "test_vol_premium.py"}
-          - {bucket: edge-search,   files: "test_edge_search.py test_validate_dailies.py test_oracle_server.py test_proposer_client.py test_read_gate_wire.py"}
+          - {bucket: edge-search,   files: "test_edge_search.py test_validate_dailies.py test_read_gate_wire.py"}
           - {bucket: trend-explore, files: "test_trend_gate.py test_explorations.py"}
     steps:
       - uses: actions/checkout@v4
@@ -249,26 +249,3 @@ jobs:
             exit 1
           fi
           echo "all scout buckets passed"
-
-  # The read-gate proposer CONTAINER seal (docs/read_gate.md): build the sealed image and assert
-  # the engine + answer-key ledger are ABSENT and the network is unreachable from inside it.
-  # Docker ships on the ubuntu runner, so this is the ONLY job that needs it; test_read_gate_
-  # container.py skips everywhere docker is missing (e.g. the dev machine). Informational — NOT
-  # a required check: it gates the future LLM-author activation, not the engine suite.
-  read-gate-container:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-      # FAIL (don't silently skip) if docker is missing: the seal tests skipif on docker, so
-      # without this guard a runner that lacked docker would report GREEN while verifying nothing
-      # — the exact silent-pass the seal exists to prevent.
-      - name: Confirm docker is available
-        run: docker version
-      - name: Read-gate container seal tests
-        run: pytest test_read_gate_container.py -v

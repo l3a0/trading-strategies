@@ -1,27 +1,27 @@
-"""read_gate_wire.py — the frozen wire contract for the read-gate (docs/read_gate.md).
+"""read_gate_wire.py — the frozen seal contract for the read-gate (docs/read_gate.md).
 
-Dependency-free (stdlib only) ON PURPOSE. The sandboxed PROPOSER process must not import
-the engine (edge_search / vol_premium / numpy / the chains), so the contract it shares
-with the trusted ORACLE lives here — importable by BOTH sides without pulling in the
-engine. This is what lets the oracle server and the proposer client be built in parallel
-against one source of truth instead of a vendored copy that drifts.
+Dependency-free (stdlib only) ON PURPOSE. This is the read-gate's one source of truth for
+the coordinate/model field allow-lists, the banned result set, and the numberless guard —
+kept free of the engine (edge_search / vol_premium / numpy / the chains) so the contract is
+shareable and testable in isolation, and so a future in-process LLM author can carry it
+without importing the engine. (A separate sandboxed-proposer transport once shared this
+contract across a process boundary over NDJSON; that container/transport was removed — the
+decided LLM author is oracle-side and IN-PROCESS, sealed by INFORMATION not isolation,
+docs/llm_proposer_plan.md.)
 
 THE CONTRACT (frozen at WIRE_VERSION):
 
-  request  (proposer -> oracle): coordinate-only proposals + the proposer's model identity
-    {"wire_version": 1, "round_id": <str>,
-     "model": {"model_requested","model_served","temperature","prompt_sha"},
-     "proposals": [{"overlay","ticker","params","predicted_sign"}]}
-
-  reply    (oracle -> proposer): one-bit verdicts only, NEVER a result statistic
+  proposals (coordinate-only): {"overlay","ticker","params","predicted_sign"}  (PROPOSAL_FIELDS)
+  model identity (audit provenance):
+    {"model_requested","model_served","temperature","prompt_sha"}  (REQUIRED_MODEL_FIELDS)
+  the oracle seam's reply (score_and_record): one-bit verdicts only, NEVER a result statistic
     {"wire_version": 1, "recorded": <int>, "needs_onboard": [<str>],
      "rejected": [{"proposal": {<coords>}, "reason": <str>}],
      "corpus": [<scrubbed row: template/ticker/params/predicted_sign/verdict>]}
 
-The reply's `corpus` is THIS round's scrubbed verdicts (deltas); the proposer holds the
-*lifetime* scrubbed corpus as a seeded sandbox file, not via the reply (docs/read_gate.md).
-`wire_version` is stamped on every message; version negotiation/validation is the
-transport PR's job (advisory here).
+The reply's `corpus` is THIS round's scrubbed verdicts (deltas); the *lifetime* scrubbed
+corpus is the seeded proposer-facing projection, not carried by the reply (docs/read_gate.md).
+`assert_numberless` (below) is the load-bearing guard on any oracle-authored content.
 """
 from __future__ import annotations
 
