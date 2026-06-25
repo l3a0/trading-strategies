@@ -175,7 +175,7 @@ in the sense the closed lattice was:
    raw reachable count at `MAX_LEGS=4` is astronomical (leg-types in the low hundreds, unordered
    multisets up to four → millions), so the caps alone bound the *review space*, not the live search.
    What actually bounds the search is (a) freezing the bucket sets (`DELTAS`/`OFFSETS`/`DTES`/`GAPS`)
-   initially to *exactly* the values the 8 overlays use — the recommended default (open Q2) — so the
+   initially to *exactly* the values the 8 overlays use (frozen in Phase 1) — so the
    *coherent* space starts near the current 70, and (b) the `derive_family` / sign-coherence gate,
    which rejects the vast mechanism-incoherent majority before it enters the FDR pool. So the
    **effective denominator is empirical** — compositions that pass the inline gate *and* trade —
@@ -209,22 +209,25 @@ holdout exists; no "the model composed it from scratch" relaxation is justified.
 
 Each phase is a separate PR with its own pins. Phases 1–3 activate no LLM.
 
-- **Phase 1 — the grammar core (no engine, no LLM).** The primitive bucket sets + caps; the
-  `Composition` type; the production-rule validator (replaces `_validate_grammar`); the canonical
-  normal form (replaces `_overlay_params_key`); the reachable-count bound (replaces
-  `grid_universe_size`). **Acceptance test:** the 8 committed overlays are expressible as
-  compositions and their canonical keys equal the published ledger's identities (the named grammar is
-  a verified sub-grammar; the 75-cell ledger dedups unchanged). All deterministic, all pinnable.
+- **Phase 1 — the grammar core (no engine, no LLM).** The primitive bucket sets (**frozen to exactly
+  the values the 8 committed overlays use**, so the reachable count starts near 70; widening buckets
+  is a later, separately-pinned step) + the `MAX_LEGS=4` / `MAX_EXPIRATIONS=2` caps; the `Composition`
+  type; the production-rule validator (replaces `_validate_grammar`); the canonical normal form
+  (replaces `_overlay_params_key`); the reachable-count bound (replaces `grid_universe_size`).
+  **Acceptance test:** the 8 committed overlays are expressible as compositions and their canonical
+  keys equal the published ledger's identities (the named grammar is a verified sub-grammar; the
+  75-cell ledger dedups unchanged). All deterministic, all pinnable.
 - **Phase 2 — the composer + inline mechanism gate.** The `select` composer + the strike-offset
   resolver; generic kill-gate dispatch; the inline signature-derive → `derive_family` → sign-coherence
-  gate (fail-closed); the 0-trades → `measurement_invalid` feasibility filter; the `MAX_NET_DELTA`
-  constraint. **Acceptance test (real chains):** a composed named overlay is **byte-identical** to its
+  gate (fail-closed); the 0-trades → `measurement_invalid` feasibility filter; the runtime
+  `|net_delta| ≤ 1.0` invariant check. **Acceptance test (real chains):** a composed named overlay is **byte-identical** to its
   hand-written form (the equivalence guarantee, the way `TestGenericStructureEngineEquivalence` pins
   the spec engine today).
-- **Phase 3 — a deterministic menu-walker over the production grammar.** Enumerate the bounded
-  composition space (replaces `enumerate_grammar_templates`) and run the full score → lifetime-judge →
-  record loop with `author=None`. Proves the loop end-to-end with no LLM, and lets the saturation
-  readout report the *new* (larger) bar before any model touches it.
+- **Phase 3 — a deterministic menu-walker over the production grammar.** Enumerate a **sampled bounded
+  slice** of the composition space (replaces `enumerate_grammar_templates`) — *not* run to completion,
+  which would saturate the e-LOND budget; the saturation readout is the stop signal — and run the full
+  score → lifetime-judge → record loop with `author=None`. Proves the loop end-to-end with no LLM, and
+  lets the saturation readout report the *new* (larger) bar before any model touches it.
 - **Phase 4 — the generative LLM author.** An `LLMProposer` that emits a `Composition` (leg-spec +
   hedge + sign) instead of menu coordinates; the gate/judge/record path is byte-identical. The
   numberless prompt now describes the **primitives + caps**, not a fixed menu. OFF by default,
@@ -292,16 +295,15 @@ steps cleanly, so the parallelism is contained to the scoring fan-out and does n
   (`|net_delta| ≤ 1.0` is *not* in this list: it is a correctness invariant fixed by the hedge clamp,
   not a governance dial — it changes only if the hedge itself is generalized.)
 
-## Open questions for review
+## Decisions
 
-The governance-knobs question is **resolved** in the section above (two space caps `MAX_LEGS=4` /
-`MAX_EXPIRATIONS=2`, `|net_delta| ≤ 1.0` as a runtime invariant not a dial, a lifetime e-LOND budget
-as the real power governor, and the bucket sets + coherence gate doing the heavy lifting). What
-remains open:
+All three review questions are resolved (owner-signed, 2026-06-25); this doc is the Phase-1 spec.
 
-- Should Phase 1 freeze the bucket sets to *exactly* what the 8 committed overlays use (so the
-  sub-grammar test is tight and the reachable count starts near 70), and widen the buckets only as a
-  later, separately-pinned governance step?
-- Is the deterministic Phase-3 menu-walker over the *open* grammar worth running to completion (it
-  will saturate the e-LOND budget on the larger space) — or should it only ever enumerate a sampled
-  bounded slice, with the saturation readout as the stop signal?
+- **Governance knobs** — two space caps `MAX_LEGS=4` / `MAX_EXPIRATIONS=2`; `|net_delta| ≤ 1.0` a
+  runtime correctness invariant, *not* a dial; a lifetime e-LOND budget as the real power governor;
+  the bucket sets + the `derive_family` coherence gate doing the heavy lifting (see the governance
+  section).
+- **Bucket sets** — frozen in Phase 1 to *exactly* the values the 8 committed overlays use, so the
+  reachable count starts near 70; widening the buckets is a later, separately-pinned governance step.
+- **Phase-3 enumeration** — a *sampled bounded slice*, never run-to-completion (which would saturate
+  the e-LOND budget), with the saturation readout as the stop signal.
