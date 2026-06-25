@@ -54,16 +54,23 @@ PROPOSAL_FIELDS: tuple[str, ...] = ('overlay', 'ticker', 'params', 'predicted_si
 # (the scale-invalid branch's scale_ratio + the online_fdr_survivors additions e_value /
 # elond_level / elond_survivor + the Benjamini-Yekutieli additions fdr_q / by_survivor /
 # clean_survivor), and structure_ledger_rows (statistic / statistic_kind / data_lineage_hash).
-# Pure hypothesis-coordinate keys (phase / template / overlay / ticker / params /
-# predicted_sign / end) are NOT banned — they are the scrubbed corpus's legitimate content.
-# When a new result field is added to any of those producers, add it here in the same change;
-# the always-run test_read_gate_wire.py::TestBannedSetCompleteness pins this set against the
-# live engine's result keys, so an unbanned result field fails CI.
+# The owner-facing search_saturation readout (edge_search.py) is ALSO a producer: it is
+# display-only and reaches no proposer input today (the SAFE_FIELDS scrub strips it on any
+# mis-route), but its result keys (best_p / ceiling_t / required_t / required_p / e_required /
+# survivors / past_bar) are banned anyway so the belt — assert_numberless — catches the whole
+# dict if a future change ever routes it across the gate. Pure hypothesis-coordinate keys
+# (phase / template / overlay / ticker / params / predicted_sign / end) and the public ledger
+# size `n` are NOT banned — they are the scrubbed corpus's legitimate content. When a new
+# result field is added to any of those producers, add it here in the same change; the
+# always-run test_read_gate_wire.py::TestBannedSetCompleteness pins this set against the live
+# engine's result keys, and TestSearchSaturation pins the saturation readout's keys.
 BANNED_RESULT_FIELDS: frozenset[str] = frozenset({
     't_stat_newey_west', 'nw_lag', 'p_value', 'e_value', 'elond_level', 'statistic',
     'statistic_kind', 'sign_ok', 'scale_ratio', 'sharpe', 'ann_excess_return_pct',
     'n_days', 'no_trades', 'data_lineage_hash', 'measurement_invalid',
     'elond_survivor', 'by_survivor', 'clean_survivor', 'fdr_q',
+    # search_saturation (owner-facing readout) — display-only, banned for belt-completeness
+    'best_p', 'ceiling_t', 'required_t', 'required_p', 'e_required', 'survivors', 'past_bar',
 })
 
 

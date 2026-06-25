@@ -2217,6 +2217,47 @@ def _format_llm_round(res: dict[str, Any]) -> str:
     return '\n'.join(lines)
 
 
+def search_saturation(ledger_rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """OWNER-FACING saturation diagnostic for the lifetime e-LOND search: has the rising bar
+    overtaken what this grammar x data can produce? Compares the threshold the NEXT cell must
+    clear (`next_flag_threshold`, given the discoveries so far) against the strongest cell
+    observed — the empirical ceiling, the smallest `p_value` in the ledger. `past_bar` is True
+    when even that best cell could not be flagged at the next position: the cue to STOP
+    recording (more rounds only tighten the bar, with R = 0 discoveries to loosen it) and
+    change an input — widen the grammar, or move to the time-axis holdout.
+
+    SEAL NOTE: this reads RESULT statistics (the best p/t and the threshold), so it is
+    strictly DISPLAY-ONLY. It is computed in the owner/CLI layer AFTER a round and must NEVER
+    be routed into a proposer input (the numberless prompt, the scrubbed corpus, or the oracle
+    reply). Its keys sit deliberately outside SAFE_FIELDS / PROPOSAL_FIELDS, and no
+    proposer-path function references it (pinned by `TestSearchSaturation`)."""
+    from evalue_fdr import next_flag_threshold, online_fdr_survivors, z_from_p_one_sided
+    n = len(ledger_rows)
+    survivors = sum(1 for r in online_fdr_survivors(ledger_rows) if r.get('elond_survivor'))
+    valid = [r['p_value'] for r in ledger_rows if r.get('p_value') is not None]
+    best_p = min(valid) if valid else None
+    thr = next_flag_threshold(n, survivors)
+    ceiling_t = z_from_p_one_sided(best_p) if best_p is not None else None
+    past_bar = best_p is None or thr.t_required > ceiling_t
+    return {'n': n, 'survivors': survivors, 'best_p': best_p, 'ceiling_t': ceiling_t,
+            'required_t': thr.t_required, 'required_p': thr.p_required,
+            'e_required': thr.e_required, 'past_bar': past_bar}
+
+
+def format_saturation(sat: dict[str, Any]) -> str:
+    """One-line owner-facing readout of `search_saturation` (DISPLAY-ONLY — it carries result
+    statistics, so it is never routed to a proposer; see the seal note there)."""
+    nxt = sat['n'] + 1
+    if sat['best_p'] is None:
+        return (f"search saturation: next cell (pos {nxt}) needs t>={sat['required_t']:.2f} "
+                f"(p<={sat['required_p']:.1e}); no scored cell yet")
+    verdict = ('PAST THE BAR — more rounds cannot flag; widen the grammar or move to the '
+               'time-axis holdout') if sat['past_bar'] else 'headroom remains'
+    return (f"search saturation: next cell (pos {nxt}) needs t>={sat['required_t']:.2f} "
+            f"(p<={sat['required_p']:.1e}); best of {sat['n']} is t~={sat['ceiling_t']:.2f}, "
+            f"R={sat['survivors']} — {verdict}")
+
+
 def main() -> None:
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == 'structure':
@@ -2265,6 +2306,8 @@ def main() -> None:
                   f'  ran + lifetime-judged {len(res["rows"])} cell(s) (dry run — nothing recorded)')
         else:
             print('  preview only — pass --run to score, --record to record')
+        # owner-facing saturation readout (display-only; reads the post-round ledger)
+        print('  ' + format_saturation(search_saturation(load_idea_ledger())))
         return
     print('Loading search runs (sealed set excluded; a few minutes cold) ...',
           flush=True)

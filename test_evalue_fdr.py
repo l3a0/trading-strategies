@@ -16,14 +16,17 @@ import pytest
 from evalue_fdr import (
     CALIBRATOR_KAPPA,
     ELOND_GAMMA_C,
+    FlagThreshold,
     ONLINE_FDR_ALPHA,
     _assert_calibrator_admissible,
     _calibrator_integral,
     calibrate_p_to_e,
     e_bh,
     elond,
+    next_flag_threshold,
     online_fdr_survivors,
     registered_gamma,
+    z_from_p_one_sided,
 )
 
 
@@ -188,3 +191,47 @@ class TestOnlineFdrParity:
             d = ref.test_one_detail(e)
             assert m.rejected == d.rejected
             assert m.level == pytest.approx(d.test_level, rel=1e-9)
+
+
+class TestFlagThreshold:
+    """next_flag_threshold — the e-LOND bar the NEXT cell must clear (the saturation signal)."""
+
+    def test_namedtuple_and_position(self) -> None:
+        thr = next_flag_threshold(65, 0)
+        assert isinstance(thr, FlagThreshold)
+        assert thr.position == 66
+
+    def test_pins_the_position_66_bar(self) -> None:
+        # 65 recorded, 0 discoveries — the live ledger state this readout was built for
+        thr = next_flag_threshold(65, 0)
+        assert thr.t_required == pytest.approx(6.29, abs=0.02)
+        assert thr.p_required == pytest.approx(1.6e-10, rel=0.05)
+        assert thr.e_required == pytest.approx(1.0 / thr.level)
+
+    def test_inverts_the_calibrator_exactly(self) -> None:
+        # a cell exactly at p_required has an e-value exactly at the bar (1 / level)
+        thr = next_flag_threshold(40, 0)
+        assert calibrate_p_to_e(thr.p_required) == pytest.approx(1.0 / thr.level, rel=1e-6)
+
+    def test_bar_rises_monotonically_with_no_discoveries(self) -> None:
+        ts = [next_flag_threshold(n, 0).t_required for n in (1, 10, 65, 100, 500)]
+        assert all(a < b for a, b in zip(ts, ts[1:]))      # strictly increasing as gamma shrinks
+
+    def test_a_discovery_loosens_the_bar(self) -> None:
+        # the (R + 1) reward: R 0 -> 1 doubles the level, lowering the required strength
+        base, rewarded = next_flag_threshold(65, 0), next_flag_threshold(65, 1)
+        assert rewarded.level == pytest.approx(2 * base.level)
+        assert rewarded.t_required < base.t_required
+
+
+class TestZFromP:
+    """z_from_p_one_sided — one-sided z for the saturation readout (legibility only)."""
+
+    def test_known_quantiles(self) -> None:
+        assert z_from_p_one_sided(0.5) == pytest.approx(0.0, abs=1e-9)
+        assert z_from_p_one_sided(0.025) == pytest.approx(1.96, abs=0.01)
+        assert z_from_p_one_sided(0.001) == pytest.approx(3.0902, abs=0.01)
+
+    def test_extreme_tail_stays_finite(self) -> None:
+        z = z_from_p_one_sided(1e-300)         # 1 - p underflows; the asymptotic guard fires
+        assert math.isfinite(z) and z > 30

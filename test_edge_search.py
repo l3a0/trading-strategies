@@ -78,6 +78,8 @@ from edge_search import (
     propose_structure_candidates,
     run_proposer_round,
     score_and_record,
+    search_saturation,
+    format_saturation,
     assert_numberless,
     _load_ticker_data,
     load_idea_ledger,
@@ -2019,3 +2021,70 @@ class TestProposerReasoning:
         assert 'accepted' in out and 'harvest the variance premium' in out
         # the menu-walker (no model -> batch None) shows no reasoning block
         assert _format_llm_round({'candidates': [], 'rejected': [], 'needs_onboard': [], 'batch': None}) == ''
+
+
+class TestSearchSaturation:
+    """search_saturation / format_saturation — the owner-facing 'are we past the bar?' readout.
+    It carries RESULT statistics (best p/t, the threshold), so it is strictly DISPLAY-ONLY and
+    must never reach a proposer input."""
+
+    @staticmethod
+    def _ledger(ps):
+        return [{'template': f't{i}', 'ticker': 'AAA', 'params': {}, 'predicted_sign': 1,
+                 'p_value': p} for i, p in enumerate(ps)]
+
+    def test_past_bar_when_best_cell_cannot_be_flagged(self) -> None:
+        sat = search_saturation(self._ledger([0.4] * 64 + [0.015]))     # best t~2.17, bar t~6.3
+        assert sat['n'] == 65 and sat['survivors'] == 0
+        assert sat['best_p'] == 0.015
+        assert sat['required_t'] > sat['ceiling_t']
+        assert sat['past_bar'] is True
+
+    def test_headroom_when_a_strong_cell_beats_the_bar(self) -> None:
+        sat = search_saturation(self._ledger([5e-8]))                   # t~5.33, above the early bar
+        assert sat['ceiling_t'] > sat['required_t']
+        assert sat['past_bar'] is False
+
+    def test_empty_ledger_has_no_ceiling(self) -> None:
+        sat = search_saturation([])
+        assert sat['best_p'] is None and sat['past_bar'] is True
+        assert 'no scored cell yet' in format_saturation(sat)
+
+    def test_format_carries_the_verdict(self) -> None:
+        past = format_saturation(search_saturation(self._ledger([0.4] * 64 + [0.015])))
+        assert 'PAST THE BAR' in past and 't>=' in past
+        assert 'headroom remains' in format_saturation(search_saturation(self._ledger([5e-8])))
+
+    def test_display_only_never_in_a_proposer_path(self) -> None:
+        # SEAL: no proposer-facing function references the saturation readout, so its result
+        # statistics cannot reach the numberless prompt / scrubbed corpus / oracle reply. The
+        # list spans the whole proposer surface — the prompt/corpus builders, the gate, BOTH
+        # round entry points (run_proposer_round, propose_structure_candidates), the oracle
+        # seam, and the two LLM authors' __call__.
+        import inspect
+
+        import edge_search
+        proposer_surface = (
+            edge_search.build_proposer_prompt, edge_search.build_proposer_corpus,
+            edge_search.render_proposer_corpus, edge_search.scrub_ledger_row,
+            edge_search.load_proposer_corpus, edge_search.llm_propose_candidates,
+            edge_search.propose_structure_candidates, edge_search.run_proposer_round,
+            edge_search.score_and_record, edge_search.record_provenance,
+            edge_search.ClaudeProposer.__call__, edge_search.ClaudeCodeProposer.__call__)
+        for fn in proposer_surface:
+            src = inspect.getsource(fn)
+            assert 'search_saturation' not in src and 'format_saturation' not in src, fn
+        # PRIMARY control: its keys sit outside the corpus / proposal allow-lists, so even a
+        # mis-route would be dropped by the SAFE_FIELDS / PROPOSAL_FIELDS scrub.
+        from edge_search import SAFE_FIELDS
+        from read_gate_wire import BANNED_RESULT_FIELDS, PROPOSAL_FIELDS, assert_numberless
+        keys = set(search_saturation(self._ledger([0.02])))
+        assert not (keys & set(SAFE_FIELDS))
+        assert not (keys & set(PROPOSAL_FIELDS))
+        # BELT (defense-in-depth): every result-bearing key is banned — only the public ledger
+        # size `n` is not a result — so assert_numberless catches the WHOLE dict if a future
+        # change ever routes it across the gate (the completeness invariant read_gate_wire.py
+        # declares load-bearing).
+        assert (keys - {'n'}) <= BANNED_RESULT_FIELDS
+        with pytest.raises(ValueError, match='numberless'):
+            assert_numberless(search_saturation(self._ledger([0.02])))
