@@ -62,10 +62,13 @@ never a free number. This is load-bearing for the seal (see "The numberless-valu
 
 A **`Composition`** is `(legs: 1..MAX_LEGS, hedge_rule, predicted_sign)` subject to
 
-- `≤ MAX_EXPIRATIONS` distinct expiries,
-- `|net_delta| ≤ MAX_NET_DELTA` (forced by the engine's `[-1, +1]·shares` hedge clamp — a
-  composition whose net position-delta per contract exceeds 1.0 would be *under-hedged*, so its
-  "delta-hedged" P&L is not vol-isolated and `short_vol_statistics`' rf-netting identity breaks).
+- `≤ MAX_EXPIRATIONS` distinct expiries (a governance cap), and
+- `|net_delta| ≤ 1.0` — **not a tunable cap but a correctness invariant** fixed by the engine's
+  `[-1, +1]·shares` hedge clamp: a composition whose net position-delta per contract exceeds 1.0 is
+  *under-hedged*, so its "delta-hedged" P&L is not vol-isolated and `short_vol_statistics`' rf-netting
+  identity breaks. Because delta is entry-day dependent, this is enforced at **runtime, fail-closed**
+  (→ `measurement_invalid`) on the resolved legs, alongside the inline mechanism gate — not at
+  construction. It becomes a knob only if the hedge is ever generalized beyond one lot per contract.
 
 The reachable space is every composition within `(primitive lattices, MAX_LEGS, MAX_EXPIRATIONS)` —
 **finite and enumerable in principle.** That finiteness is what keeps governance and e-LOND power
@@ -147,25 +150,44 @@ scoring boundary, and the data identity, none of which the structure-composition
 
 ## Countability → a bounded production grammar (governance)
 
-The governance artifact shifts from *the named menu* to *the grammar space itself*. The **human-signed,
-pinned** object becomes:
+The governance artifact shifts from *the named menu* to *the grammar space itself*: you review the
+*space* once, the LLM walks it freely, and a composition outside an already-reviewed sub-grammar (a
+new primitive, a raised cap) is a widening — **still human-signed and pinned**, exactly as a named
+widening is today, but at the level of the rule-set rather than the menu. "A survivor escalates; a
+widening is human-signed" survives intact, one level up.
 
-- the primitive bucket sets `DELTAS`, `OFFSETS`, `DTES`, `GAPS`, `RIGHTS`, `SIDES`;
-- the caps `MAX_LEGS`, `MAX_EXPIRATIONS`, `MAX_NET_DELTA`, `MAX_DISTINCT_STRIKES`;
-- the `hedge_rule` set and the `derive_family` rule table.
+But the governance has **four distinct parts doing different jobs**, and only two are tunable "knobs"
+in the sense the closed lattice was:
 
-You review the *space* once; the LLM walks it freely. The reachable-composition count (finite under
-the caps) is the new denominator the BY diagnostic and the e-LOND power argument need; it replaces
-`grid_universe_size()`. A composition *outside* an already-reviewed sub-grammar (a new primitive, a
-raised cap) is a widening — **still human-signed and pinned**, exactly as a named widening is today,
-but now at the level of the rule-set rather than the menu. "A survivor escalates; a widening is
-human-signed" survives intact, one level up.
+1. **Two space caps** — `MAX_LEGS` (complexity) and `MAX_EXPIRATIONS` (term reach). Initial values
+   `4` and `2` are *exactly* the committed sub-grammar's bounds (the iron condor is 4 legs, the
+   calendar 2 expiries), so the named grammar stays a tight sub-grammar and the obvious next
+   structures (ratios, butterflies, double calendars) are reachable.
+2. **One correctness invariant** — `|net_delta| ≤ 1.0`, fixed by the hedge clamp (above),
+   runtime-enforced, *not* a governance dial.
+3. **A lifetime e-LOND budget** (plus the per-round `max_batch` that already exists) — **the actual
+   power governor.** The saturation work showed the failure mode is *spend*, not space size:
+   `γ_t → 0` as you record, regardless of how large the menu is. So the honest bound on power is a
+   committed ceiling on *total recorded comparisons*, with `search_saturation` as the live
+   "you're out of power" monitor. This is the knob the closed grammar never needed (70 cells could
+   not bleed the budget) and the open grammar cannot do without.
+4. **The bucket sets + the coherence gate** — which do **more** governance than any integer cap. The
+   raw reachable count at `MAX_LEGS=4` is astronomical (leg-types in the low hundreds, unordered
+   multisets up to four → millions), so the caps alone bound the *review space*, not the live search.
+   What actually bounds the search is (a) freezing the bucket sets (`DELTAS`/`OFFSETS`/`DTES`/`GAPS`)
+   initially to *exactly* the values the 8 overlays use — the recommended default (open Q2) — so the
+   *coherent* space starts near the current 70, and (b) the `derive_family` / sign-coherence gate,
+   which rejects the vast mechanism-incoherent majority before it enters the FDR pool. So the
+   **effective denominator is empirical** — compositions that pass the inline gate *and* trade —
+   far below the raw count.
 
-This is also the honest answer to *which knobs to pin*: `MAX_LEGS` (composition complexity),
-`MAX_EXPIRATIONS` (term reach), and `MAX_NET_DELTA` (the hedge-clamp validity bound) are the three
-that bound *correctness and power*; the bucket sets bound the *resolution*. All six pin together as
-the governance artifact, with the always-run test recomputing the reachable count the way
-`TestClosedGrammar` recomputes `grid_universe_size()` today.
+So the pinned governance object is: the bucket sets + `MAX_LEGS` + `MAX_EXPIRATIONS` + the lifetime
+budget + the `derive_family` rule table (the `[-1, +1]` clamp pins `|net_delta| ≤ 1.0` for free). The
+always-run test recomputes the *reachable* count the way `TestClosedGrammar` recomputes
+`grid_universe_size()` today — but that count is a governance/review number, **not** the power bound;
+the lifetime budget is the power bound. One caveat it must cover: an infeasible composition that never
+trades still consumes an e-LOND slot (`p=None → e=0` counts toward the stream), so the open grammar
+should pre-filter obvious infeasibility before scoring, or treat it as a power cost the budget pays.
 
 ## The honesty argument, and the caveat I have to keep
 
@@ -265,14 +287,18 @@ steps cleanly, so the parallelism is contained to the scoring fan-out and does n
   tickers, the sealed vault, and onboarding stay human-gated exactly as today.
 - **No promotion.** A survivor under the open grammar is still EXPLORATORY and escalates to manual
   pre-registration; the kill-gate kills, never crowns, until the Phase-C holdout exists.
-- **No silent cap raise.** Raising `MAX_LEGS` / `MAX_EXPIRATIONS` / `MAX_NET_DELTA` or adding a bucket
-  is a widening — human-signed and pinned, the same governance act as a named widening today.
+- **No silent cap raise.** Raising `MAX_LEGS` / `MAX_EXPIRATIONS` / the lifetime budget, or adding a
+  bucket, is a widening — human-signed and pinned, the same governance act as a named widening today.
+  (`|net_delta| ≤ 1.0` is *not* in this list: it is a correctness invariant fixed by the hedge clamp,
+  not a governance dial — it changes only if the hedge itself is generalized.)
 
 ## Open questions for review
 
-- Are `MAX_LEGS`, `MAX_EXPIRATIONS`, `MAX_NET_DELTA` the right governance knobs, and what initial
-  values (e.g. `MAX_LEGS=4`, `MAX_EXPIRATIONS=2`, `MAX_NET_DELTA=1.0`)? These bound correctness
-  (the hedge clamp), term reach, and complexity; the bucket sets bound resolution.
+The governance-knobs question is **resolved** in the section above (two space caps `MAX_LEGS=4` /
+`MAX_EXPIRATIONS=2`, `|net_delta| ≤ 1.0` as a runtime invariant not a dial, a lifetime e-LOND budget
+as the real power governor, and the bucket sets + coherence gate doing the heavy lifting). What
+remains open:
+
 - Should Phase 1 freeze the bucket sets to *exactly* what the 8 committed overlays use (so the
   sub-grammar test is tight and the reachable count starts near 70), and widen the buckets only as a
   later, separately-pinned governance step?
