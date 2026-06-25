@@ -198,6 +198,14 @@ Nothing is exposed by the DEFAULT path, and the LLM path is sealed:
   (provenance is lineage-adjacent, read by none of them). Treat it as insight, never evidence: the
   t-stat and kill-gate judge, a persuasive story must never promote (pinned by
   `TestProposerReasoning`).
+- **The search-saturation readout is owner-facing, not in the loop.** `search_saturation` /
+  `format_saturation` (edge_search.py) print a one-line "are we past the bar?" after each proposer
+  round: the e-LOND threshold the NEXT cell must clear (`next_flag_threshold`, evalue_fdr.py) vs. the
+  strongest cell the ledger has produced. It reads RESULT statistics (the best p/t and the threshold),
+  so it is strictly DISPLAY-ONLY — computed in the CLI/owner layer, never routed into a proposer input.
+  Its keys sit outside `SAFE_FIELDS` / `PROPOSAL_FIELDS`, and no proposer-path function references it,
+  so its numbers cannot reach the numberless prompt, the scrubbed corpus, or the oracle reply (pinned
+  by `TestSearchSaturation`).
 
 So the correct status line is: **the deterministic proposer is safe; the LLM proposer is now wired
 (`ClaudeProposer`, Phase B) behind the in-process information boundary (numberless prompt +

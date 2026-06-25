@@ -27,6 +27,7 @@ endpoint. Promotion stays CLOSED: e-LOND SURFACES survivors, never crowns them.
 from __future__ import annotations
 
 import math
+from statistics import NormalDist
 from typing import Callable, NamedTuple, Sequence
 
 # --- registered constants (prereg S3) ----------------------------------------
@@ -162,3 +163,47 @@ def online_fdr_survivors(ledger_rows: Sequence[dict], alpha: float = ONLINE_FDR_
              'elond_level': s.level,
              'elond_survivor': s.rejected}
             for r, e, s in zip(ledger_rows, e_values, steps)]
+
+
+# --- search-saturation diagnostic (owner-facing; reads result stats, DISPLAY-ONLY) ---------
+def z_from_p_one_sided(p: float) -> float:
+    """The one-sided z-score for an upper-tail probability `p`: the `z` with P(Z >= z) = p
+    under the standard normal (the inverse of the erfc tail `_asymptotic_p` evaluates). Used
+    only for the owner-facing search-saturation readout — a t-stat reads more naturally than a
+    1e-10 p. Guards the extreme upper tail, where `1 - p` underflows to 1.0, with the standard
+    tail asymptotic z ~= sqrt(-2 ln p)."""
+    p = min(max(float(p), 1e-300), 1.0)
+    q = 1.0 - p
+    if q >= 1.0:                          # 1 - p underflowed; fall back to the tail asymptotic
+        return math.sqrt(max(0.0, -2.0 * math.log(p)))
+    return NormalDist().inv_cdf(q)
+
+
+class FlagThreshold(NamedTuple):
+    position: int        # the 1-based stream position this bar governs
+    level: float         # alpha_t = alpha * gamma_t * (R + 1)
+    e_required: float    # the e-value a cell must reach to be flagged: 1 / level
+    p_required: float    # that e-value as a p-value under the kappa-calibrator
+    t_required: float    # `p_required` as a one-sided z/t, for legibility
+
+
+def next_flag_threshold(n_recorded: int, n_survivors: int,
+                        alpha: float = ONLINE_FDR_ALPHA,
+                        kappa: float = CALIBRATOR_KAPPA) -> FlagThreshold:
+    """The e-LOND bar the NEXT cell (stream position `n_recorded + 1`) must clear to be
+    flagged, given `n_survivors` discoveries so far (R). The level is
+    `alpha * gamma(t) * (R + 1)`; a cell is flagged iff its e-value >= 1 / level, and the
+    admissible calibrator `e = kappa * p^(kappa-1)` inverts that to
+    `p_required = (kappa * level) ** (1 / (1 - kappa))`.
+
+    This is the SEARCH-SATURATION signal: with R = 0 (no discovery yet to earn the `(R + 1)`
+    reward) `gamma(t)` shrinks monotonically, so the required strength only RISES with every
+    recorded cell. When `t_required` overtakes the strongest cell the data can produce, more
+    rounds cannot flag anything — the cue to widen the grammar or move to the time-axis
+    holdout, not to keep recording."""
+    t = n_recorded + 1
+    level = alpha * registered_gamma(t) * (n_survivors + 1)
+    e_required = 1.0 / level if level > 0.0 else math.inf
+    # invert  kappa * p^(kappa-1) >= 1 / level  ->  p <= (kappa * level) ** (1 / (1 - kappa))
+    p_required = min(max((kappa * level) ** (1.0 / (1.0 - kappa)), 0.0), 1.0)
+    return FlagThreshold(t, level, e_required, p_required, z_from_p_one_sided(p_required))
