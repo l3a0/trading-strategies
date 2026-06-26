@@ -20,8 +20,8 @@ from typing import Any, Callable
 
 import pandas as pd
 
-from edge_search import PremiumFamily
-from generative_grammar import Composition, Leg
+from edge_search import STRUCTURE_CAPITAL, PremiumFamily
+from generative_grammar import Composition, Leg, canonical_key
 from real_cc_backtest import COMMISSION_PER_SHARE, select_entry
 from vol_premium import run_real_structure_overlay, select_put_entry
 
@@ -168,3 +168,34 @@ def run_composition(composition: Composition, dates: list[str], prices: list[flo
     return run_real_structure_overlay(
         dates, prices, store, params or {}, select=compose_legs(composition),
         entry_guard=entry_guard, hedge_mode=hedge_mode, management=management)
+
+
+def score_composition(composition: Composition, ticker: str, dates: list[str], prices: list[float],
+                      store: dict, *, capital: float = STRUCTURE_CAPITAL,
+                      hedge_mode: str = 'combined', entry_guard: str = 'each_short_positive',
+                      management: str = 'hold', params: dict | None = None) -> dict[str, Any]:
+    """Score ONE `Composition` on a ticker's pre-loaded chains — the generative KILL-GATE, the analog of
+    `edge_search.structure_kill_gate` for a composition (keyed by `canonical_key`, not a template name).
+    Runs the composition through the engine and scores its daily delta-hedged vol-P&L by the HAC t-stat's
+    closed-form asymptotic null (no RNG), the same statistic the named gate uses. A non-trading
+    composition (e.g. a put leg on a calls-only store) is `measurement_invalid` (p=None -> e=0: counts
+    toward the e-LOND stream, never flags), the campaign analog of the equivalence test's must-trade
+    guard. Phase 3b — the per-cell scorer the menu-walker and the Phase-4 LLM author both feed into."""
+    from edge_search import _asymptotic_p
+    from vol_premium import short_vol_statistics
+    p = {**(params or {}), 'capital': capital}
+    summary, trades, eq = run_composition(composition, dates, prices, store, p,
+                                          hedge_mode=hedge_mode, entry_guard=entry_guard,
+                                          management=management)
+    sign = composition.predicted_sign
+    row = {'phase': 'structure', 'key': canonical_key(composition), 'ticker': ticker,
+           'predicted_sign': sign}
+    if not trades:
+        return {**row, 'measurement_invalid': True, 'no_trades': True,
+                't_stat_newey_west': None, 'sign_ok': False, 'p_value': None}
+    st = short_vol_statistics(eq, summary['capital'], rf=summary['risk_free_rate'])
+    t_nw = float(st['t_stat_newey_west'])
+    t_sign = (t_nw > 0) - (t_nw < 0)                          # +1 / -1 / 0, matching np.sign
+    return {**row, 'n_days': st['n_days'], 't_stat_newey_west': t_nw, 'nw_lag': st['nw_lag'],
+            'sharpe': st['sharpe'], 'ann_excess_return_pct': st['ann_excess_return_pct'],
+            'sign_ok': bool(t_sign == sign), 'p_value': round(_asymptotic_p(t_nw, sign), 4)}
