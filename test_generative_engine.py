@@ -11,9 +11,9 @@ import pandas as pd
 import pytest
 
 from edge_search import STRUCTURE_GRAMMAR, PremiumFamily
-from generative_engine import derive_family, run_composition
-from generative_grammar import composition_of
-from vol_premium import STRUCTURE_SPECS
+from generative_engine import derive_family, run_composition, score_composition
+from generative_grammar import canonical_key, composition_of
+from vol_premium import STRUCTURE_SPECS, short_vol_statistics
 
 # Reuse the named-overlay equivalence fixtures (the SPY calls+puts merge, the named runners, the
 # committed per-overlay params) so the composer is checked against the SAME data path + config.
@@ -94,3 +94,33 @@ class TestComposerEquivalence:
         assert len(t_named) > 0, f'{name} never traded on this store'   # the must_trade guard
         assert t_comp == t_named                                        # identical legs / entries / exits
         pd.testing.assert_frame_equal(eq_comp, eq_named)               # byte-identical daily equity
+
+
+@pytest.mark.skipif(not (_HAVE_SPY and _HAVE_SPY_PUTS),
+                    reason='needs spy_option_dailies.csv + spy_option_dailies_puts.csv (or .gz twins)')
+class TestScoreComposition:
+    """Phase 3b: `score_composition` (the generative kill-gate) yields the SAME HAC t-stat as the named
+    kill-gate for a composed named overlay — the scoring half of the byte-identical equivalence, and the
+    per-cell scorer the Phase-4 LLM author feeds into."""
+
+    @pytest.fixture(scope='class')
+    def market(self):
+        return _equiv_market('SPY', _SPY_DAILIES, extra_paths=[_SPY_PUTS])
+
+    @pytest.mark.parametrize('name', sorted(_STRUCT_PARAMS))
+    def test_t_stat_matches_the_named_overlay(self, market, name) -> None:
+        dates, prices, store = market
+        spec = STRUCTURE_SPECS[name]
+        s, _, eq_named = _NAMED_OVERLAY[name](dates, prices, store,
+                                              {**_STRUCT_PARAMS[name], 'capital': 100_000})
+        t_named = short_vol_statistics(eq_named, s['capital'],
+                                       rf=s['risk_free_rate'])['t_stat_newey_west']
+        comp = composition_of(name, _STRUCT_PARAMS[name])
+        row = score_composition(
+            comp, 'SPY', dates, prices, store, capital=100_000, hedge_mode=spec['hedge_mode'],
+            entry_guard=spec['entry_guard'], management=spec['management'],
+            params={**spec['defaults'], **_STRUCT_PARAMS[name]})
+        assert not row.get('measurement_invalid')
+        assert row['key'] == canonical_key(comp)                        # keyed by canonical identity
+        assert row['t_stat_newey_west'] == pytest.approx(t_named, abs=1e-9)
+        assert row['p_value'] is not None and -1 <= row['predicted_sign'] <= 1
