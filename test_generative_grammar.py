@@ -128,6 +128,16 @@ class TestValidator:
             validate_composition(_comp(Leg('short', 'call', ('delta', 0.50), 30),
                                        Leg('short', 'put', ('same',), 30)))
 
+    def test_duplicate_legs_rejected(self) -> None:
+        # two IDENTICAL legs = N x one leg (a scale-multiple), NOT a new structure -> off-grammar, so the
+        # canonical form stays total (one structure, one key, no e-LOND re-spend). (Phase-4 seal finding.)
+        dup = Leg('short', 'call', ('delta', 0.25), 30)
+        with pytest.raises(GrammarError, match='duplicate legs'):
+            validate_composition(_comp(dup, dup))
+        # two legs differing in ANY coordinate are a real 2-leg structure and stay valid
+        ok = _comp(Leg('short', 'call', ('delta', 0.25), 30), Leg('short', 'put', ('delta', 0.25), 30))
+        assert validate_composition(ok) is ok
+
 
 class TestCanonicalKey:
     """canonical_key — total, order-invariant, sign-excluded content-addressed identity."""
@@ -244,9 +254,12 @@ class TestEnumerateCompositions:
         import math
         comps = enumerate_compositions(max_legs=2)
         lt = len(g.SIDES) * len(g.RIGHTS) * len(DELTAS)          # 28 leg-types
-        # 1-leg (140) + per-dte unordered 2-leg multisets (with repetition)
-        assert len(comps) == 140 + len(DTES) * (math.comb(lt, 2) + lt)
+        # 1-leg (140) + per-dte DISTINCT unordered 2-leg pairs (NO self-pair: a repeated leg is a
+        # scale-multiple, off-grammar — so comb(lt, 2), not + lt). 140 + 5*378 = 2030.
+        assert len(comps) == 140 + len(DTES) * math.comb(lt, 2)
         assert all(1 <= len(c.legs) <= 2 for c in comps)
+        # no yielded 2-leg structure repeats a leg (the totality fix)
+        assert all(len(set(c.legs)) == len(c.legs) for c in comps)
 
     def test_walk_covers_named_structures_in_the_slice(self) -> None:
         keys = {canonical_key(c) for c in enumerate_compositions()}
