@@ -39,7 +39,9 @@ trend_gate_runs/
 edge_ledger.jsonl
 # NOTE: idea_ledger.jsonl (the committed LIFETIME trial ledger, interlock #3a) is
 # the deliberate opposite — it is TRACKED, not ignored (deduped + deterministic,
-# so it does not churn). Do not add it here.
+# so it does not churn). Do not add it here. The same holds for gen_ledger.jsonl,
+# its generative twin (design A; the audit log of the generative search, pinned by
+# test_generative_search.py and narrated in docs/generative_search.md) — TRACKED.
 
 # Transient fetch-loop progress logs (download_option_dailies.py wrapper output)
 fetch_progress.log
