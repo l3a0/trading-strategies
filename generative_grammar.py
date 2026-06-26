@@ -208,3 +208,42 @@ def composition_of(overlay: str, params: dict, predicted_sign: int = 1) -> Compo
     else:
         raise GrammarError(f'unknown overlay {overlay!r}')
     return validate_composition(Composition(legs=legs, predicted_sign=predicted_sign))
+
+
+# --- the deterministic menu-walker over the production grammar (Phase 3) ----------------------------
+def enumerate_compositions(max_legs: int = 2) -> list[Composition]:
+    """Deterministic menu-walk over a BOUNDED SLICE of the production grammar — the generative analog of
+    `enumerate_grammar_templates`. Yields valid `Composition`s (predicted_sign +1, the harvesting
+    convention) in canonical-key order, deduped, with NO randomness.
+
+    The slice (Phase 3): every single-leg structure, plus every same-expiration two-leg structure — the
+    straddle / strangle / risk-reversal / spread families. It is a SLICE, not the whole space: the
+    `('same',)` calendar family and 3-4-leg structures (the iron condor) are reachable widenings of the
+    walk, not yet enumerated; and the run-time stop is the SATURATION READOUT, not this enumerator (the
+    full reachable space is astronomical — `reachable_upper_bound()` — so the menu-walker scores a
+    sampled prefix and stops when the e-LOND bar overtakes the data ceiling, per
+    docs/generative_grammar_plan.md). Mechanism-incoherent and high-net-delta cells in the slice are
+    filtered at SCORE time (`derive_family` / the `|net_delta| <= 1.0` runtime gate), not here."""
+    seen: set[str] = set()
+    out: list[tuple[str, Composition]] = []
+
+    def _add(legs: tuple[Leg, ...]) -> None:
+        try:
+            comp = validate_composition(Composition(legs=legs, predicted_sign=1))
+        except GrammarError:
+            return
+        key = canonical_key(comp)
+        if key not in seen:
+            seen.add(key)
+            out.append((key, comp))
+
+    leg_types = [(side, right, d) for side in SIDES for right in RIGHTS for d in DELTAS]
+    for side, right, d in leg_types:                              # every single-leg structure
+        for dte in DTES:
+            _add((Leg(side, right, ('delta', d), dte),))
+    if max_legs >= 2:                                             # every same-expiration two-leg structure
+        for dte in DTES:
+            for i, (s1, r1, d1) in enumerate(leg_types):
+                for s2, r2, d2 in leg_types[i:]:                 # unordered pairs (the canonical form dedups)
+                    _add((Leg(s1, r1, ('delta', d1), dte), Leg(s2, r2, ('delta', d2), dte)))
+    return [comp for _, comp in sorted(out)]                     # canonical-key order — deterministic

@@ -24,6 +24,7 @@ from generative_grammar import (
     Leg,
     canonical_key,
     composition_of,
+    enumerate_compositions,
     leg_type_count,
     reachable_upper_bound,
     validate_composition,
@@ -216,3 +217,41 @@ class TestNamedSubGrammar:
         assert len({leg.dte for leg in cal.legs}) == 2
         assert any(leg.strike == ('same',) for leg in cal.legs)
         assert all(leg.right == 'call' for leg in cal.legs)
+
+
+class TestEnumerateCompositions:
+    """enumerate_compositions — the deterministic menu-walker over a bounded slice of the grammar."""
+
+    def test_deterministic_no_randomness(self) -> None:
+        a = [canonical_key(c) for c in enumerate_compositions()]
+        b = [canonical_key(c) for c in enumerate_compositions()]
+        assert a == b
+
+    def test_all_valid_and_distinct(self) -> None:
+        comps = enumerate_compositions()
+        for c in comps:
+            assert validate_composition(c) is c                  # every yielded cell is on-grammar
+        keys = [canonical_key(c) for c in comps]
+        assert len(set(keys)) == len(keys)                       # no duplicate structures
+        assert all(c.predicted_sign == 1 for c in comps)         # the harvesting convention
+
+    def test_single_leg_slice_count(self) -> None:
+        ones = enumerate_compositions(max_legs=1)
+        assert all(len(c.legs) == 1 for c in ones)
+        assert len(ones) == len(g.SIDES) * len(g.RIGHTS) * len(DELTAS) * len(DTES) == 140
+
+    def test_two_leg_slice_count(self) -> None:
+        import math
+        comps = enumerate_compositions(max_legs=2)
+        lt = len(g.SIDES) * len(g.RIGHTS) * len(DELTAS)          # 28 leg-types
+        # 1-leg (140) + per-dte unordered 2-leg multisets (with repetition)
+        assert len(comps) == 140 + len(DTES) * (math.comb(lt, 2) + lt)
+        assert all(1 <= len(c.legs) <= 2 for c in comps)
+
+    def test_walk_covers_named_structures_in_the_slice(self) -> None:
+        keys = {canonical_key(c) for c in enumerate_compositions()}
+        # the short_vol (1-leg) and straddle (same-dte 2-leg) shapes are reachable by the walk
+        assert canonical_key(composition_of('short_vol', {'target_delta': 0.25, 'dte': 30})) in keys
+        assert canonical_key(composition_of('straddle', {'dte': 30})) in keys
+        # the calendar (cross-tenor same_k) is NOT in this slice yet — a documented widening
+        assert canonical_key(composition_of('calendar', {'near_dte': 30, 'far_dte': 90})) not in keys
