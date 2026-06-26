@@ -48,6 +48,19 @@ With `Σγ_t ≤ 1` spread over the stream and **R = 0** discoveries to loosen i
 position 145. It had already overtaken the empirical ceiling at stream position 2. The saturation readout
 says it plainly: *"more rounds cannot flag — widen the grammar or move to the time-axis holdout."*
 
+**And the strongest cell is exactly what noise predicts.** The 2.17 → 3.35 jump is not the search getting
+warmer — it is the search getting more chances to draw a high `t` by luck. The two ceilings are different
+*snapshots*: 2.17 is the best of the 75 published cells (SPY's `Δ0.25` short call); 3.35 is the best of all
+145, and that cell is itself generative — SPY's deep-OTM `Δ0.05` short call (`p ≈ 0.0004`). The grammar's
+finer delta granularity (0.05 is a strike bucket; the published campaign walked only 0.25 and ATM)
+surfaced a structure that collects tiny premium and is almost never assigned: steady small wins, a higher
+`t`. It clears the conventional `t ≥ 2` bar *and* the HLZ `t ≥ 3` multiple-testing bar, and as a
+*first-and-only* hypothesis it would even clear the e-LOND control (that bar is `t ≥ 3.11`, and
+`3.35 > 3.11`). But it is the best of **131 scored cells**, and the largest of about 131 independent noise
+draws is `≈ √(2·ln 131) ≈ 3.1` — almost exactly what was observed. The rising e-LOND bar (`3.11 → 6.63`)
+is precisely that accounting: a result that looks significant on its own evaporates once you count the
+looks it took to find it. That is the entire reason for the lifetime stream.
+
 ### 2. The mechanism gate rejects two-thirds of the proposals
 
 Of the 70 generative cells, **47 never reached the FDR pool**:
@@ -74,7 +87,7 @@ post-cutoff span are levers; recording more same-era cells is not.
 
 ## A curiosity worth a future tightening
 
-The grammar can still express a **degenerate** structure: a same-strike short + long put nets to ~flat
+The grammar can still express a **degenerate** structure: a same-strike short + long put nets to \~flat
 (the legs cancel), yet it "trades" and `derive_family` typed it `carry` from the tiny residual signature.
 It is economically null and non-significant, but it is the same family of edge case as the duplicate-leg
 scale-multiple the Phase-4 seal verification caught ([generative_grammar.py](../generative_grammar.py)
