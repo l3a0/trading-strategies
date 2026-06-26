@@ -118,6 +118,15 @@ def validate_composition(comp: Composition) -> Composition:
     n_exp = len({leg.dte for leg in legs})
     if n_exp > MAX_EXPIRATIONS:
         raise GrammarError(f'{n_exp} distinct expiries exceeds MAX_EXPIRATIONS={MAX_EXPIRATIONS}')
+    # legs must be DISTINCT. A repeated identical leg is N× one leg — a pure SCALE-MULTIPLE, not a new
+    # economic structure: its leg P&L (Σ sign·mid·shares) and its −Σ sign·delta hedge are both LINEAR in
+    # size, so the Newey-West t-stat / Sharpe / family are byte-identical to the single leg — yet (L,) and
+    # (L, L) carry DISTINCT canonical keys and would each spend e-LOND budget on the SAME idea, defeating
+    # the totality guarantee below. Size is not a grammar axis, so a multiset of legs is off-grammar.
+    # (Surfaced by the Phase-4 adversarial seal verification; the menu-walker's self-pair fed it too.)
+    if len(set(legs)) != len(legs):
+        raise GrammarError('duplicate legs — a composition is a SET of distinct legs (size is not a '
+                           'grammar axis; a repeated leg is a scale-multiple, not a new structure)')
     # a `('same',)` leg shares ONE unambiguous delta-anchored strike (one delta value at one tenor),
     # at a DIFFERENT tenor than that anchor. A same-tenor 'same' is a redundant spelling of a
     # `('delta', d)` leg (by parity the |delta| strike coincides), so forbidding it keeps the canonical
@@ -244,6 +253,9 @@ def enumerate_compositions(max_legs: int = 2) -> list[Composition]:
     if max_legs >= 2:                                             # every same-expiration two-leg structure
         for dte in DTES:
             for i, (s1, r1, d1) in enumerate(leg_types):
-                for s2, r2, d2 in leg_types[i:]:                 # unordered pairs (the canonical form dedups)
+                for s2, r2, d2 in leg_types[i + 1:]:             # DISTINCT unordered pairs — never the
+                    # i==i self-pair (two identical legs = a scale-multiple, off-grammar; would otherwise
+                    # be enumerated then rejected by validate_composition, double-charging nothing but
+                    # wasting the slot — so skip it at the source).
                     _add((Leg(s1, r1, ('delta', d1), dte), Leg(s2, r2, ('delta', d2), dte)))
     return [comp for _, comp in sorted(out)]                     # canonical-key order — deterministic

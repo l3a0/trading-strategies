@@ -12,6 +12,7 @@ docs/llm_proposer_plan.md.)
 THE CONTRACT (frozen at WIRE_VERSION):
 
   proposals (coordinate-only): {"overlay","ticker","params","predicted_sign"}  (PROPOSAL_FIELDS)
+  generative proposals (coordinate-only): {"legs":[...],"ticker","predicted_sign"}  (GEN_PROPOSAL_FIELDS)
   model identity (audit provenance):
     {"model_requested","model_served","temperature","prompt_sha"}  (REQUIRED_MODEL_FIELDS)
   the oracle seam's reply (score_and_record): one-bit verdicts only, NEVER a result statistic
@@ -37,6 +38,14 @@ REQUIRED_MODEL_FIELDS: tuple[str, ...] = (
 # the oracle echoes only these back in `rejected[].proposal` (so a proposer can't smuggle
 # extra keys through the reply, nor crash the numberless check with a banned-named key).
 PROPOSAL_FIELDS: tuple[str, ...] = ('overlay', 'ticker', 'params', 'predicted_sign')
+
+# The GENERATIVE author's proposal (Phase 4, generative_proposer.py) is also COORDINATES ONLY, but
+# drawn from the production grammar (generative_grammar) rather than the closed (overlay, params)
+# lattice: a composition is {legs: [{side, right, delta|strike, dte}, ...], ticker, predicted_sign}.
+# Same role as PROPOSAL_FIELDS — the oracle echoes only these back in `rejected[].proposal`. The nested
+# leg dicts carry ONLY grammar coordinates (no result-bearing key), so `assert_numberless` stays the
+# belt behind this allow-list, exactly as for the closed grammar's `params` dict.
+GEN_PROPOSAL_FIELDS: tuple[str, ...] = ('legs', 'ticker', 'predicted_sign')
 
 # Result statistics that must NEVER cross the read-gate to the proposer. The scrub
 # (build_proposer_corpus' SAFE_FIELDS allow-list) is the primary control — it drops

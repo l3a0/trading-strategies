@@ -191,7 +191,7 @@ jobs:
         # scoped and state changes go through monkeypatch (process-isolated per worker).
         include:
           - {bucket: vol-premium,   files: "test_vol_premium.py", args: ""}
-          - {bucket: edge-search,   files: "test_edge_search.py test_validate_dailies.py test_read_gate_wire.py test_generative_grammar.py test_generative_engine.py", args: "-n auto --dist loadscope"}
+          - {bucket: edge-search,   files: "test_edge_search.py test_validate_dailies.py test_read_gate_wire.py test_generative_grammar.py test_generative_engine.py test_generative_proposer.py", args: "-n auto --dist loadscope"}
           - {bucket: trend-explore, files: "test_trend_gate.py test_explorations.py", args: ""}
     steps:
       - uses: actions/checkout@v4
