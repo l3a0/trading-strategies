@@ -70,12 +70,12 @@ flowchart LR
       direction LR
       F["propose factor"]:::drop --> B["backtest"]:::drop --> Rf["refine on result"]:::drop --> F
     end
-    classDef keep fill:#eef0f5,stroke:#7b8aa6
-    classDef new fill:#d6f3e7,stroke:#1baf7a,stroke-width:2px
-    classDef drop fill:#fde2e2,stroke:#e34948,stroke-dasharray:5
+    classDef keep fill:#f1efe8,stroke:#5f5e5a,color:#2c2c2a
+    classDef new fill:#e6f1fb,stroke:#185fa5,stroke-width:2px,color:#042c53
+    classDef drop fill:#faeeda,stroke:#854f0b,stroke-dasharray:5,color:#412402
 ```
 
-Gray is the current system (unchanged); teal is what this design adds; red is what we keep out.
+Gray is the current system (unchanged); blue is what this design adds; amber (dashed) is what we keep out.
 
 ## 4. Agent mapping
 
