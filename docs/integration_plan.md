@@ -56,7 +56,7 @@ second backend that implements it. The option backend is unchanged; the honest c
 | `enumerate` | `enumerate_compositions` / `enumerate_grammar_templates` | bounded formula grammar (Qlib ops + depth/window caps), or the LLM author |
 | `validate` | `validate_composition` | bounded production rules (cap depth + operator/operand/window alphabets) |
 | `canonical_key` | `canonical_key` (sha256 of sorted leg tokens) | SymPy-normalize → sha256 (partial — see caveats) |
-| `mechanism` | `derive_family` (greek signature → family) | **no analog** — the gap |
+| `mechanism` | `derive_family` (greek signature → family) | **no greek analog** — built via a loading-regression check (see caveats) |
 | `lineage` | `_data_lineage_hash` | sha over the equity panel checksum + engine version |
 | `score` | `run_real_structure_overlay` + `short_vol_statistics` | Qlib `D.features` (eval formula → signal) + alphalens `calc_ic` → IC-t |
 
@@ -81,11 +81,11 @@ flowchart TB
     PR["backend protocol — formalized<br/>enumerate · canonical_key · validate · score to t,p,family · lineage"]:::new
     OB["option backend — existing<br/>generative_grammar + vol_premium + short_vol_statistics"]:::keep
     FB["factor backend — new<br/>Qlib grammar + engine · alphalens IC/t · SymPy dedup"]:::new
-    GAP["mechanism gate — no factor analog<br/>no derive_family; leans on the holdout"]:::gap
+    GAP["mechanism gate — no greek to read<br/>build a loading-regression check; holdout still binds"]:::gap
     HC --> PR
     PR --> OB
     PR --> FB
-    FB -. no analog .-> GAP
+    FB -. must build .-> GAP
     classDef keep fill:#f1efe8,stroke:#5f5e5a,color:#2c2c2a
     classDef new fill:#e6f1fb,stroke:#185fa5,stroke-width:2px,color:#042c53
     classDef gap fill:#faeeda,stroke:#854f0b,stroke-dasharray:5,color:#412402
@@ -132,10 +132,30 @@ flowchart LR
 
 **The connection between the two parts:** the alignment gate (Part 2) calls the backend's `mechanism()`
 (Part 1's protocol). For the **option** backend, `mechanism()` is `derive_family` — so the alignment gate
-*works*, and a persuasive story that doesn't match the greeks is killed. For the **factor** backend,
-`mechanism()` has no analog — so the alignment gate degrades to a no-op, and the hypothesis is unchecked
-insight only. The proposer upgrade is therefore an *option-backend strength that highlights the factor
-backend's gap*.
+*works*, and a persuasive story that doesn't match the greeks is killed. For the **factor** backend there's
+no greek to read, so `mechanism()` has to be *built* — the loading-regression check in the caveats below;
+until it exists the alignment gate is a no-op for factors, so the upgrade lands first on the option backend.
+
+**Why this specific pair.** They are one mechanism in two halves, not two independent imports. A hypothesis
+with no alignment check is the foil paper — an unchecked story, the thing we reject; alignment with no
+hypothesis has no left-hand side, nothing to check the measured family against. So you cannot take one
+without the other. What the pair *adds* over the statistical apparatus (t-stat + e-LOND + holdout) is a
+second, orthogonal control axis: those three decide whether an edge is *real and generalizes*; none of them
+checks that it comes from the economic source you *claim*. That axis starts to matter only once an LLM
+drives the search — a bare menu-walker has no story to be wrong about, but an LLM can attach a persuasive
+rationale to a spurious cell, which is how the foil paper reported a 3.11 Sharpe on stories it never checked
+against the data.
+
+Hypothesis-first generation is the price of admission for letting economic insight into the loop: the claim
+is stated *before* the evidence (a falsifiable prediction, not a post-hoc rationalization — the
+generalization of the existing `predicted_sign` pre-commitment, now over the mechanism, not just the
+direction), and alignment is what makes the claim *cost* something. The import keeps AlphaAgent's skeleton
+(`hypothesis → align`) and swaps its checker: AlphaAgent aligns *semantically* (an LLM judges the story fits
+the formula — circular), while we align against the *engine* (greeks) or a *regression* (loadings). One
+honest note: alignment kills a *false claim*, not a weak edge — it never vetoes a cell for poor statistics
+(that is the t-stat's job), only for a measured mechanism that contradicts the declared one. Whether a
+corrected re-label may re-enter, or is blocked the way sign-shopping already is, is a dedup choice to settle
+when the gate is built.
 
 ## Reuse vs replace — the verdicts
 
@@ -164,7 +184,8 @@ everything else new is *added* (Qlib/alphalens), not swapped.
    defense; it does not transfer. A data-mined formula with a high IC has nothing to disqualify it but the
    statistics, so the factor backend leans *entirely* on e-LOND + the holdout. Either build an economic
    typing (map a formula to value/momentum/carry/quality and verify the loading — hard, aspirational) or
-   accept the weaker defense and let the holdout carry it.
+   accept the weaker defense and let the holdout carry it. The next subsection makes that economic typing
+   concrete — and explains why an LLM may *propose* it but never *judge* it.
 2. **Exact canonicalization is unsolved at scale.** SymPy is heuristic and incomplete; `egg` needs a
    rewrite-rule set; AlphaGen/AlphaAgent only *approximate* (RPN / AST similarity). Leaked duplicates are
    conservative for e-LOND validity (over-counting raises the bar) but weaken the pre-specification
@@ -178,6 +199,46 @@ everything else new is *added* (Qlib/alphalens), not swapped.
    published ledger — do not swap them for the option path; the factor path uses libraries from the start.
 6. **Qlib is a real dependency to vet** — MIT, ~45k stars, but v0.9.7 (Aug 2024), uneven cadence, and the
    standalone-expression-eval path is under-documented.
+
+### Why not an LLM mechanism judge?
+
+A tempting shortcut for the factor backend is to let an LLM judge whether a formula's economic mechanism
+"makes sense." It fails *as a gate*, for one structural reason: the option-domain gate is honest because it
+is a **measurement, not an opinion**. `derive_family` never reads the story; it reads the engine's measured
+greeks and checks `claimed == measured`. An LLM asked "is this coherent?" returns a plausibility judgment
+from the same kind of system that proposed the candidate — the foil paper's exact failure mode (a
+persuasive story, not a mechanism checked against the data; arXiv:2603.14288). The decisive technical
+problem is **non-determinism**: the apparatus rests on "every gate is a reproducible function of committed
+code + data, every look a recorded look," yet LLM-as-judge verdicts are not reproducible run to run — their
+inter-rater reliability sits well below human experts' (*Rating Roulette*, 2025) — and a verdict that
+changes between runs cannot be pinned in a test, content-addressed into `_data_lineage_hash`, or anchor an
+e-LOND stream that needs each verdict permanent on arrival. Three more pile on: **circularity** (the same
+model family generates and ratifies — and tellingly, no published LLM alpha-miner checks the proposed
+*mechanism* with a regression; AlphaAgent / FactorEngine / RD-Agent verify the hypothesis-factor fit
+*semantically*, not against the data), **gameability** (a narrative judge on the promotion path is a Goodhart
+target rewarding fluent memos), and the **insight-vs-evidence violation** (it launders model insight into a
+gate — exactly why the repo keeps `reasoning` strictly audit-only).
+
+The fix changes the LLM's job from **adjudicate** to **propose**. The LLM emits a falsifiable
+`claimed_family` coordinate (numberless; a closed enum: value / momentum / carry / quality / low-vol), and a
+**deterministic spanning regression checks it** — regress the factor's long-short returns on the registered
+premium panel (FF5 + momentum + variance-premium + carry) and require a significant, correctly-signed
+*loading* — the regression coefficient, the factor's measured exposure to a premium — on the *claimed*
+premium after orthogonalizing out the rest (clearing a Harvey-Liu-Zhu-style bar — roughly t > 3 for a
+newly-mined factor, adjusted for multiple testing);
+insignificant or wrong-signed returns `None`, the `measurement_invalid` branch. **That regression is the
+factor's `derive_family`** — `claimed_family == engine_derived_family` becomes
+`claimed_family == regression_derived_family`. The LLM supplies the falsifiable claim; the regression
+supplies the falsification — a measurement, pinnable and reproducible, with the LLM never seeing the
+loadings. Its other roles stay off the verdict path: **ordering** the menu so the most motivated candidates
+spend the fat early e-LOND budget (valid under any data-independent order — it casts no verdict), and the
+existing audit-only `reasoning`. The rail is one-directional — the mechanism judgment may **kill or reorder,
+never promote** — so an LLM wrong in the kill direction costs power, never a false discovery.
+
+This types the factor; it does not prove the edge. A formula can load cleanly on the claimed premium and
+still be an in-sample fit, or merely repackage a known premium. So the loading regression is the *mechanism*
+layer only: e-LOND remains the *multiplicity* layer and the **Phase-C holdout the binding out-of-sample
+defense**. Caveat 1's gap is fillable — but by a regression the LLM feeds, never by an LLM verdict.
 
 ## Phasing
 
