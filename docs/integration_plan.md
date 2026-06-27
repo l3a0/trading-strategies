@@ -177,6 +177,20 @@ The honest answer to "replace existing components": the repo's audited core and 
 *quality* pieces — keep them. The real replace is the hand-rolled **data layer** for the factor path;
 everything else new is *added* (Qlib/alphalens), not swapped.
 
+**Why the option store stays on its CSV loader.** Migrating it to Qlib/Parquet looks like reuse but isn't:
+Qlib is equity-only — no chains, expiries, greeks, or mark-vs-quote checks — so a Qlib option loader would be
+a from-scratch rewrite of the loader's expensively-learned, individually-tested hygiene (the
+`CHAIN_CLEAN_START` era clips, Saturday-expiry settlement, the mark-outside-quote clamp, the split back-out,
+the puts- and far-DTE merges, the scale guard) on a base that models none of it. It also isn't the
+bottleneck — the option backend loads one ticker per campaign and the engine dominates, and the chains are
+already gzipped — and a format change is the repo's worst re-pin hazard: every pinned regression clips to the
+canonical store and folds its checksum into the lineage hash, so a CSV→Parquet swap moves the bytes and
+risks float round-trip drift, silently re-pinning every published number. The `Backend` protocol already
+lets the two backends keep different storage, so a unified store is not needed for cleanliness. The migration
+earns its keep only if the option load becomes the bottleneck or during a clean re-fetch (when you re-pin
+anyway) — and only behind a byte-identical equivalence test (Parquet load == CSV load, trade-for-trade,
+t-stat-for-t-stat).
+
 ## The honest caveats (where quality is at risk)
 
 1. **The mechanism gate has no factor analog — the throughline of both parts.** Qlib confirms no economic
