@@ -73,18 +73,40 @@ class TestGrammarScoring:
         assert row['t_stat_newey_west'] > 1.0 and row['sign_ok'] is True
         assert CONTRACT <= set(row)
 
-    def test_mechanism_and_family_none_until_h1(self) -> None:
+    def test_mechanism_derives_a_family(self) -> None:
+        # H1b live: ts_mean(ret, 20) is a momentum signal -> types 'trend' (a measurement)
         fb = _backend()
         c = ExprFactor(Expr('ts_mean', args=(leaf('ret'),), window=20), 1)
-        assert fb.mechanism(c) is None and fb.score(c)['family'] is None
+        assert fb.mechanism(c) == 'trend' and fb.score(c)['family'] == 'trend'
+
+    def test_grammar_slice_spans_coherent_and_incoherent(self) -> None:
+        # the gate DISCRIMINATES on the slice: some Exprs type as a premium, some are incoherent (None).
+        # (Currently ~40 trend / ~18 lowvol / ~5 None of the 63 — the precondition for the fail-closed
+        # test below to find an incoherent Expr, asserted robustly rather than pinning the exact split.)
+        fams = {_backend().mechanism(c) for c in _backend().enumerate()}
+        assert None in fams and fams & {'trend', 'lowvol'}
+
+    def test_incoherent_expr_fails_closed(self) -> None:
+        # H1b live: a grammar Expr that loads on no registered premium types None -> measurement_invalid,
+        # never flags (the foil-paper defense, now live for factors).
+        fb = _backend()
+        incoherent = [c for c in fb.enumerate() if fb.mechanism(c) is None]
+        assert incoherent, 'expected at least one mechanism-incoherent Expr in the slice'
+        row = fb.score(incoherent[0])
+        assert row['family'] is None and row['mechanism_ok'] is False
+        assert row['measurement_invalid'] is True and row['p_value'] is None
+        assert CONTRACT <= set(row)
 
     def test_row_matches_the_shared_row_source(self) -> None:
         # the grammar scorer emits the SAME row the shared ic_to_row builds — one contract source
         from factor_backend import ic_to_row, information_coefficient
+        from factor_mechanism import loading_family
         fb = _backend()
         c = ExprFactor(Expr('ts_std', args=(leaf('ret'),), window=20), 1)
-        ic = information_coefficient(evaluate_expr(c.expr, fb.prices), fb.prices, fb.fwd)
-        expected = ic_to_row(ic, 1, canonical_expr_key(c.expr), 'SYNTH', fb.end, fb.lineage(c), fb.min_periods)
+        signal = evaluate_expr(c.expr, fb.prices)
+        ic = information_coefficient(signal, fb.prices, fb.fwd)
+        family = loading_family(signal, fb.prices)
+        expected = ic_to_row(ic, family, 1, canonical_expr_key(c.expr), 'SYNTH', fb.end, fb.lineage(c), fb.min_periods)
         assert fb.score(c) == expected
 
 
@@ -100,4 +122,5 @@ class TestGrammarFeedsHonestCore:
         assert len(judged) == len(rows) == 10
         for r in judged:
             assert 'e_value' in r and 'elond_level' in r and isinstance(r['elond_survivor'], bool)
-        assert any(r['e_value'] > 0 for r in judged)                # calibration actually ran
+        assert any(r['family'] is not None for r in rows)           # the slice has coherent factors...
+        assert any(r['e_value'] > 0 for r in judged)                # ...so calibration actually ran

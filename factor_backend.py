@@ -37,12 +37,13 @@ import numpy as np
 import pandas as pd
 
 from edge_search import STRUCTURE_END, _asymptotic_p
+from factor_mechanism import loading_family
 
 # the F2 primitive slice (a small fixed menu; F3 generalizes to a bounded formula grammar)
 FACTOR_NAMES: tuple[str, ...] = ('momentum', 'reversal', 'lowvol')
 WINDOWS: tuple[int, ...] = (5, 20, 60)          # lookback buckets (days)
 MIN_IC_PERIODS = 30                              # below this, the IC t-stat is data-insufficient
-FACTOR_ENGINE_VERSION = 'factor-v1'             # bump when IC/score mechanics change (re-lineages)
+FACTOR_ENGINE_VERSION = 'factor-v2'             # bump when IC/score mechanics change (re-lineages); v2 = H1b gate
 
 
 class FactorPrimitiveError(ValueError):
@@ -109,25 +110,31 @@ def information_coefficient(values: pd.DataFrame, prices: pd.DataFrame, fwd: int
     return np.asarray(ics, dtype=float)
 
 
-def ic_to_row(ic: np.ndarray, predicted_sign: int, key: str, universe: str, end: str, lineage: str,
-              min_periods: int = MIN_IC_PERIODS) -> dict[str, Any]:
-    """Build the honest-core-facing row from a factor's IC series — the SINGLE row source shared by the
-    primitive scorer (`FactorBackend`, named factors) and the grammar scorer (`factor_engine.
-    GrammarFactorBackend`, `Expr`s), so both emit the IDENTICAL contract: {phase, key, ticker,
+def ic_to_row(ic: np.ndarray, family: str | None, predicted_sign: int, key: str, universe: str, end: str,
+              lineage: str, min_periods: int = MIN_IC_PERIODS) -> dict[str, Any]:
+    """Build the honest-core-facing row from a factor's IC series + its mechanism `family` (H1b) — the
+    SINGLE row source shared by the primitive scorer (`FactorBackend`) and the grammar scorer
+    (`factor_engine.GrammarFactorBackend`), so both emit the IDENTICAL contract: {phase, key, ticker,
     predicted_sign, family, mechanism_ok, measurement_invalid, n_days, t_stat_newey_west, sign_ok,
-    p_value, end, data_lineage_hash}. `measurement_invalid` is DATA-INSUFFICIENCY (too few IC periods or
-    a degenerate zero-variance IC); `family`/`mechanism_ok` are None/False until the H1 mechanism gate."""
+    p_value, end, data_lineage_hash}.
+
+    `measurement_invalid` (never flags) fires on EITHER axis: DATA-INSUFFICIENCY (too few IC periods / a
+    zero-variance IC) OR MECHANISM-INCOHERENCE (`family is None` — the loading regression found no
+    registered premium). A mechanism-incoherent factor that HAS data keeps its t-stat for transparency but
+    its `p_value` is None (e=0, never flags) — the foil-paper defense, mirroring the option path's
+    family-None branch. A coherent factor (family set) scores normally."""
     n = int(ic.size)
     row = {'phase': 'factor', 'key': key, 'ticker': universe, 'predicted_sign': predicted_sign,
-           'family': None, 'mechanism_ok': False, 'end': end, 'data_lineage_hash': lineage}
+           'family': family, 'mechanism_ok': family is not None, 'end': end, 'data_lineage_hash': lineage}
     if n < min_periods or ic.std(ddof=1) == 0:
-        return {**row, 'measurement_invalid': True, 'n_days': n,
+        return {**row, 'measurement_invalid': True, 'n_days': n,                    # data-insufficient
                 't_stat_newey_west': None, 'sign_ok': False, 'p_value': None}
     t_ic = float(ic.mean() / (ic.std(ddof=1) / np.sqrt(n)))        # the ICIR t-stat
     t_sign = (t_ic > 0) - (t_ic < 0)
-    return {**row, 'measurement_invalid': False, 'n_days': n, 't_stat_newey_west': t_ic,
+    incoherent = family is None                                   # mechanism-incoherent: keep t, never flag
+    return {**row, 'measurement_invalid': incoherent, 'n_days': n, 't_stat_newey_west': t_ic,
             'sign_ok': bool(t_sign == predicted_sign),
-            'p_value': round(_asymptotic_p(t_ic, predicted_sign), 4)}
+            'p_value': None if incoherent else round(_asymptotic_p(t_ic, predicted_sign), 4)}
 
 
 @dataclass
@@ -155,11 +162,11 @@ class FactorBackend:
         return factor_key(candidate)
 
     def mechanism(self, candidate: Factor) -> str | None:
-        """No greek to read — the factor mechanism gate is the LOADING REGRESSION, built in H1. Until
-        then this returns None (the alignment gate is a no-op for factors; they lean on e-LOND + the
-        holdout). NOT a stand-in label: declaring a family without checking it is the foil-paper failure
-        mode the regression exists to prevent."""
-        return None
+        """The factor's family by the LOADING REGRESSION (H1b, live): type the named factor's signal by the
+        registered premium it loads on, or None for a mechanism-incoherent factor that loads on no known
+        premium. A MEASUREMENT, not a label — the foil-paper defense (declaring a family without checking
+        it is exactly what the regression prevents)."""
+        return loading_family(evaluate_factor(candidate, self.prices), self.prices)
 
     def lineage(self, candidate: Factor) -> str:
         """The (data + engine) lineage — sha over the universe id + panel checksum + engine version.
@@ -168,9 +175,11 @@ class FactorBackend:
         return hashlib.sha256(payload.encode('utf-8')).hexdigest()[:16]
 
     def score(self, candidate: Factor) -> dict[str, Any]:
-        """The honest-core-facing row: evaluate the named factor's signal, compute its IC series, and hand
-        it to `ic_to_row` (the shared row source). Byte-compatible with what `online_fdr_survivors` reads;
-        `measurement_invalid` is data-insufficiency, `family`/`mechanism_ok` None/False until H1."""
-        ic = information_coefficient(evaluate_factor(candidate, self.prices), self.prices, self.fwd)
-        return ic_to_row(ic, candidate.predicted_sign, factor_key(candidate), self.universe,
+        """The honest-core-facing row: evaluate the factor's signal ONCE, compute its IC series AND its
+        mechanism `family` (the loading regression) from it, and hand both to `ic_to_row`. A coherent
+        factor scores normally; a mechanism-incoherent one fails closed (the gate is now live, H1b)."""
+        signal = evaluate_factor(candidate, self.prices)
+        ic = information_coefficient(signal, self.prices, self.fwd)
+        family = loading_family(signal, self.prices)
+        return ic_to_row(ic, family, candidate.predicted_sign, factor_key(candidate), self.universe,
                          self.end, self.lineage(candidate), self.min_periods)

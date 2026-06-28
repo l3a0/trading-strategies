@@ -93,11 +93,13 @@ class TestFactorScoring:
             rev = fb.score(Factor('reversal', w, 1))['t_stat_newey_west']
             assert rev == pytest.approx(-mom)                # reversal == -momentum, period by period
 
-    def test_mechanism_is_none_until_h1(self) -> None:
+    def test_mechanism_derives_a_family(self) -> None:
+        # H1b live: momentum loads on the trend premium -> typed 'trend' (a MEASUREMENT), not None
         fb = _backend()
         f = Factor('momentum', 20, 1)
-        assert fb.mechanism(f) is None                       # the loading-regression gate is H1
-        assert fb.score(f)['family'] is None
+        assert fb.mechanism(f) == 'trend'
+        row = fb.score(f)
+        assert row['family'] == 'trend' and row['mechanism_ok'] is True
 
     def test_too_few_periods_is_measurement_invalid(self) -> None:
         # a panel far shorter than the lookback + min IC periods -> data-insufficiency, fails closed
@@ -116,15 +118,28 @@ class TestFactorScoring:
                if trailing.loc[d].notna().sum() >= 3 and forward.loc[d].notna().sum() >= 3]
         assert np.nanmean(ics) > 0.05                        # the panel really is momentum-predictive
 
-    def test_all_factor_rows_fail_closed_until_h1(self) -> None:
-        # the H1-deferral invariant: with no mechanism gate, EVERY factor cell types family=None /
-        # mechanism_ok=False, so none can promote on a mechanism it never had (the foil-paper rail;
-        # promotion stays closed + survivors exploratory until Phase-C regardless).
+    def test_all_primitives_type_coherently(self) -> None:
+        # H1b live: every F2 primitive is price-based, so it loads on a registered premium (trend/lowvol)
+        # -> typed, mechanism_ok True. (The fail-closed path needs an INCOHERENT factor — exercised by a
+        # None-typing grammar Expr in test_factor_engine.py and the ic_to_row gate test below.)
+        from factor_mechanism import REGISTERED_PREMIA
         fb = _backend()
         for f in fb.enumerate():
             row = fb.score(f)
-            assert row['family'] is None and row['mechanism_ok'] is False
-            assert fb.mechanism(f) is None
+            assert row['family'] in REGISTERED_PREMIA and row['mechanism_ok'] is True
+            assert fb.mechanism(f) == row['family']
+
+    def test_ic_to_row_fails_closed_on_incoherent_family(self) -> None:
+        # the gate logic directly: family=None keeps the t for transparency but NEVER flags (p=None,
+        # measurement_invalid); a typed family scores normally. (Mirrors the option path's family-None.)
+        from factor_backend import ic_to_row
+        ic = np.linspace(0.05, 0.15, 100)                    # mean 0.1, real variance -> a big t
+        coherent = ic_to_row(ic, 'trend', 1, 'k', 'U', '2026', 'lin')
+        incoherent = ic_to_row(ic, None, 1, 'k', 'U', '2026', 'lin')
+        assert coherent['measurement_invalid'] is False and coherent['p_value'] is not None
+        assert incoherent['measurement_invalid'] is True and incoherent['p_value'] is None
+        assert incoherent['t_stat_newey_west'] == coherent['t_stat_newey_west']   # t kept for transparency
+        assert incoherent['family'] is None and incoherent['mechanism_ok'] is False
 
 
 class TestFactorBackendFeedsHonestCore:
