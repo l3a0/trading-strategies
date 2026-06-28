@@ -45,7 +45,7 @@ MIN_IC_PERIODS = 30                              # below this, the IC t-stat is 
 FACTOR_ENGINE_VERSION = 'factor-v1'             # bump when IC/score mechanics change (re-lineages)
 
 
-class FactorGrammarError(ValueError):
+class FactorPrimitiveError(ValueError):
     """A factor off the F2 primitive grammar — raised at validation, never a scored cell."""
 
 
@@ -61,13 +61,13 @@ class Factor:
 
 def validate_factor(f: Factor) -> Factor:
     """Production-rule gate: name in the menu, window a committed bucket, sign in {-1,+1}. RAISES
-    `FactorGrammarError` off-grammar; returns the factor unchanged on success."""
+    `FactorPrimitiveError` off-grammar; returns the factor unchanged on success."""
     if f.name not in FACTOR_NAMES:
-        raise FactorGrammarError(f'factor name {f.name!r} not in {FACTOR_NAMES}')
+        raise FactorPrimitiveError(f'factor name {f.name!r} not in {FACTOR_NAMES}')
     if f.window not in WINDOWS or type(f.window) is not int:
-        raise FactorGrammarError(f'window {f.window!r} not a committed WINDOWS bucket')
+        raise FactorPrimitiveError(f'window {f.window!r} not a committed WINDOWS bucket')
     if f.predicted_sign not in (-1, 1) or type(f.predicted_sign) is not int:
-        raise FactorGrammarError(f'predicted_sign must be int -1 or +1, got {f.predicted_sign!r}')
+        raise FactorPrimitiveError(f'predicted_sign must be int -1 or +1, got {f.predicted_sign!r}')
     return f
 
 
@@ -88,7 +88,7 @@ def evaluate_factor(f: Factor, prices: pd.DataFrame) -> pd.DataFrame:
         return -(prices / prices.shift(f.window) - 1.0)        # short-term reversal
     if f.name == 'lowvol':
         return -rets.rolling(f.window).std()                   # low realized vol (negated)
-    raise FactorGrammarError(f'unknown factor {f.name!r}')      # unreachable post-validate
+    raise FactorPrimitiveError(f'unknown factor {f.name!r}')      # unreachable post-validate
 
 
 def information_coefficient(values: pd.DataFrame, prices: pd.DataFrame, fwd: int = 1) -> np.ndarray:
@@ -107,6 +107,27 @@ def information_coefficient(values: pd.DataFrame, prices: pd.DataFrame, fwd: int
             if pd.notna(ic):
                 ics.append(float(ic))
     return np.asarray(ics, dtype=float)
+
+
+def ic_to_row(ic: np.ndarray, predicted_sign: int, key: str, universe: str, end: str, lineage: str,
+              min_periods: int = MIN_IC_PERIODS) -> dict[str, Any]:
+    """Build the honest-core-facing row from a factor's IC series — the SINGLE row source shared by the
+    primitive scorer (`FactorBackend`, named factors) and the grammar scorer (`factor_engine.
+    GrammarFactorBackend`, `Expr`s), so both emit the IDENTICAL contract: {phase, key, ticker,
+    predicted_sign, family, mechanism_ok, measurement_invalid, n_days, t_stat_newey_west, sign_ok,
+    p_value, end, data_lineage_hash}. `measurement_invalid` is DATA-INSUFFICIENCY (too few IC periods or
+    a degenerate zero-variance IC); `family`/`mechanism_ok` are None/False until the H1 mechanism gate."""
+    n = int(ic.size)
+    row = {'phase': 'factor', 'key': key, 'ticker': universe, 'predicted_sign': predicted_sign,
+           'family': None, 'mechanism_ok': False, 'end': end, 'data_lineage_hash': lineage}
+    if n < min_periods or ic.std(ddof=1) == 0:
+        return {**row, 'measurement_invalid': True, 'n_days': n,
+                't_stat_newey_west': None, 'sign_ok': False, 'p_value': None}
+    t_ic = float(ic.mean() / (ic.std(ddof=1) / np.sqrt(n)))        # the ICIR t-stat
+    t_sign = (t_ic > 0) - (t_ic < 0)
+    return {**row, 'measurement_invalid': False, 'n_days': n, 't_stat_newey_west': t_ic,
+            'sign_ok': bool(t_sign == predicted_sign),
+            'p_value': round(_asymptotic_p(t_ic, predicted_sign), 4)}
 
 
 @dataclass
@@ -147,21 +168,9 @@ class FactorBackend:
         return hashlib.sha256(payload.encode('utf-8')).hexdigest()[:16]
 
     def score(self, candidate: Factor) -> dict[str, Any]:
-        """The honest-core-facing row: evaluate the factor, compute its ICIR t-stat, and emit
-        {phase, key, ticker, predicted_sign, family, mechanism_ok, measurement_invalid, n_days,
-        t_stat_newey_west, sign_ok, p_value, end, data_lineage_hash} — the same shape the option path
-        emits, byte-compatible with what `online_fdr_survivors` reads. `measurement_invalid` here is
-        DATA-INSUFFICIENCY (too few IC periods); `family`/`mechanism_ok` are None/False until H1."""
+        """The honest-core-facing row: evaluate the named factor's signal, compute its IC series, and hand
+        it to `ic_to_row` (the shared row source). Byte-compatible with what `online_fdr_survivors` reads;
+        `measurement_invalid` is data-insufficiency, `family`/`mechanism_ok` None/False until H1."""
         ic = information_coefficient(evaluate_factor(candidate, self.prices), self.prices, self.fwd)
-        sign = candidate.predicted_sign
-        n = int(ic.size)
-        row = {'phase': 'factor', 'key': factor_key(candidate), 'ticker': self.universe,
-               'predicted_sign': sign, 'family': None, 'mechanism_ok': False,
-               'end': self.end, 'data_lineage_hash': self.lineage(candidate)}
-        if n < self.min_periods or ic.std(ddof=1) == 0:
-            return {**row, 'measurement_invalid': True, 'n_days': n,
-                    't_stat_newey_west': None, 'sign_ok': False, 'p_value': None}
-        t_ic = float(ic.mean() / (ic.std(ddof=1) / np.sqrt(n)))    # the ICIR t-stat
-        t_sign = (t_ic > 0) - (t_ic < 0)
-        return {**row, 'measurement_invalid': False, 'n_days': n, 't_stat_newey_west': t_ic,
-                'sign_ok': bool(t_sign == sign), 'p_value': round(_asymptotic_p(t_ic, sign), 4)}
+        return ic_to_row(ic, candidate.predicted_sign, factor_key(candidate), self.universe,
+                         self.end, self.lineage(candidate), self.min_periods)
