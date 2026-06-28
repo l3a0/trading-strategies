@@ -1,7 +1,8 @@
 # Integration plan — extending the honest-search apparatus
 
-> **Status: DESIGN, not yet built.** Two extensions on one shared foundation, neither implemented. Nothing
-> here changes promotion: a survivor stays EXPLORATORY until the Phase-C time-axis holdout exists
+> **Status: F1 (the backend protocol, `backend.py`) and F2 (the factor scorer, `factor_backend.py`) are
+> BUILT and pinned; F3–H2 are design only.** Nothing here changes promotion: a survivor stays EXPLORATORY
+> until the Phase-C time-axis holdout exists
 > ([docs/read_gate.md](read_gate.md), [docs/generative_grammar_plan.md](generative_grammar_plan.md)).
 
 This plan covers two related extensions to the apparatus:
