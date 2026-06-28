@@ -13,9 +13,19 @@ the panel, never imports the backends). H1b wires it into `FactorBackend.mechani
 
 DEPENDENCY-LIGHT: a plain OLS by numpy linear algebra (`(X'X)^-1 X'y` + residual standard errors), no
 scipy/statsmodels — the loading t-stat is all the gate needs, and a normal-tailed |t| hurdle matches the
-repo's `_asymptotic_p` convention. The REGISTERED PREMIA are the base styles constructible from a price
-panel alone (`trend` = momentum, `lowvol` = low realized vol); a value/size/quality widening needs
-fundamentals (external data), a human-signed governance step like an option grammar widening.
+repo's `_asymptotic_p` convention.
+
+WHY ONLY `trend` + `lowvol`. They are the base styles a PRICE panel can build; the other canonical premia
+need data the panel does not carry — value / quality / investment need fundamentals (book, earnings,
+balance sheets), size needs share count, carry needs yields, and the variance risk premium needs options
+(this repo's *other* domain). So the set is the dependency-light FLOOR, not a claim that only two premia
+matter. It is also a COMMITTED taxonomy — the factor analog of the option grammar's `PremiumFamily` — and
+must stay PRE-committed: registering a premium *after* seeing which factor you want to pass would game the
+gate (a premium set that grows to fit a favoured factor is the foil-paper move the gate exists to stop).
+A widening is therefore a human-signed governance act, like an option grammar widening, sourced when a
+fundamentals-bearing equity panel arrives. The price of the small set is paid in the SAFE direction: a
+factor whose true premium is not registered loads on nothing and fails closed (`None`) — a false negative,
+but a foil-paper defense should reject a coherent factor before admitting an incoherent one.
 """
 from __future__ import annotations
 
