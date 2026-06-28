@@ -13,15 +13,15 @@ e-LOND control. Qlib's expression engine is F3's grammar and alphalens/Qlib rema
 for scale; the minimal-dependency core (evalue_fdr's design) is unchanged. The factor primitives here (momentum / reversal / lowvol over a few windows) are a small
 fixed slice — F3 generalizes them to a bounded formula grammar.
 
-TWO THINGS DEFERRED, on purpose (docs/integration_plan.md phasing):
-  * THE MECHANISM GATE is H1. A factor has no greek signature to read; its mechanism is the
-    LOADING REGRESSION (regress the factor's returns on known premia, require a correctly-signed loading
-    on the claimed family). Until H1 builds it, `mechanism` returns None and rows type `family=None` —
-    the alignment gate is a no-op for factors, so they lean ENTIRELY on e-LOND + the Phase-C holdout
-    (the doc's caveat 1). `measurement_invalid` here means DATA-INSUFFICIENCY (too few IC periods), NOT
-    mechanism-incoherence — the two are decoupled for factors.
-  * PROMOTION stays CLOSED and survivors EXPLORATORY until the Phase-C time-axis holdout exists. F2
-    builds no search loop and records nothing; it is the scorer + a wiring proof only.
+STATUS (docs/integration_plan.md phasing):
+  * THE MECHANISM GATE is LIVE (H1b). A factor has no greek signature to read, so its mechanism is the
+    LOADING REGRESSION (factor_mechanism.py): `mechanism` types a factor by the registered premium it
+    loads on, or `None` for a mechanism-incoherent one. `score` wires it in (factor_engine.py shares the
+    path), so an incoherent row gets `family=None`, `p_value=None`, and fails closed (e=0 under e-LOND,
+    never flags) — `measurement_invalid` now fires on DATA-INSUFFICIENCY *or* mechanism-incoherence.
+  * PROMOTION stays CLOSED and survivors EXPLORATORY until the Phase-C time-axis holdout exists. The
+    factor menu-walker proposer (factor_search.py, F4) runs the search loop, but a flagged cell escalates
+    to manual pre-registration + the holdout — it is never auto-promoted.
 
 A FactorBackend binds to ONE equity panel (a universe of prices); a factor is scored cross-sectionally
 over that universe, so the honest core's (canonical_key, ticker) cell becomes (factor_key, universe) —
