@@ -26,6 +26,9 @@ corpus is the seeded proposer-facing projection, not carried by the reply (docs/
 """
 from __future__ import annotations
 
+import json
+import re
+from dataclasses import dataclass
 from typing import Any
 
 WIRE_VERSION = 1
@@ -46,6 +49,14 @@ PROPOSAL_FIELDS: tuple[str, ...] = ('overlay', 'ticker', 'params', 'predicted_si
 # leg dicts carry ONLY grammar coordinates (no result-bearing key), so `assert_numberless` stays the
 # belt behind this allow-list, exactly as for the closed grammar's `params` dict.
 GEN_PROPOSAL_FIELDS: tuple[str, ...] = ('legs', 'ticker', 'predicted_sign')
+
+# The FACTOR author's proposal (Phase H2, factor_proposer.py) is COORDINATES ONLY, drawn from the
+# bounded Expr grammar (factor_grammar) rather than an option overlay: a factor is
+# {expr: <nested op/operand/window tree>, universe: <panel id>, predicted_sign}. Same role as
+# PROPOSAL_FIELDS — the oracle echoes only these back in `rejected[].proposal`; the nested `expr`
+# tree carries ONLY grammar coordinates (op / operand / window), so `assert_numberless` stays the
+# belt behind this allow-list exactly as for the closed grammar's `params` dict.
+FACTOR_PROPOSAL_FIELDS: tuple[str, ...] = ('expr', 'universe', 'predicted_sign')
 
 # Result statistics that must NEVER cross the read-gate to the proposer. The scrub
 # (build_proposer_corpus' SAFE_FIELDS allow-list) is the primary control — it drops
@@ -138,3 +149,50 @@ def assert_numberless(obj: Any, _path: str = 'reply') -> None:
         raise ValueError(
             f'read-gate numberless violation at {_path}: non-primitive leaf of type '
             f'{type(obj).__name__} (a banned field could hide in its attributes; the wire is JSON)')
+
+
+# --- the proposer's output container + reply parse (shared wire, domain-agnostic) ----------------
+# Both live here, not in any one domain's engine module, so every LLM author (options / generative /
+# factors) reuses the SAME container and the SAME parse without importing an engine — the read-gate
+# charter above. Only the coordinate dict SHAPE differs per domain (the *_PROPOSAL_FIELDS allow-lists).
+
+
+@dataclass(frozen=True)
+class ProposalBatch:
+    """What an LLM author returns: COORDINATE-ONLY proposals + the exact model identity for
+    auditability. Each proposal is a coordinate dict whose shape is the DOMAIN's allow-list —
+    `PROPOSAL_FIELDS` (closed-grammar options), `GEN_PROPOSAL_FIELDS` (generative compositions), or
+    `FACTOR_PROPOSAL_FIELDS` (alpha factors) — not a serialized candidate; the harness resolves it to
+    that domain's grammar and constructs the candidate (construction is the grammar gate). The model
+    identity rides to a SEPARATE provenance log (the proposer's `record_provenance`), never into the
+    comparison ledger's identity — a model bump must not re-key a model-blind comparison. Frozen
+    (hashable) + domain-agnostic, so every proposer domain reuses it."""
+    proposals: tuple[dict[str, Any], ...]
+    model_requested: str          # the alias passed to the API (can repoint over time)
+    model_served: str             # the EXACT snapshot the API reports it ran — the audit id
+    temperature: float            # 0.0 for reproducibility / a sentinel where the model takes none
+    prompt_sha: str               # hash of the exact prompt, so a proposal is reconstructable
+    transport: str = 'api'        # 'api' | 'claude_code' (subscription); PROVENANCE, not lineage
+
+
+def _parse_proposal_array(text: str) -> list[dict[str, Any]]:
+    """Parse a model reply into the coordinate-dict list the gate consumes. The prompt asks for ONLY
+    a JSON array; this tolerates a ```json fence or surrounding whitespace, and RAISES (loudly) if no
+    array is recoverable — so a malformed reply fails the round rather than silently producing zero
+    proposals that read as 'nothing left to try'. Per-PROPOSAL validity (off-grammar, sealed, sign)
+    is the downstream grammar gate's job; this only guarantees the top-level shape is a list to hand
+    it. Domain-agnostic — the option, generative, and factor authors all parse a JSON array."""
+    s = text.strip()
+    fence = re.search(r'```(?:json)?\s*(.*?)```', s, re.DOTALL)
+    if fence:
+        s = fence.group(1).strip()
+    try:
+        data = json.loads(s)
+    except json.JSONDecodeError:
+        m = re.search(r'\[.*\]', s, re.DOTALL)   # last-ditch: the outermost bracketed array
+        if m is None:
+            raise ValueError(f'LLM proposer reply has no JSON array: {text[:200]!r}')
+        data = json.loads(m.group(0))            # a still-malformed extract re-raises, loudly
+    if not isinstance(data, list):
+        raise ValueError(f'LLM proposer reply is not a JSON array: got {type(data).__name__}')
+    return data

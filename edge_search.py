@@ -61,7 +61,6 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import re
 from dataclasses import dataclass, field
 from enum import Enum
 from datetime import datetime
@@ -83,6 +82,8 @@ from read_gate_wire import (   # the dependency-free read-gate contract (shared 
     PROPOSAL_FIELDS,
     REQUIRED_MODEL_FIELDS,
     WIRE_VERSION,
+    ProposalBatch,            # the proposer's output container — domain-agnostic, lives in the wire
+    _parse_proposal_array,    # the reply parse — domain-agnostic, lives in the wire
     assert_numberless,
 )
 
@@ -1540,20 +1541,8 @@ def propose_structure_candidates(
 # process boundary in docs/read_gate.md, the precondition for ACTIVATING a real author). Step 1
 # here is only the CONTRACT: the type, the gated front-end, and the provenance log. The
 # gate/judge/record pipeline downstream of the proposer is reused byte-identical.
-@dataclass(frozen=True)
-class ProposalBatch:
-    """What an LLM author returns: COORDINATE-ONLY proposals + the exact model identity
-    for auditability. Each proposal is a dict `{overlay, ticker, params, predicted_sign}`
-    — not a serialized candidate; the harness resolves it to the canonical grammar
-    template and constructs the `StructureCandidate` (construction is the grammar gate).
-    The model identity rides to the SEPARATE provenance log (`record_provenance`), never
-    into the comparison ledger's identity — see that function for why."""
-    proposals: tuple[dict[str, Any], ...]
-    model_requested: str          # the alias passed to the API (can repoint over time)
-    model_served: str             # the EXACT snapshot the API reports it ran — the audit id
-    temperature: float            # 0.0 for reproducibility
-    prompt_sha: str               # hash of the exact prompt, so a proposal is reconstructable
-    transport: str = 'api'        # 'api' (ClaudeProposer) | 'claude_code' (subscription); PROVENANCE, not lineage
+# ProposalBatch — the proposer's output container — now lives in read_gate_wire (the dependency-free
+# shared wire), imported above; it is domain-agnostic, so the generative + factor authors reuse it.
 
 
 # (grammar_menu, scrubbed_corpus, onboarded_search_tickers) -> ProposalBatch
@@ -1926,27 +1915,8 @@ def score_and_record(
 # correctness argument — a numberless prompt, coordinate-only output, every score recorded
 # (docs/llm_proposer_plan.md, docs/read_gate.md) — NOT a sandbox; the container/transport path was
 # removed (it had sealed an untrusted-CODE proposer, which the coordinate-emitting LLM never was).
-def _parse_proposal_array(text: str) -> list[dict[str, Any]]:
-    """Parse the model's reply into the coordinate-dict list the gate consumes. The prompt asks for
-    ONLY a JSON array; this tolerates a ```json fence or surrounding whitespace, and RAISES (loudly)
-    if no array is recoverable — so a malformed reply fails the round rather than silently producing
-    zero proposals that read as 'nothing left to try'. Per-PROPOSAL validity (off-grammar, sealed,
-    sign) is the downstream grammar gate's job (`llm_propose_candidates`); this only guarantees the
-    top-level shape is a list to hand it."""
-    s = text.strip()
-    fence = re.search(r'```(?:json)?\s*(.*?)```', s, re.DOTALL)
-    if fence:
-        s = fence.group(1).strip()
-    try:
-        data = json.loads(s)
-    except json.JSONDecodeError:
-        m = re.search(r'\[.*\]', s, re.DOTALL)   # last-ditch: the outermost bracketed array
-        if m is None:
-            raise ValueError(f'LLM proposer reply has no JSON array: {text[:200]!r}')
-        data = json.loads(m.group(0))            # a still-malformed extract re-raises, loudly
-    if not isinstance(data, list):
-        raise ValueError(f'LLM proposer reply is not a JSON array: got {type(data).__name__}')
-    return data
+# _parse_proposal_array — the reply parse — now lives in read_gate_wire (the dependency-free shared
+# wire), imported above; it is domain-agnostic, so the generative + factor authors reuse it.
 
 
 class ClaudeProposer:
