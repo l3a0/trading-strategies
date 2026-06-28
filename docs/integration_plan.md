@@ -1,7 +1,8 @@
 # Integration plan — extending the honest-search apparatus
 
-> **Status: F1–F3b (protocol, scorer, grammar, engine) and H1 (the loading-regression mechanism gate) are
-> BUILT and pinned; F4/H2 (the proposer) are design only.** Nothing here changes promotion: a survivor stays EXPLORATORY
+> **Status: F1–F3b (protocol, scorer, grammar, engine), H1 (the loading-regression mechanism gate), and
+> F4 (the factor menu-walker proposer) are BUILT and pinned; H2 (the LLM author) and the Phase-C holdout
+> are design only.** Nothing here changes promotion: a survivor stays EXPLORATORY
 > until the Phase-C time-axis holdout exists
 > ([docs/read_gate.md](read_gate.md), [docs/generative_grammar_plan.md](generative_grammar_plan.md)).
 
