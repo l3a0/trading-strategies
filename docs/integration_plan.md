@@ -1,7 +1,7 @@
 # Integration plan — extending the honest-search apparatus
 
-> **Status: F1 (the backend protocol, `backend.py`) and F2 (the factor scorer, `factor_backend.py`) are
-> BUILT and pinned; F3–H2 are design only.** Nothing here changes promotion: a survivor stays EXPLORATORY
+> **Status: F1–F3b (protocol, scorer, grammar, engine) and H1 (the loading-regression mechanism gate) are
+> BUILT and pinned; F4/H2 (the proposer) are design only.** Nothing here changes promotion: a survivor stays EXPLORATORY
 > until the Phase-C time-axis holdout exists
 > ([docs/read_gate.md](read_gate.md), [docs/generative_grammar_plan.md](generative_grammar_plan.md)).
 

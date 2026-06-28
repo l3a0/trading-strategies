@@ -26,6 +26,7 @@ import pandas as pd
 from edge_search import STRUCTURE_END
 from factor_backend import FACTOR_ENGINE_VERSION, MIN_IC_PERIODS, ic_to_row, information_coefficient
 from factor_grammar import (Expr, ExprGrammarError, canonical_expr_key, enumerate_exprs, validate_expr)
+from factor_mechanism import loading_family
 
 
 def evaluate_expr(expr: Expr, prices: pd.DataFrame) -> pd.DataFrame:
@@ -102,9 +103,10 @@ class GrammarFactorBackend:
         return canonical_expr_key(candidate.expr)              # sign-excluded (keys on the Expr alone)
 
     def mechanism(self, candidate: ExprFactor) -> str | None:
-        """None until H1 — the loading-regression mechanism gate (the factor's derive_family). Declaring a
-        family without checking it is the foil-paper failure mode the regression exists to prevent."""
-        return None
+        """The factor's family by the LOADING REGRESSION (H1b, live): type the Expr's signal by the
+        registered premium it loads on, or None for a mechanism-incoherent Expr that loads on no known
+        premium — the factor's derive_family, a MEASUREMENT not a label (the foil-paper defense)."""
+        return loading_family(evaluate_expr(candidate.expr, self.prices), self.prices)
 
     def lineage(self, candidate: ExprFactor) -> str:
         """The (data + engine) lineage — the panel + engine version, shared with `FactorBackend` (the IC
@@ -113,8 +115,12 @@ class GrammarFactorBackend:
         return hashlib.sha256(payload.encode('utf-8')).hexdigest()[:16]
 
     def score(self, candidate: ExprFactor) -> dict[str, Any]:
-        """The honest-core-facing row: evaluate the Expr to a signal, compute its rank-IC, and hand it to
-        the SHARED `ic_to_row` — byte-identical in shape to a primitive's row, so it feeds e-LOND the same."""
-        ic = information_coefficient(evaluate_expr(candidate.expr, self.prices), self.prices, self.fwd)
-        return ic_to_row(ic, candidate.predicted_sign, canonical_expr_key(candidate.expr), self.universe,
-                         self.end, self.lineage(candidate), self.min_periods)
+        """The honest-core-facing row: evaluate the Expr to a signal ONCE, compute its rank-IC AND its
+        mechanism `family` (the loading regression) from it, and hand both to the SHARED `ic_to_row` —
+        byte-identical in shape to a primitive's row, so it feeds e-LOND the same. A coherent Expr scores
+        normally; a mechanism-incoherent one fails closed (H1b)."""
+        signal = evaluate_expr(candidate.expr, self.prices)
+        ic = information_coefficient(signal, self.prices, self.fwd)
+        family = loading_family(signal, self.prices)
+        return ic_to_row(ic, family, candidate.predicted_sign, canonical_expr_key(candidate.expr),
+                         self.universe, self.end, self.lineage(candidate), self.min_periods)
