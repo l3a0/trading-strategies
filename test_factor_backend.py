@@ -112,7 +112,7 @@ class TestFactorScoring:
         # bug could also hide. (Computed inline, not via information_coefficient.)
         p = _panel()
         trailing, forward = p / p.shift(20) - 1.0, p.shift(-1) / p - 1.0
-        ics = [trailing.loc[d].corr(forward.loc[d], method='spearman') for d in p.index
+        ics = [trailing.loc[d].rank().corr(forward.loc[d].rank()) for d in p.index   # rank-Pearson == Spearman
                if trailing.loc[d].notna().sum() >= 3 and forward.loc[d].notna().sum() >= 3]
         assert np.nanmean(ics) > 0.05                        # the panel really is momentum-predictive
 

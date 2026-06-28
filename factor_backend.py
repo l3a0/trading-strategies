@@ -103,7 +103,7 @@ def information_coefficient(values: pd.DataFrame, prices: pd.DataFrame, fwd: int
         fv, fr = values.loc[date], forward.loc[date]
         pair = pd.concat([fv, fr], axis=1).dropna()
         if len(pair) >= 3:
-            ic = pair.iloc[:, 0].corr(pair.iloc[:, 1], method='spearman')
+            ic = pair.iloc[:, 0].rank().corr(pair.iloc[:, 1].rank())   # Spearman == Pearson on ranks (no scipy dep)
             if pd.notna(ic):
                 ics.append(float(ic))
     return np.asarray(ics, dtype=float)
