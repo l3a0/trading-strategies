@@ -62,7 +62,6 @@ from edge_search import (
     _data_lineage_hash,
     _format_llm_round,
     _ledger_key,
-    _parse_proposal_array,
     _render_grammar_menu,
     _resolve_llm_author,
     _vol_confound,
@@ -95,7 +94,7 @@ from edge_search import (
     structure_ledger_rows,
 )
 from evalue_fdr import online_fdr_survivors
-from read_gate_wire import BANNED_RESULT_FIELDS
+from read_gate_wire import BANNED_RESULT_FIELDS, _parse_proposal_array
 from test_real_cc_backtest import _HAVE_MSFT_DAILIES, _HAVE_SPY_DAILIES
 
 _HAVE_SEARCH = _HAVE_MSFT_DAILIES and _HAVE_SPY_DAILIES
