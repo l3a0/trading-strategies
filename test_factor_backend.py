@@ -13,7 +13,7 @@ import pandas as pd
 import pytest
 
 from backend import Backend
-from factor_backend import (FACTOR_NAMES, WINDOWS, Factor, FactorBackend, FactorGrammarError,
+from factor_backend import (FACTOR_NAMES, WINDOWS, Factor, FactorBackend, FactorPrimitiveError,
                             factor_key)
 
 # the honest-core-facing contract a valid factor row emits (the same keys the option path emits)
@@ -60,9 +60,9 @@ class TestFactorGrammar:
 
     def test_validate_raises_off_grammar(self) -> None:
         fb = _backend()
-        with pytest.raises(FactorGrammarError):
+        with pytest.raises(FactorPrimitiveError):
             fb.validate(Factor('momentum', 7, 1))            # 7 is not a WINDOWS bucket
-        with pytest.raises(FactorGrammarError):
+        with pytest.raises(FactorPrimitiveError):
             fb.validate(Factor('nonsense', 20, 1))           # off-menu name
 
     def test_canonical_key_excludes_sign(self) -> None:
