@@ -1,9 +1,9 @@
 # Integration plan — extending the honest-search apparatus
 
-> **Status: F1–F4, H1 (the loading-regression mechanism gate), and H2a (the factor LLM-author core — the
-> Expr↔coordinate gate + the numberless-oracle seal + the loop, stub-tested) are BUILT and pinned; H2b
-> (the real Claude clients for factors) and the Phase-C holdout are design only.** Nothing here changes
-> promotion: a survivor stays EXPLORATORY until the Phase-C time-axis holdout exists
+> **Status: F1–F4, H1 (the loading-regression mechanism gate), and H2 (the full factor LLM author — the
+> Expr↔coordinate gate + the numberless-oracle seal + the loop + the env-gated real Claude clients) are
+> BUILT and pinned; the Phase-C holdout is design only.** Nothing here changes promotion: a survivor stays
+> EXPLORATORY until the Phase-C time-axis holdout exists
 > ([docs/read_gate.md](read_gate.md), [docs/generative_grammar_plan.md](generative_grammar_plan.md)).
 
 This plan covers two related extensions to the apparatus:

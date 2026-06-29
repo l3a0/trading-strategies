@@ -8,6 +8,9 @@ derived family; the env-boundary fails closed; the menu-walker is the default.
 """
 from __future__ import annotations
 
+import hashlib
+import json
+
 import pytest
 
 import factor_proposer as fp
@@ -231,3 +234,95 @@ class TestProvenanceAndBoundary:
     def test_boundary_returns_an_activated_author(self) -> None:
         author = _stub([])
         assert fp._assert_factor_llm_boundary(author) is author
+
+
+class TestFactorClients:
+    """H2b: the real Claude transports for factors (stub client/runner — no SDK / CLI / network). The
+    transport + seal are the shared proposer_clients base's; only the factor prompt differs."""
+
+    @staticmethod
+    def _api_client(reply: str, *, served: str = 'api-served', stop_reason: str = 'end_turn',
+                    captured: dict | None = None):
+        class Block:
+            def __init__(self, t: str) -> None:
+                self.type, self.text = 'text', t
+
+        class Resp:
+            content, model = [Block(reply)], served
+
+            def __init__(self) -> None:
+                self.stop_reason = stop_reason
+
+        class Msgs:
+            def create(self, **kw):
+                if captured is not None:
+                    captured.update(kw)
+                return Resp()
+
+        class Client:
+            messages = Msgs()
+
+        return Client()
+
+    def test_api_client_emits_a_batch_from_the_numberless_factor_prompt(self) -> None:
+        captured: dict = {}
+        reply = '[{"expr": {"op":"field","operand":"close"}, "universe":"SYNTH", "predicted_sign":1}]'
+        batch = fp.FactorClaudeProposer(client=self._api_client(reply, captured=captured))(
+            fp.factor_grammar_menu(), [], ('SYNTH',))
+        assert batch.proposals[0]['universe'] == 'SYNTH' and batch.model_served == 'api-served'
+        assert batch.temperature == 0.0 and batch.transport == 'api'      # 4.8 sentinel + API transport
+        prompt = captured['messages'][0]['content']
+        assert 'JSON array' in prompt and 't_stat' not in prompt and 'p_value' not in prompt   # numberless
+        assert batch.prompt_sha == hashlib.sha256(prompt.encode('utf-8')).hexdigest()   # reconstructable id
+
+    def test_api_client_raises_on_refusal(self) -> None:
+        client = self._api_client('[]', stop_reason='refusal')
+        with pytest.raises(RuntimeError, match='refus'):
+            fp.FactorClaudeProposer(client=client)(fp.factor_grammar_menu(), [], ('SYNTH',))
+
+    def test_seal_fires_via_the_client_before_the_model_is_called(self) -> None:
+        # defense-in-depth: a RAW ledger row (banned key) in the corpus raises inside the prompt build,
+        # BEFORE any API call/subprocess — the seal applies through the client transport, not just the prompt
+        raw = [{'key': 'a', 'ticker': 'SYNTH', 'predicted_sign': 1, 'expr': {}, 't_stat_newey_west': 2.0}]
+        with pytest.raises(ValueError, match='numberless'):
+            fp.FactorClaudeProposer(client=self._api_client('[]'))(fp.factor_grammar_menu(), raw, ('SYNTH',))
+
+    def test_claude_code_client_emits_a_batch_with_subscription_transport(self) -> None:
+        reply = '[{"expr": {"op":"field","operand":"ret"}, "universe":"SYNTH", "predicted_sign":1}]'
+        batch = fp.FactorClaudeCodeProposer(runner=lambda p: {'result': reply, 'model': 'cc-served'})(
+            fp.factor_grammar_menu(), [], ('SYNTH',))
+        assert batch.transport == 'claude_code' and batch.model_served == 'cc-served'
+        assert batch.temperature == 0.0 and batch.proposals[0]['expr']['operand'] == 'ret'   # sentinel too
+
+    def test_claude_code_client_raises_on_an_unparseable_reply(self) -> None:
+        # a malformed subscription reply fails the round loudly (no silent zero-proposal pass) — the same
+        # _parse_proposal_array guard the API path uses, on the claude_code transport
+        with pytest.raises(ValueError, match='no JSON array'):
+            fp.FactorClaudeCodeProposer(runner=lambda p: {'result': 'I have no array', 'model': 'cc'})(
+                fp.factor_grammar_menu(), [], ('SYNTH',))
+
+    def test_claude_code_hardening_is_inherited(self) -> None:
+        # the seal-critical invocation is the shared base's — the factor client must carry it unchanged
+        cmd, env = fp.FactorClaudeCodeProposer('claude-opus-4-8')._build_invocation('THE_PROMPT')
+        assert cmd[:3] == ['claude', '-p', 'THE_PROMPT'] and '--bare' not in cmd
+        assert '--disallowedTools' in cmd and '*' in cmd                  # every tool denied
+        assert '--strict-mcp-config' in cmd and '--max-turns' in cmd
+        assert 'ANTHROPIC_API_KEY' not in env and 'ANTHROPIC_AUTH_TOKEN' not in env   # forces subscription OAuth
+
+    def test_resolver_is_env_gated_off_by_default(self, monkeypatch) -> None:
+        monkeypatch.delenv('EDGE_SEARCH_LLM_MODEL', raising=False)
+        assert fp._resolve_factor_llm_author() is None                    # OFF unless opted in
+        monkeypatch.setenv('EDGE_SEARCH_LLM_MODEL', 'claude-opus-4-8')
+        monkeypatch.delenv('EDGE_SEARCH_LLM_TRANSPORT', raising=False)
+        assert isinstance(fp._resolve_factor_llm_author(), fp.FactorClaudeCodeProposer)   # default: subscription
+        monkeypatch.setenv('EDGE_SEARCH_LLM_TRANSPORT', 'api')
+        assert isinstance(fp._resolve_factor_llm_author(), fp.FactorClaudeProposer)       # api: metered
+
+    def test_client_plugs_into_the_gate(self) -> None:
+        # the client is a FactorProposer — it drives llm_propose_factor_candidates end to end
+        fb = GrammarFactorBackend('SYNTH', _panel(T=200), checksum='cafe')
+        reply = '[{"expr": %s, "universe":"SYNTH", "predicted_sign":1}]' % json.dumps(fp.expr_to_dict(EXPRS[0]))
+        author = fp.FactorClaudeProposer(client=self._api_client(reply))
+        cands, _, _, batch = fp.llm_propose_factor_candidates(
+            author, fb, search=frozenset({'SYNTH'}), sealed=frozenset(), corpus=[])
+        assert len(cands) == 1 and batch.model_served == 'api-served'

@@ -48,6 +48,10 @@ from factor_grammar import (
     validate_expr,
 )
 from factor_search import FACTOR_LEDGER_PATH, _record_factor_cells
+from proposer_clients import (   # the domain-agnostic Claude transports (H2b-pre, shared w/ the option author)
+    ClaudeCodeProposer as _ClaudeCodeBase,
+    ClaudeProposer as _ClaudeApiBase,
+)
 from read_gate_wire import (
     FACTOR_PROPOSAL_FIELDS,
     REQUIRED_MODEL_FIELDS,
@@ -492,13 +496,43 @@ def score_and_record_factor(
 
 
 # --- env-gating: OFF by default (the real factor client is H2b) ---------------------------------------
+class FactorClaudeProposer(_ClaudeApiBase):
+    """The FACTOR proposer's API client (H2b) — the shared `proposer_clients.ClaudeProposer` (metered
+    Anthropic API, seal gold-standard) bound to this module's `build_factor_proposer_prompt`. The transport
+    + the numberless-seal contract are the base class's; only the prompt (factor coordinates from the Expr
+    grammar) differs from the option author."""
+
+    def __init__(self, model: str = 'claude-opus-4-8', **kw: Any) -> None:
+        super().__init__(model, prompt_builder=build_factor_proposer_prompt, **kw)
+
+
+class FactorClaudeCodeProposer(_ClaudeCodeBase):
+    """The FACTOR proposer's subscription transport (H2b) — the shared `proposer_clients.ClaudeCodeProposer`
+    (hardened `claude -p`) bound to `build_factor_proposer_prompt`. The seal-critical invocation hardening
+    (all tools denied, neutral cwd, API-key scrub) is the base class's, inherited unchanged."""
+
+    def __init__(self, model: str = 'claude-opus-4-8', **kw: Any) -> None:
+        super().__init__(model, prompt_builder=build_factor_proposer_prompt, **kw)
+
+
 def _resolve_factor_llm_author() -> FactorProposer | None:
-    """The activated factor LLM author, or None (the default). H2b wires the real Claude clients (reusing
-    the option `ClaudeProposer`/`ClaudeCodeProposer` mechanics with this module's prompt + parse), gated
-    on EDGE_SEARCH_LLM_MODEL like the option author. Until then this returns None, so the default — the
-    menu-walker, no model — is the proposer. Activation never relaxes the standing limits: promotion stays
-    CLOSED and survivors stay EXPLORATORY until the Phase-C time-axis holdout exists."""
-    return None      # H2b: build + return the env-gated factor Claude client here
+    """The activated factor LLM author, or None (the default). Gated on EDGE_SEARCH_LLM_MODEL (the repo's
+    single LLM-author opt-in, shared with the option author) and EDGE_SEARCH_LLM_TRANSPORT (default
+    `claude_code`, the Claude.ai subscription; `api` selects the metered client). With EDGE_SEARCH_LLM_MODEL
+    UNSET this returns None, so the default — the deterministic menu-walker, no model — is the proposer.
+    Activation never relaxes the standing limits: promotion stays CLOSED and survivors stay EXPLORATORY
+    until the Phase-C time-axis holdout exists."""
+    import os
+    model = os.environ.get('EDGE_SEARCH_LLM_MODEL')
+    if not model:
+        return None
+    transport = os.environ.get('EDGE_SEARCH_LLM_TRANSPORT', 'claude_code')
+    if transport == 'api':
+        return FactorClaudeProposer(model=model)
+    if transport == 'claude_code':
+        return FactorClaudeCodeProposer(model=model)
+    raise ValueError(
+        f"unknown EDGE_SEARCH_LLM_TRANSPORT={transport!r} (expected 'api' or 'claude_code')")
 
 
 def _assert_factor_llm_boundary(author: FactorProposer | None = None) -> FactorProposer:
