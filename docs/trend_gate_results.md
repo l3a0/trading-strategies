@@ -231,14 +231,14 @@ Left standing, explicitly unclaimed (§1.3 and §8 were never reached):
 From a clean checkout at or after `d9ddb43`:
 
 ```bash
-./fetch_option_data.sh             # chain datasets (checksum-verified)
-python trend_gate.py stage1        # Tests A + B, gate rule, MDE artifact (a)
-python trend_gate.py placebo-mde   # MDE artifact (b): 100 Family R re-runs
+./scripts/fetch_option_data.sh             # chain datasets (checksum-verified)
+python -m trendgate.trend_gate stage1        # Tests A + B, gate rule, MDE artifact (a)
+python -m trendgate.trend_gate placebo-mde   # MDE artifact (b): 100 Family R re-runs
 ```
 
 Every number above is deterministic: the placebo stream is
 `numpy.random.default_rng(20260611)` consumed in registration order (its
-first accepted sequence is fingerprint-pinned in `test_trend_gate.py`), the
+first accepted sequence is fingerprint-pinned in `tests/test_trend_gate.py`), the
 engine is deterministic given the committed data, and the analysis CLI
 refuses to run stages from a dirty working tree so any reproduction carries
 the same provenance this report does. Family R checkpoints land in
@@ -246,7 +246,7 @@ the same provenance this report does. Family R checkpoints land in
 byte-identical records).
 
 The published figures are pinned in CI by `TestTrendGateStage1Regression`
-(`test_trend_gate.py`), so an engine or generator change that silently
+(`tests/test_trend_gate.py`), so an engine or generator change that silently
 shifted the verdict fails the build rather than quietly invalidating this
 report. The class pins the deterministic core (D_A, D_B, the counts, the
 §9(a) MDE) from three baseline runs, the gate verdict (p_A, p_B, the FAIL)
@@ -261,7 +261,7 @@ accepted sequence's `T`) as a cheap drift-check on the placebo-MDE pipeline
 - Registration: [docs/prereg_trend_gate.md](prereg_trend_gate.md), effective
   at merge commit `4d2239b`. Operative sections cited above: §1.3, §1.4,
   §2.1, §2.3, §5, §6.1–§6.4, §7, §8, §9, §10, §11.
-- Analysis code: `trend_gate.py` and `test_trend_gate.py` at `d9ddb43`,
+- Analysis code: `trendgate/trend_gate.py` and `tests/test_trend_gate.py` at `d9ddb43`,
   committed before any Stage 1 number existed (§10 ordering; the git
   history is the proof).
 - The design choice this null validates: the tutorial's "What We'd Add

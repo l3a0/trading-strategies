@@ -174,7 +174,7 @@ SPY, **2010-12-01 → 2026-06-05** — the `CHAIN_CLEAN_START['SPY']` clean-chai
 span, identical to the pinned call-wing run, so put-vs-call is on the same dates.
 The put data is fetched from the same `HISTORICAL_OPTIONS` responses that already
 supply the calls (the endpoint returns both wings per day; the current store is
-calls-only because `download_option_dailies.py` filters puts out at fetch time —
+calls-only because `pipeline/download_option_dailies.py` filters puts out at fetch time —
 §9). The fetched put file is git-tracked / release-pinned at the results commit; a
 data refresh after registration is an amendment (§10).
 
@@ -320,14 +320,14 @@ survival is marginal; the §6 language for every branch is committed.
 
 ## 9. Implementation constraints
 
-- **Data fetch:** extend `download_option_dailies.py` to keep put rows (drop the
+- **Data fetch:** extend `pipeline/download_option_dailies.py` to keep put rows (drop the
   call-only filter; `infer_spot`'s strike band must accept negative deltas), then
   run the full data lifecycle **sequentially — one ticker to completion before the
   next** (shared rate budget) — for **SPY** (puts added to the existing call file)
   and **IWM** (a fresh ticker, calls + puts, needing its own trading-day calendar
-  from `download_prices.py` and the era clip its validation battery sets): resumable
+  from `pipeline/download_prices.py` and the era clip its validation battery sets): resumable
   fetch wrapped in the retry loop; validation battery; `gzip -9`; sha256 into
-  `data_checksums.sha256`; `gh release upload data-2026-06`; CI cache + fetch-glob
+  `data/data_checksums.sha256`; `gh release upload data-2026-06`; CI cache + fetch-glob
   update; checksum round-trip; cold-storage copy — per the Option-Chain Data
   Pipeline rules.
 - **Engine — put entry:** add `select_put_entry` (the §2.1 band and nearest-delta
@@ -339,7 +339,7 @@ survival is marginal; the §6 language for every branch is committed.
   (`hedge_shares` may be negative); the half-spread cost applies to
   `|hedge_trade|` regardless of sign. No other change to the loop.
 - **Pin protection:** the put path arrives behind the entry selector / hedge sign;
-  every existing `test_vol_premium.py` pin (the call wing, the mechanics, the
+  every existing `tests/test_vol_premium.py` pin (the call wing, the mechanics, the
   audit invariants) must pass byte-identical before any put run.
 - **Ordering:** no put fetch or run before this file's merge commit to `main`; the
   §9 engine code must be committed before any put number is produced. Results land
@@ -368,7 +368,7 @@ to the data:
   era) and validated clean from row one (entry-band raw == defect-free in every month),
   so `CHAIN_CLEAN_START['IWM'] = '2010-12-01'` is the file's first day, not a post-hoc
   trim, and was determined before any result was viewed.
-- **Result:** the run executed once (analysis code `run_registered_vrp.py`), citing
+- **Result:** the run executed once (analysis code `realchains/run_registered_vrp.py`), citing
   this registration's merge commit (PR #23) and the analysis-code commit. The verdict is
   §6 row 4 — null on the put wing (SPY gross t +0.20, net-0.5bp +0.09; IWM +1.00 / +0.91,
   does not confirm) — reported in `docs/vol_premium.md` and pinned by
@@ -379,11 +379,11 @@ to the data:
 ## 11. Lineage and references
 
 - Internal: the pinned call-wing result (`TestSpyShortVolRegression`) and the
-  engine it shares (`vol_premium.py`, `run_real_short_vol_overlay` /
+  engine it shares (`realchains/vol_premium.py`, `run_real_short_vol_overlay` /
   `short_vol_statistics`); the audit and caveats in `docs/vol_premium.md`; the
   covered-call null this builds on (`TestMsftRealRiskManagedRegression` /
   `TestQqqRealRiskManagedRegression`, delta-hedged t \~0) and its exploration-log
-  entry; the data pipeline in `download_option_dailies.py`.
+  entry; the data pipeline in `pipeline/download_option_dailies.py`.
 - Method lineage: the delta-hedged-gain measure follows Bakshi & Kapadia (2003,
   *Journal of Derivatives*); the put-wing / skew premium follows Bondarenko,
   Broadie-Chernov-Johannes, and Constantinides-Jackwerth-Savov (2013); the

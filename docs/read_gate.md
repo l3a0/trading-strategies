@@ -5,7 +5,7 @@
 **The in-process information boundary is BUILT; the container/transport was built then REMOVED;
 only the real LLM author remains.** `edge_search.score_and_record` is the oracle seam (score →
 lifetime-judge → record → return only the one-bit scoreboard), with `assert_numberless` /
-`BANNED_RESULT_FIELDS` (in the dependency-free `read_gate_wire.py`) the load-bearing guard that no
+`BANNED_RESULT_FIELDS` (in the dependency-free `proposer/read_gate_wire.py`) the load-bearing guard that no
 result statistic rides back. That seam, the scrubbed corpus, the closed grammar, and the lifetime
 e-LOND ledger ARE the information boundary — and they are what the decided LLM author uses.
 
@@ -85,7 +85,7 @@ code and data the proposer must be able to run — so fencing the files where it
 
 1. **Re-derive by re-running the engine** — the central failure. `structure_kill_gate` /
    `run_structure_campaign` recompute `t_stat_newey_west` and `p_value` from `short_vol_statistics`
-   on the committed chains. None of `edge_search.py`, `vol_premium.py`, the chain CSVs, or `python`
+   on the committed chains. None of `search/edge_search.py`, `realchains/vol_premium.py`, the chain CSVs, or `python`
    itself can be in the deny list — they *are* the proposer's own scoring step. Verified:
    `python -c "import edge_search; print(edge_search.run_structure_campaign())"` reproduces the
    entire 42-cell answer key. And `_data_lineage_hash` *guarantees* determinism (two rows share a
@@ -199,8 +199,8 @@ Nothing is exposed by the DEFAULT path, and the LLM path is sealed:
   t-stat and kill-gate judge, a persuasive story must never promote (pinned by
   `TestProposerReasoning`).
 - **The search-saturation readout is owner-facing, not in the loop.** `search_saturation` /
-  `format_saturation` (edge_search.py) print a one-line "are we past the bar?" after each proposer
-  round: the e-LOND threshold the NEXT cell must clear (`next_flag_threshold`, evalue_fdr.py) vs. the
+  `format_saturation` (search/edge_search.py) print a one-line "are we past the bar?" after each proposer
+  round: the e-LOND threshold the NEXT cell must clear (`next_flag_threshold`, search/evalue_fdr.py) vs. the
   strongest cell the ledger has produced. It reads RESULT statistics (the best p/t and the threshold),
   so it is strictly DISPLAY-ONLY — computed in the CLI/owner layer, never routed into a proposer input.
   Its keys sit outside `SAFE_FIELDS` / `PROPOSAL_FIELDS`, and no proposer-path function references it,
@@ -235,13 +235,13 @@ a file-hiding read-gate would be theater and must not be built or claimed as a c
 - [edge_search.md](edge_search.md) — the desk, the e-LOND control, the scrubbed corpus, the
   menu-walker proposer.
 - `build_proposer_corpus` / `scrub_ledger_row` / `SAFE_FIELDS` / `run_proposer_round` in
-  `edge_search.py` — the (correct, airtight-for-what-it-covers) scrub, and the proposer loop the
+  `search/edge_search.py` — the (correct, airtight-for-what-it-covers) scrub, and the proposer loop the
   oracle architecture slots into unchanged.
 - `edge_search.score_and_record` — the in-process realization of the oracle SEAM: the single entry
   point that scores → lifetime-judges → records BEFORE replying and hands back only the scrubbed
   one-bit scoreboard. The contract it speaks (`WIRE_VERSION`, `BANNED_RESULT_FIELDS`,
   `assert_numberless`, `REQUIRED_MODEL_FIELDS`, `PROPOSAL_FIELDS`) lives in the dependency-free
-  `read_gate_wire.py` so a future in-process LLM author can carry it without importing the engine.
+  `proposer/read_gate_wire.py` so a future in-process LLM author can carry it without importing the engine.
   This seam + the numberless guard ARE the information boundary; the decided LLM author is
   oracle-side and in-process, so no transport or sandbox is needed (the container/transport that
   once wrapped this seam for an untrusted-code proposer was removed).

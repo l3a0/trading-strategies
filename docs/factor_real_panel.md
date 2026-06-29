@@ -9,7 +9,7 @@ pre-registration candidate, not a verdict (there are none here).
 
 ## The panel
 
-`factor_panel.py` assembles **US_LARGE_CAP**: a committed, hand-selected universe of **42 large-cap US
+`factor/factor_panel.py` assembles **US_LARGE_CAP**: a committed, hand-selected universe of **42 large-cap US
 equities** (`FACTOR_UNIVERSE` — tech, financials, consumer, health, industrials/energy), their
 split/dividend-adjusted daily closes downloaded from Yahoo Finance into a dates×tickers panel. The
 committed snapshot is **42 tickers × 2514 trading days, 2016-06-27 → 2026-06-26**, zero gaps.
@@ -58,11 +58,11 @@ without flinching.
 ## Reproduce
 
 ```bash
-python factor_panel.py --build      # download the universe panel + run the search
-python factor_panel.py              # re-run on the committed snapshot (no re-download)
+python -m factor.factor_panel --build      # download the universe panel + run the search
+python -m factor.factor_panel              # re-run on the committed snapshot (no re-download)
 ```
 
-The dataset-gated `test_factor_panel.py::TestRealPanelExploration` pins the full 63-factor headline (0/63
+The dataset-gated `tests/test_factor_panel.py::TestRealPanelExploration` pins the full 63-factor headline (0/63
 survive, all coherent, strongest |t| < 2) against the committed snapshot — the vectorized search is fast
 enough (\~2s) to pin the real result directly.
 

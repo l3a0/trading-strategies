@@ -7,12 +7,12 @@ template class swept at once, with the multiple-testing arithmetic done
 honestly.
 
 **Read this first — what this is and isn't.** Each campaign is run by
-[edge_search.py](../edge_search.py), an **exploratory** harness, not a
+[search/edge_search.py](../search/edge_search.py), an **exploratory** harness, not a
 registered experiment. Every candidate re-tags the cycles the pinned naked
 runs already produced — so a campaign *spends the sample* and can only **kill**
 a class of ideas or **justify** taking a survivor to a pre-registration. It is
 never itself a confirmatory verdict. The numbers are pinned
-([test_edge_search.py](../test_edge_search.py)) so a swept dead end stays dead;
+([tests/test_edge_search.py](../tests/test_edge_search.py)) so a swept dead end stays dead;
 pinning a campaign does **not** promote it to a finding. A survivor earns a
 registration — the discipline [the trend-gate prereg](prereg_trend_gate.md)
 protects — not a headline.
@@ -184,7 +184,7 @@ does not bend the cheap re-tag gate:
   and timestamp-free, so re-running a campaign on the same data lineage adds nothing:
   it is the *same* comparison, and the git history is the timeline. This is the
   guess-counter that never silently resets — the foundation the e-value FDR control
-  (#3b, `evalue_fdr.py`) reads so the comparison count is the program's lifetime
+  (#3b, `search/evalue_fdr.py`) reads so the comparison count is the program's lifetime
   total, not one session's. It carries the result statistics (the answer key), so an automated
   proposer must never read it.
 - **A number-free scoreboard for proposers.** `build_proposer_corpus` projects the
@@ -217,7 +217,7 @@ does not bend the cheap re-tag gate:
   neutrality additionally rests on the grammar staying closed and fully enumerated.
 - **The FDR control of record is e-LOND (#3b) — registered AND now ACTIVATED.** The
   per-batch Benjamini-Yekutieli gate has been replaced as the control by the e-value
-  procedure (`evalue_fdr.py`, pre-registered in
+  procedure (`search/evalue_fdr.py`, pre-registered in
   [docs/prereg_fdr_budget.md](prereg_fdr_budget.md)): each cell's HAC-t p-value is
   calibrated to an e-value (Vovk-Wang), and the campaign's cells are judged as a stream
   by e-LOND (Xu & Ramdas 2024) — proven online FDR under *arbitrary* dependence,
@@ -260,7 +260,7 @@ does not bend the cheap re-tag gate:
   of building it now, with no model, is to prove the read → propose → gate → run → judge →
   record → re-read plumbing against the real primitives — the LLM later swaps its JSON output
   for the enumerator while the gate, the lifetime judge, and the record stay identical. Run
-  via `python edge_search.py propose` (preview), `propose --run` (score, no record), or
+  via `python -m search.edge_search propose` (preview), `propose --run` (score, no record), or
   `propose --record`; pinned by the always-run `TestMenuWalkerProposer`.
 - **The Phase-2 author contract (built, no model wired yet).** `llm_propose_candidates`
   is the drop-in for the menu-walker's enumerator: `run_proposer_round(..., author=)`
@@ -586,7 +586,7 @@ right-signed (+0.67) but clears the bar by a wide margin (one-sided p \~0.25):
 | calendar | +0.67 | 0.2514 | no | yes |
 
 **A clean data-hygiene read — for once.** Where XLE needed a split repair, NVDA
-passed every clean-gate check on the first try. `validate_dailies.py` streamed
+passed every clean-gate check on the first try. `pipeline/validate_dailies.py` streamed
 NVDA over 2010-12-01 → 2026-06-05 (3,895 trading days) and returned
 **VERDICT: CLEAN** — no clip needed, no defective in-band days, the store clean
 from its first day (100% usable, 0.00% defective, BS-disagree 0.15%). The

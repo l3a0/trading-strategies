@@ -46,7 +46,7 @@ jobs:
         run: ruff check .
       # Static type checking with pyright across the core source files.
       - name: Type check
-        run: pyright cc_backtest.py download_prices.py make_figures.py make_notebook.py test_cc_backtest.py
+        run: pyright engine/cc_backtest.py pipeline/download_prices.py engine/make_figures.py engine/make_notebook.py tests/test_cc_backtest.py
 
   engine:
     # Proxy-engine work: the in-memory engine suite plus the artifact checks.
@@ -67,19 +67,19 @@ jobs:
       # the option-dailies fetcher's pure chain-filter logic (put support), plus
       # the e-value FDR control (no data — calibrator / e-LOND / e-BH, oracle-pinned).
       - name: Engine tests
-        run: pytest test_cc_backtest.py test_download_option_dailies.py test_evalue_fdr.py --cov=. --cov-branch -v
+        run: pytest tests/test_cc_backtest.py tests/test_download_option_dailies.py tests/test_evalue_fdr.py --cov=. --cov-branch -v
       # Smoke test: run the actual backtest against the committed MSFT CSV to
       # catch breakage in the main entry point the unit tests might miss
       # (CSV parsing, __main__ wiring, print formatting).
       - name: Backtest smoke test
-        run: python cc_backtest.py
+        run: python -m engine.cc_backtest
       # Figure regeneration check: ensure the figure-building pipeline still
       # works end-to-end. We don't byte-compare against the committed PNGs
       # because matplotlib rendering varies subtly across fonts/versions;
       # instead we assert the script runs and produces four non-trivial PNGs.
       - name: Verify tutorial figures regenerate
         run: |
-          python make_figures.py
+          python -m engine.make_figures
           for f in docs/figures/01_equity_curves.png \
                    docs/figures/02_excess_histogram.png \
                    docs/figures/03_bias_variance.png \
@@ -95,12 +95,12 @@ jobs:
       # Notebook drift check: the .ipynb is generated from the tutorial
       # markdown, so it's deterministic and we *can* byte-compare. Regenerate
       # and fail if it differs — that means someone edited the tutorial or
-      # figure script without running `python make_notebook.py` and committing.
+      # figure script without running `python -m engine.make_notebook` and committing.
       - name: Verify notebook is up to date
         run: |
-          python make_notebook.py
+          python -m engine.make_notebook
           git diff --exit-code covered_call_backtest.ipynb \
-            || (echo "covered_call_backtest.ipynb is stale — run 'python make_notebook.py' and commit." && exit 1)
+            || (echo "covered_call_backtest.ipynb is stale — run 'python -m engine.make_notebook' and commit." && exit 1)
 
   real-chain:
     # The real-chain regression pins need the QQQ/MSFT/SPY option-chain
@@ -108,7 +108,7 @@ jobs:
     # assets (tag data-2026-06), are cached between runs keyed on the committed
     # checksums, and are verified after download so a silently-replaced asset
     # fails loudly. If these steps are ever removed, the pins skip instead of
-    # failing (see the skipif markers in test_real_cc_backtest.py).
+    # failing (see the skipif markers in tests/test_real_cc_backtest.py).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -123,38 +123,38 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            qqq_option_dailies.csv.gz
-            qqq_option_dailies_2011_2016.csv.gz
-            msft_option_dailies.csv.gz
-            msft_option_dailies_2008_2016.csv.gz
-            spy_option_dailies.csv.gz
-            spy_option_dailies_puts.csv.gz
-            iwm_option_dailies.csv.gz
-            msft_option_dailies_puts.csv.gz
-            qqq_option_dailies_puts.csv.gz
-            gld_option_dailies.csv.gz
-            tlt_option_dailies.csv.gz
-            xle_option_dailies.csv.gz
-            eem_option_dailies.csv.gz
-            nvda_option_dailies.csv.gz
-            msft_option_dailies_180dte.csv.gz
-            spy_option_dailies_180dte.csv.gz
-            qqq_option_dailies_180dte.csv.gz
-            gld_option_dailies_180dte.csv.gz
-            xle_option_dailies_180dte.csv.gz
-            eem_option_dailies_180dte.csv.gz
-            nvda_option_dailies_180dte.csv.gz
-            tlt_option_dailies_180dte.csv.gz
-          key: chain-data-${{ hashFiles('data_checksums.sha256') }}
+            data/qqq_option_dailies.csv.gz
+            data/qqq_option_dailies_2011_2016.csv.gz
+            data/msft_option_dailies.csv.gz
+            data/msft_option_dailies_2008_2016.csv.gz
+            data/spy_option_dailies.csv.gz
+            data/spy_option_dailies_puts.csv.gz
+            data/iwm_option_dailies.csv.gz
+            data/msft_option_dailies_puts.csv.gz
+            data/qqq_option_dailies_puts.csv.gz
+            data/gld_option_dailies.csv.gz
+            data/tlt_option_dailies.csv.gz
+            data/xle_option_dailies.csv.gz
+            data/eem_option_dailies.csv.gz
+            data/nvda_option_dailies.csv.gz
+            data/msft_option_dailies_180dte.csv.gz
+            data/spy_option_dailies_180dte.csv.gz
+            data/qqq_option_dailies_180dte.csv.gz
+            data/gld_option_dailies_180dte.csv.gz
+            data/xle_option_dailies_180dte.csv.gz
+            data/eem_option_dailies_180dte.csv.gz
+            data/nvda_option_dailies_180dte.csv.gz
+            data/tlt_option_dailies_180dte.csv.gz
+          key: chain-data-${{ hashFiles('data/data_checksums.sha256') }}
       - name: Fetch chain data from the data release
         if: steps.chain-cache.outputs.cache-hit != 'true'
-        run: gh release download data-2026-06 --pattern '*_option_dailies*.csv.gz' --clobber
+        run: gh release download data-2026-06 --pattern '*_option_dailies*.csv.gz' --clobber --dir data
         env:
           GH_TOKEN: ${{ github.token }}
       - name: Verify chain-data checksum
-        run: sha256sum -c data_checksums.sha256
+        run: cd data && sha256sum -c data_checksums.sha256
       - name: Real-chain regression tests
-        run: pytest test_real_cc_backtest.py -v
+        run: pytest tests/test_real_cc_backtest.py -v
 
   # The matrix job is named scout-buckets (NOT scouts), so its per-bucket checks are
   # "scout-buckets (vol-premium)" etc. The thin `scouts` gate job below re-exposes a
@@ -164,12 +164,12 @@ jobs:
   scout-buckets:
     # The registered trend-gate experiment's analysis machinery
     # (docs/prereg_trend_gate.md — dataset-gated layer pins treatment-side
-    # quantities only), the killed exploratory scouts (test_explorations.py,
+    # quantities only), the killed exploratory scouts (tests/test_explorations.py,
     # docs/explorations.md), and the automated FDR-controlled edge-search
-    # campaign (test_edge_search.py, docs/edge_search.md), and the delta-neutral
-    # VRP scaffold (test_vol_premium.py, docs/vol_premium.md — synthetic mechanics
+    # campaign (tests/test_edge_search.py, docs/edge_search.md), and the delta-neutral
+    # VRP scaffold (tests/test_vol_premium.py, docs/vol_premium.md — synthetic mechanics
     # always run; the real-chain equivalence + signature checks are dataset-gated), and the chain-hygiene
-    # validator (test_validate_dailies.py — the classifier + boundary scan run
+    # validator (tests/test_validate_dailies.py — the classifier + boundary scan run
     # synthetically; the MSFT-backfill calibration to 2010-05-10 is dataset-gated).
     # Their dataset-gated pins need the same option dailies as the real-chain job;
     # their always-run layers run without the datasets. Split into a runtime-
@@ -190,9 +190,9 @@ jobs:
         # once per class, not once per test). The tests are xdist-safe: ledger writes are tmp_path-
         # scoped and state changes go through monkeypatch (process-isolated per worker).
         include:
-          - {bucket: vol-premium,   files: "test_vol_premium.py", args: ""}
-          - {bucket: edge-search,   files: "test_edge_search.py test_validate_dailies.py test_read_gate_wire.py test_generative_grammar.py test_generative_engine.py test_generative_proposer.py test_generative_search.py test_backend.py test_factor_backend.py test_factor_grammar.py test_factor_engine.py test_factor_mechanism.py test_factor_search.py test_factor_proposer.py test_factor_panel.py", args: "-n auto --dist loadscope"}
-          - {bucket: trend-explore, files: "test_trend_gate.py test_explorations.py", args: ""}
+          - {bucket: vol-premium,   files: "tests/test_vol_premium.py", args: ""}
+          - {bucket: edge-search,   files: "tests/test_edge_search.py tests/test_validate_dailies.py tests/test_read_gate_wire.py tests/test_generative_grammar.py tests/test_generative_engine.py tests/test_generative_proposer.py tests/test_generative_search.py tests/test_backend.py tests/test_factor_backend.py tests/test_factor_grammar.py tests/test_factor_engine.py tests/test_factor_mechanism.py tests/test_factor_search.py tests/test_factor_proposer.py tests/test_factor_panel.py", args: "-n auto --dist loadscope"}
+          - {bucket: trend-explore, files: "tests/test_trend_gate.py tests/test_explorations.py", args: ""}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -206,36 +206,36 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            qqq_option_dailies.csv.gz
-            qqq_option_dailies_2011_2016.csv.gz
-            msft_option_dailies.csv.gz
-            msft_option_dailies_2008_2016.csv.gz
-            spy_option_dailies.csv.gz
-            spy_option_dailies_puts.csv.gz
-            iwm_option_dailies.csv.gz
-            msft_option_dailies_puts.csv.gz
-            qqq_option_dailies_puts.csv.gz
-            gld_option_dailies.csv.gz
-            tlt_option_dailies.csv.gz
-            xle_option_dailies.csv.gz
-            eem_option_dailies.csv.gz
-            nvda_option_dailies.csv.gz
-            msft_option_dailies_180dte.csv.gz
-            spy_option_dailies_180dte.csv.gz
-            qqq_option_dailies_180dte.csv.gz
-            gld_option_dailies_180dte.csv.gz
-            xle_option_dailies_180dte.csv.gz
-            eem_option_dailies_180dte.csv.gz
-            nvda_option_dailies_180dte.csv.gz
-            tlt_option_dailies_180dte.csv.gz
-          key: chain-data-${{ hashFiles('data_checksums.sha256') }}
+            data/qqq_option_dailies.csv.gz
+            data/qqq_option_dailies_2011_2016.csv.gz
+            data/msft_option_dailies.csv.gz
+            data/msft_option_dailies_2008_2016.csv.gz
+            data/spy_option_dailies.csv.gz
+            data/spy_option_dailies_puts.csv.gz
+            data/iwm_option_dailies.csv.gz
+            data/msft_option_dailies_puts.csv.gz
+            data/qqq_option_dailies_puts.csv.gz
+            data/gld_option_dailies.csv.gz
+            data/tlt_option_dailies.csv.gz
+            data/xle_option_dailies.csv.gz
+            data/eem_option_dailies.csv.gz
+            data/nvda_option_dailies.csv.gz
+            data/msft_option_dailies_180dte.csv.gz
+            data/spy_option_dailies_180dte.csv.gz
+            data/qqq_option_dailies_180dte.csv.gz
+            data/gld_option_dailies_180dte.csv.gz
+            data/xle_option_dailies_180dte.csv.gz
+            data/eem_option_dailies_180dte.csv.gz
+            data/nvda_option_dailies_180dte.csv.gz
+            data/tlt_option_dailies_180dte.csv.gz
+          key: chain-data-${{ hashFiles('data/data_checksums.sha256') }}
       - name: Fetch chain data from the data release
         if: steps.chain-cache.outputs.cache-hit != 'true'
-        run: gh release download data-2026-06 --pattern '*_option_dailies*.csv.gz' --clobber
+        run: gh release download data-2026-06 --pattern '*_option_dailies*.csv.gz' --clobber --dir data
         env:
           GH_TOKEN: ${{ github.token }}
       - name: Verify chain-data checksum
-        run: sha256sum -c data_checksums.sha256
+        run: cd data && sha256sum -c data_checksums.sha256
       - name: Experiment, scout & edge-search tests (${{ matrix.bucket }})
         run: pytest ${{ matrix.files }} -v ${{ matrix.args }}
 

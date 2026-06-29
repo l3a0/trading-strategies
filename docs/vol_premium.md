@@ -62,8 +62,8 @@ in `run_real_short_vol_overlay`:
 
 ### Phase A — the call leg (runs today)
 
-`vol_premium.py::run_real_short_vol_overlay`, on the existing call-only datasets.
-Pinned mechanics in `test_vol_premium.py` (synthetic: the hedge offsets
+`realchains/vol_premium.py::run_real_short_vol_overlay`, on the existing call-only datasets.
+Pinned mechanics in `tests/test_vol_premium.py` (synthetic: the hedge offsets
 direction, a flat market harvests the premium, the NW helper signs correctly);
 a dataset-gated structural-invariant check on real SPY.
 
@@ -80,7 +80,7 @@ The equity-index VRP is concentrated in **OTM puts** (the skew / crash-insurance
 premium; Constantinides-Jackwerth-Savov find index *call* alphas \~0 while put
 alphas stay large). The call leg is the weakest wing to harvest. Testing the put
 side is the point of the experiment. At the time of the scaffold it was **blocked**:
-`download_option_dailies.py` fetched calls only. It has since been pre-registered
+`pipeline/download_option_dailies.py` fetched calls only. It has since been pre-registered
 (`prereg_vol_premium.md`), the put-inclusive SPY and IWM data fetched, and the run
 completed — the null verdict is in *The registered put-side run* below, and the
 fetch plan that follows is the one that was executed. The ATM straddle (the two-leg
@@ -256,7 +256,7 @@ The put side was the point of the experiment: the equity-index premium is suppos
 to live in the OTM puts, not the call wing the covered-call work had measured. It was
 pre-registered before the put data existed — registration effective at PR #23's merge
 — precisely because the call phase had already seen the SPY price path. The run is now
-complete (`run_registered_vrp.py`), and the pre-committed outcome language (§6, row 4)
+complete (`realchains/run_registered_vrp.py`), and the pre-committed outcome language (§6, row 4)
 is published verbatim:
 
 > **Null on the put wing: no significant delta-hedged premium on SPY over this span,
@@ -323,7 +323,7 @@ put wing's 13.3%) — short both wings is short more gamma — and 2022's grindi
 is the single biggest drag (SPY −$30.5K). It is rate-invariant and cleanly
 delta-neutral (the daily vol-P&L correlates −0.03 / −0.01 with the underlying).
 Pinned by `TestSpyStraddleSecondary` / `TestIwmStraddleSecondary`, mechanics by
-`TestStraddleMechanics`, run by `run_registered_vrp.py`.
+`TestStraddleMechanics`, run by `realchains/run_registered_vrp.py`.
 
 The straddle does not rescue the premium; it reinforces the primary read. Even the
 full variance strip, on a naive out-of-sample index, isn't significant net of cost

@@ -1,0 +1,17 @@
+# Project configuration.
+#
+# This repo is run as a collection of domain packages (engine/, realchains/,
+# search/, factor/, generative/, pipeline/, proposer/, trendgate/, common/),
+# imported as top-level packages and invoked with `python -m <pkg>.<module>`
+# from the repo root. There is no install step: running from the root puts the
+# root on sys.path, so the packages resolve directly.
+#
+# `pythonpath = ["."]` does the same for pytest, so tests under tests/ can
+# `from engine.cc_backtest import ...` even though pytest would otherwise only
+# add the tests/ directory to sys.path.
+#
+# Lint (ruff.toml) and type-check (pyrightconfig.json) config stays in its own
+# files, unchanged by the reorg.
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

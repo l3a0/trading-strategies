@@ -68,6 +68,6 @@ The pricing engine comes next: where those option prices came from, and why that
 
 ---
 
-*This is an educational walkthrough, not investment advice. The full model, the math, and a runnable version are [open-source on GitHub](https://github.com/l3a0/covered-call-backtesting) for anyone who wants to point it at their own stock and try to break it — the next post opens the engine up.*[^1]
+*This is an educational walkthrough, not investment advice. The full model, the math, and a runnable version are [open-source on GitHub](https://github.com/l3a0/trading-strategies) for anyone who wants to point it at their own stock and try to break it — the next post opens the engine up.*[^1]
 
 [^1]: Everything in this series runs from that code; the numbers above come straight out of its sample output on Microsoft, April 2016 to April 2026.

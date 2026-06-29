@@ -2,9 +2,9 @@ export const meta = {
   name: 'onboard',
   description: 'Onboard tickers for the edge-search pipeline ONE AT A TIME — each ticker runs its complete lifecycle (fetch -> clean gate -> publish -> single-ticker structure campaign -> triage) to completion before the next ticker starts. SAFE (default): read-only validate gate -> campaign -> triage. LIVE (args.live=true): adds the fetch front-half (sequential, per the shared API rate budget), auto-applies KNOWN data repairs (a proposed CHAIN_CLEAN_START clip; a split-driven price-scale mismatch), and publishes. Novel pathologies and campaign survivors ALWAYS flag to a human. args: {tickers:[...], live:false}.',
   phases: [
-    { title: 'Fetch', detail: 'live only — fetch_batch.sh (sequential, one ticker at a time)' },
+    { title: 'Fetch', detail: 'live only — scripts/fetch_batch.sh (sequential, one ticker at a time)' },
     { title: 'Clean gate', detail: 'validate; live auto-applies known repairs' },
-    { title: 'Publish', detail: 'live only — publish_dailies.sh' },
+    { title: 'Publish', detail: 'live only — scripts/publish_dailies.sh' },
     { title: 'Campaign', detail: 'single-ticker structure smoke test (this ticker alone, TLT sealed)' },
     { title: 'Triage', detail: 'kill, or adversarially vet + flag a survivor' },
     { title: 'Publish-ready', detail: 'live only — assemble the cross-ticker PR bundle (staged)' },
@@ -61,7 +61,7 @@ const VERDICT = {
 }
 
 function cleanPrompt(tk) {
-  const run = `Run:  ${PY} validate_dailies.py ${tk}
+  const run = `Run:  ${PY} -m pipeline.validate_dailies ${tk}
    Read the VERDICT (CLEAN / CLIP / UNVERIFIED) and the "price-vs-chain scale" line (scale_ok).`
   if (!LIVE) {
     return `SAFE MODE — strictly read-only. Do NOT edit files, fetch, gzip, or publish.
@@ -75,11 +75,11 @@ function cleanPrompt(tk) {
    ${run}
    - CLEAN -> action "proceed".
    - CLIP at date D -> APPLY: add '${tk}': 'D' to the CHAIN_CLEAN_START dict in
-     real_cc_backtest.py, then re-run validate to confirm CLEAN. action "repaired",
+     realchains/real_cc_backtest.py, then re-run validate to confirm CLEAN. action "repaired",
      applied="CHAIN_CLEAN_START['${tk}']='D'".
    - SCALE MISMATCH caused by a stock split -> the repair already exists in
      load_unadjusted_prices (_unsplit_factor backs the split out); regenerate the price file:
-     rm ${tk.toLowerCase()}_*_unadjusted.csv, then re-run validate (it refetches split-corrected).
+     rm data/${tk.toLowerCase()}_*_unadjusted.csv, then re-run validate (it refetches split-corrected).
      action "repaired", applied="regenerated split-corrected price file".
    - UNVERIFIED, or ANY pathology with no known repair -> DO NOT edit anything. action
      "human-flag", with a diagnosis + a DRAFT fix in detail. NEVER invent a new data-cleaning
@@ -93,14 +93,14 @@ function cleanPrompt(tk) {
 // shared API rate budget — one ticker to completion before the next — is a standing preference).
 async function onboardOne(tk) {
   if (LIVE) {
-    await agent(`LIVE — run ./fetch_batch.sh ${tk} to completion (resumable; can take a while on a
+    await agent(`LIVE — run ./scripts/fetch_batch.sh ${tk} to completion (resumable; can take a while on a
      cold ticker). Report the store path + row count.`,
       { phase: 'Fetch', label: `fetch:${tk}` })
   }
   const gate = await agent(cleanPrompt(tk), { phase: 'Clean gate', label: `clean:${tk}`, schema: GATE })
   const ready = gate && (gate.action === 'proceed' || gate.action === 'repaired')
   if (LIVE && ready) {
-    await agent(`LIVE — run ./publish_dailies.sh ${tk}; confirm the round-trip verify passed.`,
+    await agent(`LIVE — run ./scripts/publish_dailies.sh ${tk}; confirm the round-trip verify passed.`,
       { phase: 'Publish', label: `publish:${tk}` })
   }
 
@@ -118,7 +118,7 @@ async function onboardOne(tk) {
        return every cell. (Once a ticker joins STRUCTURE_SEARCH, its cells are pinned within the
        full TestStructureCampaign; a fresh onboard runs this single-ticker shape.)
        JSON-emitting command:
-         ${PY} -c "import json,edge_search as e; rows=e.run_structure_campaign(e.Campaign(search=('${tk}',))); print(json.dumps([{k:r.get(k) for k in ('template','ticker','t_stat_newey_west','p_value','elond_survivor','by_survivor','measurement_invalid')} for r in rows]))"
+         ${PY} -c "import json,search.edge_search as e; rows=e.run_structure_campaign(e.Campaign(search=('${tk}',))); print(json.dumps([{k:r.get(k) for k in ('template','ticker','t_stat_newey_west','p_value','elond_survivor','by_survivor','measurement_invalid')} for r in rows]))"
        Parse the JSON array; rename t_stat_newey_west -> t_nw. Return rows. (~10-20s; let it finish.)`,
       { phase: 'Campaign', label: `campaign:${tk}`, schema: CAMP })
     rows = (camp && camp.rows) || []
@@ -188,7 +188,7 @@ if (LIVE && clean.length) {
   const tks = clean.join(', ')
   prBundle = (await parallel([
     () => agent(`LIVE, STAGE-ONLY (never commit). Wire CI for [${tks}]: add each
-       {ticker}_option_dailies.csv.gz to BOTH chain-data cache 'path:' lists in
+       data/{ticker}_option_dailies.csv.gz to BOTH chain-data cache 'path:' lists in
        .github/workflows/ci.yml, then confirm it still parses:
        ${PY} -c "import yaml; yaml.safe_load(open('.github/workflows/ci.yml')); print('ok')"
        surface="ci.yml".`,
@@ -198,13 +198,13 @@ if (LIVE && clean.length) {
        finding (e.g. a split-driven scale repair). Match the doc's voice; markdownlint-clean (real
        headings, single trailing newline). Cells: ${cells}. Findings: ${findings}. surface="docs/edge_search.md".`,
       { phase: 'Publish-ready', label: 'document', schema: STEP }),
-    () => agent(`LIVE, STAGE-ONLY. Add a CI-reproducible pin to test_edge_search.py for each onboarded
+    () => agent(`LIVE, STAGE-ONLY. Add a CI-reproducible pin to tests/test_edge_search.py for each onboarded
        ticker's single-ticker structure campaign — dataset-gated on the now-published store, asserting
        0 survivors and the cell t_NW signs. Cells: ${cells}. Follow the existing dataset-gated structure
-       tests' style, then RUN the new test to confirm it passes before finishing. surface="test_edge_search.py".`,
+       tests' style, then RUN the new test to confirm it passes before finishing. surface="tests/test_edge_search.py".`,
       { phase: 'Publish-ready', label: 'pin', schema: STEP }),
     () => agent(`LIVE, STAGE-ONLY. git add the committed split-corrected price files for [${tks}]
-       ({ticker}_*_unadjusted.csv) so they ship with the PR. surface="price files".`,
+       (data/{ticker}_*_unadjusted.csv) so they ship with the PR. surface="price files".`,
       { phase: 'Publish-ready', label: 'stage-prices', schema: STEP }),
   ])).filter(Boolean)
 }
