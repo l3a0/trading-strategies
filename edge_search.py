@@ -68,6 +68,7 @@ from typing import Any, Callable, Sequence
 
 import numpy as np
 
+from evalue_fdr import _asymptotic_p   # the shared asymptotic-p convention (also used by factors/generative)
 from explorations import (
     IV_FLOOR,
     RV_WINDOW,
@@ -850,14 +851,9 @@ def enumerate_grammar_templates() -> list[StructureTemplate]:
     return out
 
 
-def _asymptotic_p(t_nw: float, predicted_sign: int) -> float:
-    """One-sided p-value from the HAC t-stat's asymptotic N(0,1) null. The
-    structure phase's whole point: short_vol_statistics' Newey-West t is
-    asymptotically standard normal under H0 (zero premium), so the p is
-    CLOSED-FORM — no per-candidate permutation. predicted_sign=+1 tests the
-    upper tail: p = P(Z >= t) = erfc(t / sqrt 2) / 2."""
-    z = t_nw if predicted_sign >= 0 else -t_nw
-    return 0.5 * math.erfc(z / math.sqrt(2.0))
+# _asymptotic_p — the shared asymptotic-p convention — now lives in evalue_fdr (imported above), so the
+# structure / generative / factor paths reuse one definition. edge_search re-exports it (the name is in
+# this module's namespace) for callers that import it from here.
 
 
 def _put_chain_paths(ticker: str) -> list[str]:

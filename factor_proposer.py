@@ -3,13 +3,12 @@
 The factor analog of edge_search.py's option proposer: it swaps the option coordinate schema
 (`{overlay, ticker, params}`) for the factor one (`{expr, universe, predicted_sign}`) and the
 `StructureCandidate` grammar gate for the `Expr` grammar gate, while the seal + the score/judge/record
-loop stay byte-identical in SHAPE. NO NEW DIRECT `edge_search` COUPLING: this module imports only the
-dependency-free wire (`read_gate_wire`), the factor modules, and the FDR control — it does not reach into
-`edge_search` (which pulls the option chains); the shared proposer wire lives in `read_gate_wire` (H2-pre)
-precisely so the author needn't. CAVEAT — the factor domain is NOT yet fully option-independent:
-`factor_engine`/`factor_backend` ALREADY import two option-named constants (`STRUCTURE_END`,
-`_asymptotic_p`) from `edge_search`, a pre-existing transitive coupling (since F2/F3b) worth extracting to
-a neutral home; `factor_proposer` adds none of its own.
+loop stay byte-identical in SHAPE. OPTION-INDEPENDENT: the whole factor domain imports nothing from
+`edge_search` (which pulls the option chains) — this module reaches only the dependency-free wire
+(`read_gate_wire`), the shared transports (`proposer_clients`), the factor modules, and the FDR control
+(`evalue_fdr`, which holds the shared `_asymptotic_p` convention). The two pre-existing edge_search imports
+in `factor_engine`/`factor_backend` (`STRUCTURE_END`, `_asymptotic_p`) were extracted — `_asymptotic_p`
+moved to `evalue_fdr`, and the factor panel's as-of date is the factor domain's own `FACTOR_END`.
 
 THE SEAL IS THE SAME THREE LAYERS (docs/read_gate.md), reused not reinvented:
   1. `build_factor_proposer_prompt` runs `assert_numberless` on the scrubbed-corpus INPUT before

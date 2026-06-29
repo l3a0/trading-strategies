@@ -7,9 +7,9 @@ SAME core, demonstrating the seam is domain-general: a factor's score row feeds 
 
 DEPENDENCY-LIGHT BY DESIGN. F2 is the SCORER, not the grammar. The Information Coefficient (rank
 correlation of a factor's cross-sectional values with forward returns) and its ICIR t-stat are a few
-lines of pandas/numpy — no Qlib, no alphalens. The one-sided p reuses the option path's `_asymptotic_p`
-null (from edge_search), so factor and structure p-values sit on the same footing and feed the same
-e-LOND control. Qlib's expression engine is F3's grammar and alphalens/Qlib remain OPTIONAL accelerators
+lines of pandas/numpy — no Qlib, no alphalens. The one-sided p reuses the repo's shared `_asymptotic_p`
+null (in `evalue_fdr`), so factor and structure p-values sit on the same footing and feed the same e-LOND
+control. Qlib's expression engine is F3's grammar and alphalens/Qlib remain OPTIONAL accelerators
 for scale; the minimal-dependency core (evalue_fdr's design) is unchanged. The factor primitives here (momentum / reversal / lowvol over a few windows) are a small
 fixed slice — F3 generalizes them to a bounded formula grammar.
 
@@ -36,7 +36,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from edge_search import STRUCTURE_END, _asymptotic_p
+from evalue_fdr import _asymptotic_p   # the shared asymptotic-p convention (one definition; option-independent)
 from factor_mechanism import loading_family
 
 # the F2 primitive slice (a small fixed menu; F3 generalizes to a bounded formula grammar)
@@ -44,6 +44,11 @@ FACTOR_NAMES: tuple[str, ...] = ('momentum', 'reversal', 'lowvol')
 WINDOWS: tuple[int, ...] = (5, 20, 60)          # lookback buckets (days)
 MIN_IC_PERIODS = 30                              # below this, the IC t-stat is data-insufficient
 FACTOR_ENGINE_VERSION = 'factor-v2'             # bump when IC/score mechanics change (re-lineages); v2 = H1b gate
+# The factor panel's as-of date — the factor analog of the option `STRUCTURE_END`. A SEPARATE constant on
+# purpose: the equity-panel as-of is independent of the option-chain as-of (they coincide today, but
+# coupling them would be wrong), and keeping it here is what frees the factor modules from importing
+# edge_search. Same value, so every pinned factor row's `end` is unchanged.
+FACTOR_END = '2026-06-06'
 
 
 class FactorPrimitiveError(ValueError):
@@ -147,7 +152,7 @@ class FactorBackend:
     universe: str                          # the panel id — fills the honest core's `ticker` slot
     prices: pd.DataFrame                   # dates x tickers
     checksum: str = ''                     # a panel content hash (lineage input)
-    end: str = STRUCTURE_END               # as-of date the panel is loaded through
+    end: str = FACTOR_END                  # as-of date the panel is loaded through
     fwd: int = 1                           # forward-return horizon for the IC (periods)
     min_periods: int = MIN_IC_PERIODS
 

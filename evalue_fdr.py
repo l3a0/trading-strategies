@@ -165,6 +165,16 @@ def online_fdr_survivors(ledger_rows: Sequence[dict], alpha: float = ONLINE_FDR_
             for r, e, s in zip(ledger_rows, e_values, steps)]
 
 
+def _asymptotic_p(t_nw: float, predicted_sign: int) -> float:
+    """One-sided p-value from a HAC t-stat's asymptotic N(0,1) null. A Newey-West t is asymptotically
+    standard normal under H0 (zero edge), so the p is CLOSED-FORM — no per-candidate permutation.
+    `predicted_sign=+1` tests the upper tail: p = P(Z >= t) = erfc(t / sqrt 2) / 2. The repo's single
+    asymptotic-p convention — shared by the structure phase (edge_search), the generative engine, and the
+    factor backend — so their p-values sit on the same footing and feed the same e-LOND control."""
+    z = t_nw if predicted_sign >= 0 else -t_nw
+    return 0.5 * math.erfc(z / math.sqrt(2.0))
+
+
 # --- search-saturation diagnostic (owner-facing; reads result stats, DISPLAY-ONLY) ---------
 def z_from_p_one_sided(p: float) -> float:
     """The one-sided z-score for an upper-tail probability `p`: the `z` with P(Z >= z) = p
