@@ -23,8 +23,13 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from edge_search import STRUCTURE_END
-from factor_backend import FACTOR_ENGINE_VERSION, MIN_IC_PERIODS, ic_to_row, information_coefficient
+from factor_backend import (
+    FACTOR_END,
+    FACTOR_ENGINE_VERSION,
+    MIN_IC_PERIODS,
+    ic_to_row,
+    information_coefficient,
+)
 from factor_grammar import (Expr, ExprGrammarError, canonical_expr_key, enumerate_exprs, validate_expr)
 from factor_mechanism import loading_family
 
@@ -85,7 +90,7 @@ class GrammarFactorBackend:
     universe: str                          # the panel id — fills the honest core's `ticker` slot
     prices: pd.DataFrame                   # dates x tickers
     checksum: str = ''                     # a panel content hash (lineage input)
-    end: str = STRUCTURE_END
+    end: str = FACTOR_END
     fwd: int = 1
     min_periods: int = MIN_IC_PERIODS
 
