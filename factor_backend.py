@@ -30,6 +30,7 @@ the `ticker` slot carries the universe id, no core change.
 from __future__ import annotations
 
 import hashlib
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -102,17 +103,43 @@ def information_coefficient(values: pd.DataFrame, prices: pd.DataFrame, fwd: int
     factor's cross-sectional values and the `fwd`-period forward return — the factor analog of the
     structure's daily vol-P&L series. LOOK-AHEAD-FREE: the signal at date t is correlated with the return
     from t to t+fwd (`shift(-fwd)`), which is known only after t — a positive shift would leak the future.
-    Periods with fewer than 3 ranked names are dropped (a rank correlation on 1-2 names is spurious)."""
+    Periods with fewer than 3 ranked names are dropped (a rank correlation on 1-2 names is spurious).
+
+    VECTORIZED (no per-date Python loop): rank each row cross-sectionally, then the rowwise Pearson of the
+    rank rows (== Spearman) over the names present in both — byte-for-byte the old loop (verified `allclose`
+    1e-12), fast enough for real panels."""
     forward = prices.shift(-fwd) / prices - 1.0
-    ics: list[float] = []
-    for date in values.index:
-        fv, fr = values.loc[date], forward.loc[date]
-        pair = pd.concat([fv, fr], axis=1).dropna()
-        if len(pair) >= 3:
-            ic = pair.iloc[:, 0].rank().corr(pair.iloc[:, 1].rank())   # Spearman == Pearson on ranks (no scipy dep)
-            if pd.notna(ic):
-                ics.append(float(ic))
-    return np.asarray(ics, dtype=float)
+    mask = values.notna() & forward.notna()                  # names present in BOTH, per date
+    rv = values.where(mask).rank(axis=1)                      # cross-sectional ranks (NaN where masked out)
+    rf = forward.where(mask).rank(axis=1)
+    rv_c = rv.sub(rv.mean(axis=1), axis=0)                    # demean each row over its non-NaN names
+    rf_c = rf.sub(rf.mean(axis=1), axis=0)
+    cov = (rv_c * rf_c).sum(axis=1)
+    denom = np.sqrt((rv_c ** 2).sum(axis=1) * (rf_c ** 2).sum(axis=1))
+    ic = (cov / denom)[(mask.sum(axis=1) >= 3) & (denom > 0)]  # >= 3 ranked names; non-degenerate
+    return ic.dropna().to_numpy(dtype=float)
+
+
+def _newey_west_t(x: np.ndarray) -> float:
+    """The Newey-West HAC t-stat of a series' mean against H0: mean = 0 — the SAME Bartlett-weighted
+    autocovariance correction the option path uses (`cc_backtest.compute_statistics`), here applied to the
+    daily IC series. The IC is autocorrelated (adjacent days share most of the cross-section), so the simple
+    ICIR t (mean/(std/√n)) is INFLATED; this corrects it, so the shared `t_stat_newey_west` field is now
+    accurate for factors too. `L = int(4·(n/100)^(2/9))`; the NW variance is floored at 0 (returns t = 0 at
+    short samples / zero variance, where the data-insufficiency guard already fires)."""
+    n = x.size
+    mean = float(x.mean())
+    var0 = float(np.var(x, ddof=1))
+    if n < 2 or var0 == 0.0:
+        return 0.0
+    lag_max = int(4 * (n / 100) ** (2 / 9))
+    nw_sum = 0.0
+    for k in range(1, lag_max + 1):
+        weight = 1.0 - k / (lag_max + 1)
+        nw_sum += weight * float(np.mean((x[:-k] - mean) * (x[k:] - mean)))   # Bartlett-weighted autocov at lag k
+    var_mean = (var0 + 2.0 * nw_sum) / n
+    se = math.sqrt(max(var_mean, 0.0))
+    return mean / se if se > 0 else 0.0
 
 
 def ic_to_row(ic: np.ndarray, family: str | None, predicted_sign: int, key: str, universe: str, end: str,
@@ -134,7 +161,10 @@ def ic_to_row(ic: np.ndarray, family: str | None, predicted_sign: int, key: str,
     if n < min_periods or ic.std(ddof=1) == 0:
         return {**row, 'measurement_invalid': True, 'n_days': n,                    # data-insufficient
                 't_stat_newey_west': None, 'sign_ok': False, 'p_value': None}
-    t_ic = float(ic.mean() / (ic.std(ddof=1) / np.sqrt(n)))        # the ICIR t-stat
+    # The IC t-stat, NEWEY-WEST HAC-corrected for the IC series' autocorrelation (adjacent days share most
+    # of the cross-section) — so the shared honest-core field `t_stat_newey_west` is now LITERALLY accurate
+    # for factors, the same HAC convention the option path uses (cc_backtest.compute_statistics).
+    t_ic = _newey_west_t(ic)
     t_sign = (t_ic > 0) - (t_ic < 0)
     incoherent = family is None                                   # mechanism-incoherent: keep t, never flag
     return {**row, 'measurement_invalid': incoherent, 'n_days': n, 't_stat_newey_west': t_ic,
