@@ -20,13 +20,13 @@ single-leg structures and the first 5 same-expiration two-leg structures in cano
 the **seven onboarded search tickers** (MSFT, SPY, QQQ, GLD, XLE, EEM, NVDA), with **TLT sealed by
 omission**: **70 generative cells**. Each is scored by the generative kill-gate (`score_composition`, with
 its inline mechanism gate) and judged over the lifetime e-LOND stream with the committed 75-cell
-`idea_ledger.jsonl` as the read-only head (design A, [generative_engine.py](../generative_engine.py)).
+`idea_ledger.jsonl` as the read-only head (design A, [generative/generative_engine.py](../generative/generative_engine.py)).
 Every judged cell — its t-stat, e-LOND verdict, and data lineage — is **recorded to `gen_ledger.jsonl`**,
 the generative twin of the closed-grammar ledger and the audit log of this run. "Exploratory" means *not a
 registered verdict*, not *unrecorded*: the lifetime e-LOND budget is only honest if every look is on the
 record (the same reason the structure campaign records its exploratory 56-cell batch).
 
-Reproduce: `python generative_search.py --record` (the 7-ticker run; slow, one engine pass per cell).
+Reproduce: `python -m generative.generative_search --record` (the 7-ticker run; slow, one engine pass per cell).
 
 ## The three results
 
@@ -90,7 +90,7 @@ post-cutoff span are levers; recording more same-era cells is not.
 The grammar can still express a **degenerate** structure: a same-strike short + long put nets to \~flat
 (the legs cancel), yet it "trades" and `derive_family` typed it `carry` from the tiny residual signature.
 It is economically null and non-significant, but it is the same family of edge case as the duplicate-leg
-scale-multiple the Phase-4 seal verification caught ([generative_grammar.py](../generative_grammar.py)
+scale-multiple the Phase-4 seal verification caught ([generative/generative_grammar.py](../generative/generative_grammar.py)
 `validate_composition`). A candidate next tightening: forbid a same-strike short+long pair of the same
 right (a true zero, like the duplicate-leg rule).
 
@@ -98,9 +98,9 @@ right (a true zero, like the duplicate-leg rule).
 
 | Surface | What it holds |
 | --- | --- |
-| [generative_search.py](../generative_search.py) | the runner (`run_generative_search`, `--record`) that walks the slice, judges over the lifetime stream, and records to the audit log |
+| [generative/generative_search.py](../generative/generative_search.py) | the runner (`run_generative_search`, `--record`) that walks the slice, judges over the lifetime stream, and records to the audit log |
 | `gen_ledger.jsonl` | **the committed audit log** — the 70 recorded generative comparisons, e-LOND verdicts, and lineage (design A's generative twin of `idea_ledger.jsonl`) |
-| [test_generative_search.py](../test_generative_search.py) | always-run: the published stream is past the bar (no chains) + the recorded ledger is well-formed, 0 survivors, distinct cells, TLT absent; dataset-gated: re-running the menu-walker reproduces the null |
+| [tests/test_generative_search.py](../tests/test_generative_search.py) | always-run: the published stream is past the bar (no chains) + the recorded ledger is well-formed, 0 survivors, distinct cells, TLT absent; dataset-gated: re-running the menu-walker reproduces the null |
 | this doc | the human-readable negative-results record |
 
 _Last updated: 2026-06-26._

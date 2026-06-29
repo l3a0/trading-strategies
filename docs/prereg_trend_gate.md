@@ -109,7 +109,7 @@ re-runs the engine itself (§6.2).
 - **"Beats the unconditional overlay" is not a claim.** The unconditional
   call leg is negative on these chains (MSFT −\$382,209 over 16y, QQQ
   −\$156,628 over 10y, both NW-insignificant; pinned in
-  `test_real_cc_backtest.py`). Any abstinence — a coin-flip gate — improves
+  `tests/test_real_cc_backtest.py`). Any abstinence — a coin-flip gate — improves
   on it in expectation. It is reported as descriptive context only.
 - **No claim at GFC scale.** The GFC era is excluded at load time
   (`CHAIN_CLEAN_START`). The spans do contain crash-and-rip episodes — the
@@ -143,7 +143,7 @@ state knowable at the open of `d` is `'bull'`, where the state series is:
 classify_regime(unadjusted_closes, window=200, threshold=0.05).shift(1)
 ```
 
-using `classify_regime` from `cc_backtest.py` exactly as it exists at
+using `classify_regime` from `engine/cc_backtest.py` exactly as it exists at
 registration: bull iff close > 1.05 × SMA200. The series is computed on the
 **full** `*_10yr_prices_unadjusted.csv` file (the same series the engine
 trades against), then shifted one day so day `d` uses only closes through
@@ -631,7 +631,7 @@ inconclusive," for which the §7 language is already committed.
 ## 10. Implementation constraints
 
 - **Gate seam:** the entry branch of `run_real_cc_overlay`
-  (`real_cc_backtest.py`, the `if position is None:` block). A suspended day
+  (`realchains/real_cc_backtest.py`, the `if position is None:` block). A suspended day
   behaves exactly like an existing no-entry day (no chain row, empty band,
   or non-positive net premium): no trade record, shares held uncovered,
   daily equity row still appended, entry re-attempted the next tradeable
@@ -669,7 +669,7 @@ registration.
 
 - Internal: `classify_regime` / `regime_analysis` (the hypothesis source —
   figure 10's bull/bear/sideways per-day P&L); pinned unconditional results
-  in `test_real_cc_backtest.py` (`TestMsftExtendedSpanRegression`,
+  in `tests/test_real_cc_backtest.py` (`TestMsftExtendedSpanRegression`,
   `TestQqqRealChainRegression`, `TestMsftRealChainRegression`); the era
   exclusion in `load_chain_store` / `CHAIN_CLEAN_START`; the tutorial's
   "What We'd Add Next" item 10 (the house prediction this experiment tests).

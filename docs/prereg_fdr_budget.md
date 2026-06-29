@@ -1,8 +1,8 @@
 # Pre-registration: e-value false-discovery control for the edge-search loop
 
 **Status:** REGISTERED — effective at this file's merge to `main` (#50) — and now
-ACTIVATED. The machinery (§2) and constants (§3) are implemented in `evalue_fdr.py`
-and pinned by `test_evalue_fdr.py` (oracle-validated against the `online-fdr` package
+ACTIVATED. The machinery (§2) and constants (§3) are implemented in `search/evalue_fdr.py`
+and pinned by `tests/test_evalue_fdr.py` (oracle-validated against the `online-fdr` package
 / the papers). e-LOND is now the live FDR control in `run_structure_campaign` (BY
 retained as a reported diagnostic): its first governed verdict — **0 / 28 cells
 flagged** in the structure campaign — is pinned by `TestStructureCampaign`. The rule

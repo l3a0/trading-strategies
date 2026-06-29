@@ -9,8 +9,8 @@ scratch.
 published refinement. Neither is a registered experiment. Each runs on data
 that has already been used, so it **spends the sample**: it can only *kill* an
 idea or *justify* taking it to a pre-registration. It is never itself a
-confirmatory verdict. The numbers are pinned (`test_explorations.py`, or for
-the real-chain check `test_real_cc_backtest.py`) so a dead end stays settled
+confirmatory verdict. The numbers are pinned (`tests/test_explorations.py`, or for
+the real-chain check `tests/test_real_cc_backtest.py`) so a dead end stays settled
 and so a future change can't silently revive a buried result — but pinning a
 result does **not** promote it to a registered finding.
 That line is the whole point of [the pre-registration discipline](prereg_trend_gate.md):
@@ -133,8 +133,8 @@ whose victim was a **published** number rather than a prospective hypothesis.
 Blog post 6 had already flagged that the proxy's delta-hedged t-stats (MSFT
 1.63, QQQ 1.58) "need re-measuring against real quotes before they mean
 anything"; this entry is that measurement. It is pinned in
-`test_real_cc_backtest.py` (`TestMsftRealRiskManagedRegression`,
-`TestQqqRealRiskManagedRegression`), not `test_explorations.py`.
+`tests/test_real_cc_backtest.py` (`TestMsftRealRiskManagedRegression`,
+`TestQqqRealRiskManagedRegression`), not `tests/test_explorations.py`.
 
 **The idea.** Delta-hedge the covered call (Israelov & Nielsen, 2015): each day
 hold extra long stock equal to the short call's delta × base shares, pinning

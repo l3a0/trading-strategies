@@ -72,7 +72,7 @@ Black-Scholes earns the "recipe" label honestly: give it good ingredients and it
 
 ---
 
-*This is an educational walkthrough, not investment advice. The pricing functions, the volatility proxy, and the regime logic described here are [open-source on GitHub](https://github.com/l3a0/covered-call-backtesting) if you want to see precisely what got estimated and swap in your own assumptions.*
+*This is an educational walkthrough, not investment advice. The pricing functions, the volatility proxy, and the regime logic described here are [open-source on GitHub](https://github.com/l3a0/trading-strategies) if you want to see precisely what got estimated and swap in your own assumptions.*
 
 [^1]: "Roughly" is doing real work. Delta and the probability of finishing in-the-money are closely related but not identical quantities; for setting a covered-call strike, the difference is small enough to ignore and the intuition is what matters. The tutorial in the repo walks through the precise version for anyone who wants it.
 

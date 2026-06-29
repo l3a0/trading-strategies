@@ -94,4 +94,4 @@ That instrument is worth more than any backtest it will ever evaluate. Learning 
 
 ---
 
-*This is an educational walkthrough, not investment advice. The significance code, the full tutorial, and a runnable notebook are [open-source on GitHub](https://github.com/l3a0/covered-call-backtesting) — point it at your own ticker, compute the honest t-stat, and see what survives.*
+*This is an educational walkthrough, not investment advice. The significance code, the full tutorial, and a runnable notebook are [open-source on GitHub](https://github.com/l3a0/trading-strategies) — point it at your own ticker, compute the honest t-stat, and see what survives.*

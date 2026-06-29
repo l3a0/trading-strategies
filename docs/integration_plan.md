@@ -22,8 +22,8 @@ factor domain lacks, and it recurs in both parts.
 
 ## The shared foundation: the honest core is hypothesis-blind
 
-A repo map (three Explore agents over `edge_search.py` / `evalue_fdr.py` / `generative_grammar.py` /
-`generative_engine.py` / `read_gate_wire.py` / `vol_premium.py`) confirmed the load-bearing fact:
+A repo map (three Explore agents over `search/edge_search.py` / `search/evalue_fdr.py` / `generative/generative_grammar.py` /
+`generative/generative_engine.py` / `proposer/read_gate_wire.py` / `realchains/vol_premium.py`) confirmed the load-bearing fact:
 
 > The honest core keys on `(data_lineage_hash, phase, template, ticker, params)` and reads result
 > statistics (`p_value`, `t_stat_newey_west`, `sign_ok`, `measurement_invalid`, `elond_survivor`) — never
@@ -102,7 +102,7 @@ integrate its loop; we lift its two good ideas and run them behind the seal — 
 
 - **Hypothesis-first generation.** Before the candidate, the author states a falsifiable economic claim
   (`{premium_family|hypothesis, direction, conditioning, claim}`), generated numberless and recorded
-  audit-only (like today's `reasoning`). Add `HYPOTHESIS_FIELDS` to `read_gate_wire.py`.
+  audit-only (like today's `reasoning`). Add `HYPOTHESIS_FIELDS` to `proposer/read_gate_wire.py`.
 - **Hypothesis-factor alignment, made rigorous.** An oracle-side gate where the backend's `mechanism()`
   must match the author's *claimed* family, or the cell is killed — the direct cure for the foil-paper
   failure mode (a persuasive rationale on a candidate that does something else).

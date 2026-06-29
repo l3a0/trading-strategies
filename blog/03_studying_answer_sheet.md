@@ -80,7 +80,7 @@ It still fails one test — the single statistic from the first post, the one th
 
 ---
 
-*This is an educational walkthrough, not investment advice. The walk-forward, Monte Carlo, sensitivity, and regime routines described here are [open-source on GitHub](https://github.com/l3a0/covered-call-backtesting) if you want to run the four attacks yourself.*
+*This is an educational walkthrough, not investment advice. The walk-forward, Monte Carlo, sensitivity, and regime routines described here are [open-source on GitHub](https://github.com/l3a0/trading-strategies) if you want to run the four attacks yourself.*
 
 [^1]: Span housekeeping, since these numbers invite cross-comparison with the first post. The headline ~915% there is the fixed-settings return over the *full* ten-year sample (2016–2026); the 324% and 378% here are the narrower walk-forward window (2019–2025), which trims the first three years off the front and ~6 months off the end, so the span-matched pair is 324% against 378%, not 324% against 915%. Likewise the ~646% buy-and-hold figure from the first post is the full sample; the ~317% used above is buy-and-hold over the matched walk-forward window.
 
