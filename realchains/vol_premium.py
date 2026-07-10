@@ -61,6 +61,7 @@ from typing import Any, Callable
 import numpy as np
 import pandas as pd
 
+from common.stats import newey_west_summary
 from realchains.real_cc_backtest import (
     COMMISSION_PER_SHARE,
     load_chain_store,
@@ -191,24 +192,14 @@ def short_vol_statistics(
     if n < 2:
         raise ValueError(f'need >=2 daily observations, got {n}')
 
-    mean_e = float(np.mean(excess))
-    var_e = float(np.var(excess, ddof=1))  # variance of the vol-P&L return series
-    se_naive = math.sqrt(var_e / n) if var_e > 0 else 0.0
-    t_naive = mean_e / se_naive if se_naive > 0 else 0.0
+    # The naive/NW pair, Bartlett weights, auto-lag, and guards live in
+    # common.stats.newey_west_summary — the single shared definition
+    # (byte-identical to the block formerly inlined here).
+    s = newey_west_summary(excess)
 
-    L = int(4 * (n / 100) ** (2 / 9))
-    nw_sum = 0.0
-    for k in range(1, L + 1):
-        weight = 1.0 - k / (L + 1)
-        cov_k = float(np.mean((excess[:-k] - mean_e) * (excess[k:] - mean_e)))
-        nw_sum += weight * cov_k
-    var_mean_nw = (var_e + 2 * nw_sum) / n
-    se_nw = math.sqrt(max(var_mean_nw, 0.0))
-    t_nw = mean_e / se_nw if se_nw > 0 else 0.0
-
-    ann_excess = mean_e * periods_per_year
+    ann_excess = s.mean * periods_per_year
     ann_total = float(np.mean(ret)) * periods_per_year
-    ann_vol = math.sqrt(var_e * periods_per_year)
+    ann_vol = math.sqrt(s.var * periods_per_year)
     sharpe = ann_excess / ann_vol if ann_vol > 0 else 0.0
 
     return {
@@ -218,12 +209,12 @@ def short_vol_statistics(
         'ann_excess_return_pct': round(ann_excess * 100, 3),  # over rf -- the alpha
         'ann_vol_pct': round(ann_vol * 100, 2),
         'sharpe': round(sharpe, 3),                          # vol-P&L Sharpe (rf netted)
-        't_stat_naive': round(t_naive, 2),
-        't_stat_newey_west': round(t_nw, 2),                 # tests vol-P&L > 0
-        'nw_lag': L,
-        'passes_t_2': abs(t_nw) > 2.0,
+        't_stat_naive': round(s.t_naive, 2),
+        't_stat_newey_west': round(s.t_newey_west, 2),       # tests vol-P&L > 0
+        'nw_lag': s.lag,
+        'passes_t_2': abs(s.t_newey_west) > 2.0,
         'mean_daily_pnl_dollars': round(float(np.mean(np.diff(eq))), 2),  # gross, incl. rf
-        'mean_daily_excess_dollars': round(mean_e * capital, 2),  # vol-P&L, rf netted
+        'mean_daily_excess_dollars': round(s.mean * capital, 2),  # vol-P&L, rf netted
     }
 
 
@@ -848,6 +839,7 @@ def run_real_structure_overlay(
     losses = 0
     entry_credit = 0.0           # the open structure's net credit per share (for its realized P&L)
     realized_settle_flow = 0.0   # near-leg settle flow already booked this cycle (staggered/calendar)
+    worst_unrealized = 0.0       # Gap A (A2): running min of the open cycle's daily MTM P&L, dollars
     daily_rows: list[dict[str, Any]] = []
     trades: list[dict[str, Any]] = []   # one record per entry/settle/close — non-empty iff it traded
     prev_date: str | None = None
@@ -876,6 +868,7 @@ def run_real_structure_overlay(
                         entry_credit = sum(-leg['sign'] * leg['entry_net'] for leg in picked)
                         cash += entry_credit * shares
                         realized_settle_flow = 0.0   # fresh cycle: no near-leg settle booked yet
+                        worst_unrealized = 0.0       # fresh cycle: MAE tracks from this entry
                         legs = picked
                         # `expiration` is the structure's FINAL (latest) leg expiration — the
                         # sentinel for "the whole structure is now settled". For every
@@ -887,8 +880,17 @@ def run_real_structure_overlay(
                         expiration = max(leg['expiration'] for leg in picked)
                         num_sold += 1
                         total_premium_collected += entry_credit * shares
+                        # `legs_detail` is the Gap A ledger's R input (per-share, like
+                        # `credit`): wing widths for defined_max_loss, short-leg gross
+                        # premium for the mixed-sign premium floor (common/trade_ledger.py).
                         trades.append({'date': date, 'action': 'enter',
-                                       'legs': len(picked), 'credit': round(entry_credit, 4)})
+                                       'legs': len(picked), 'credit': round(entry_credit, 4),
+                                       'legs_detail': [
+                                           {'sign': leg['sign'], 'right': leg['right'],
+                                            'strike': leg['strike'],
+                                            'entry_net': leg['entry_net'],
+                                            'expiration': leg['expiration']}
+                                           for leg in picked]})
         elif legs is not None and date >= min(leg['expiration'] for leg in legs) < expiration:
             # STAGGERED settlement (multi-expiration only — a calendar/diagonal). One or more
             # NEAR legs have reached their own expiration while a LATER leg still lives, so the
@@ -923,7 +925,8 @@ def run_real_structure_overlay(
             wins, losses = ((wins + 1, losses) if (entry_credit + structure_flow) * shares >= 0
                             else (wins, losses + 1))
             trades.append({'date': date, 'action': 'settle',
-                           'pnl': round((entry_credit + structure_flow) * shares, 2)})
+                           'pnl': round((entry_credit + structure_flow) * shares, 2),
+                           'mae': round(worst_unrealized, 2)})
             legs = None
             expiration = None
             realized_settle_flow = 0.0
@@ -947,7 +950,8 @@ def run_real_structure_overlay(
                         wins, losses = ((wins + 1, losses) if (entry_credit - buyback) * shares >= 0
                                         else (wins, losses + 1))   # closed early: credit - buyback
                         trades.append({'date': date, 'action': 'close',
-                                       'pnl': round((entry_credit - buyback) * shares, 2)})
+                                       'pnl': round((entry_credit - buyback) * shares, 2),
+                                       'mae': round(worst_unrealized, 2)})
                         legs = None
                         expiration = None
 
@@ -976,7 +980,14 @@ def run_real_structure_overlay(
         # 4. mark.
         equity = cash + price * hedge_shares
         if legs is not None:
-            equity += sum(leg['sign'] * leg['mid'] for leg in legs) * shares
+            structure_mark = sum(leg['sign'] * leg['mid'] for leg in legs)
+            equity += structure_mark * shares
+            # Gap A (A2): running MAE — the open cycle's daily MTM P&L is the entry
+            # credit plus any near-leg settle flow already booked plus current marks.
+            worst_unrealized = min(
+                worst_unrealized,
+                (entry_credit + realized_settle_flow + structure_mark) * shares,
+            )
         daily_rows.append({'date': date, 'equity': round(equity, 2), 'price': price,
                            'rf_credit': day_rf_credit})
         prev_date, prev_price = date, price

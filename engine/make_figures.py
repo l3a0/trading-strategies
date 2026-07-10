@@ -42,6 +42,7 @@ Run: python make_figures.py
 
 from __future__ import annotations
 from common.paths import data_path
+from common.stats import newey_west_lag
 
 import csv
 import math
@@ -298,7 +299,7 @@ def fig3_bias_variance(
 
     Ls = np.arange(L_max + 1)
     optimal_L = int(Ls[int(np.argmin(mse))])
-    andrews_L = int(4 * (n / 100) ** (2 / 9))
+    andrews_L = newey_west_lag(n)
 
     fig, ax = plt.subplots(figsize=FIGSIZE)
     ax.plot(Ls, bias2_n, color=BLUE, linestyle="--", linewidth=2, label="bias²")
@@ -767,7 +768,7 @@ def fig11_excess_acf(
     acf = np.array([float(np.mean(e[:-k] * e[k:])) / var for k in range(1, max_lag + 1)])
     lags = np.arange(1, max_lag + 1)
     ci = 1.96 / math.sqrt(n)
-    nw_L = int(4 * (n / 100) ** (2 / 9))
+    nw_L = newey_west_lag(n)
 
     fig, ax = plt.subplots(figsize=FIGSIZE)
     ax.axhspan(-ci, ci, color=GRAY, alpha=0.15,
