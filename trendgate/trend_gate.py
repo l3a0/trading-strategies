@@ -25,6 +25,7 @@ run consumes identical inputs.
 
 from __future__ import annotations
 from common.paths import data_path
+from common.stats import newey_west_summary
 
 import json
 import math
@@ -654,24 +655,17 @@ def loyo_t(per_ticker_cycles: dict[str, list[list[Any]]],
 def common_base_nw_t(record_eq: Any, baseline_summary: dict[str, Any]) -> dict[str, Any]:
     """§6.4: daily common-base excess Newey-West t on the record arm,
     e_t = (ΔE_gated − ΔE_bh) / E_bh,t−1 — zero by construction on uncovered
-    days. Mirrors compute_statistics' NW estimator (Bartlett weights,
-    L = floor(4 (n/100)^(2/9))); descriptive only."""
+    days. The estimator is the shared common.stats.newey_west_summary — the
+    same Bartlett-weighted NW block compute_statistics uses, byte-identical
+    to the mirror formerly inlined here; descriptive only."""
     shares = baseline_summary['num_contracts'] * 100
     cash = baseline_summary['cash']
     equity = record_eq['equity'].to_numpy(dtype=float)
     prices = record_eq['price'].to_numpy(dtype=float)
     bh = shares * prices + cash
     excess = (np.diff(equity) - np.diff(bh)) / bh[:-1]
-    n = len(excess)
-    mean_e = float(np.mean(excess))
-    var_e = float(np.var(excess, ddof=1))
-    lag = int(4 * (n / 100) ** (2 / 9))
-    nw_sum = 0.0
-    for k in range(1, lag + 1):
-        w = 1.0 - k / (lag + 1)
-        nw_sum += w * float(np.mean((excess[:-k] - mean_e) * (excess[k:] - mean_e)))
-    se = math.sqrt(max((var_e + 2 * nw_sum) / n, 0.0))
-    return {'t_nw': mean_e / se if se > 0 else 0.0, 'lag': lag, 'n': n}
+    s = newey_west_summary(excess)
+    return {'t_nw': s.t_newey_west, 'lag': s.lag, 'n': s.n}
 
 
 def stress_window_deltas(record_eq: Any, baseline_eq: Any,

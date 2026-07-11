@@ -2,7 +2,15 @@
 
 ## Status
 
-This is a **DESIGN document — a build spec, PLAN-level. No code is written yet.** It designs Gap A
+**Implementation status (2026-07): A1 and A2 are BUILT** — `common/trade_ledger.py` plus the MAE/`legs_detail`
+threading in all three engines, pinned by `tests/test_trade_ledger.py` (the always-run mechanics layer and the
+dataset-gated MSFT-CC / SPY-short-vol regression). A3's "wire into the reports" half is **deliberately
+deferred**: adding ledger lines to `engine/cc_backtest.py`'s `__main__` output would drift the README's pinned
+sample-output block, so the ledger is consumed via the module API and its tests. Code file:line references in
+the sections below describe the tree **as of the design commit** (the implementation inserted lines, so some
+have shifted); the `.py#L` sweep governs the linked anchors, not these prose coordinates.
+
+This was written as a **DESIGN document — a build spec, PLAN-level**, ahead of the code. It designs Gap A
 from [docs/van_tharp_test_plan.md](van_tharp_test_plan.md) — the keystone measurement primitive the rest of
 that plan depends on. It adds a measurement substrate, not new epistemics: it rides the repo's existing
 honesty governance unchanged (no new FDR control, no new registration). Any number this ledger eventually
@@ -42,26 +50,37 @@ Gap A supplies the missing substrate: a uniform per-trade record carrying dollar
 A uniform dataclass, `TradeRecord`, is the single columnar shape every overlay reduces to. It keeps
 `(entry_date, close_date, pnl)` so it is drop-in compatible with `regime_analysis`, which reads a trade
 list as `list[dict]` and projects it to `['date', 'pnl']` (engine/cc_backtest.py:839-847). The added fields
-carry the risk basis, R, the R-multiple, MAE, and the win/loss outcome.
+carry the risk basis, R, the R-multiple, MAE, and the win/loss outcome. The block below is the as-built
+class, verbatim from `common/trade_ledger.py`:
 
 ```python
-from dataclasses import dataclass
-
 @dataclass(frozen=True)
 class TradeRecord:
-    strategy: str          # e.g. "covered_call", "short_straddle", "credit_spread"
+    """One completed trade, reduced from an entry/terminal event pair.
+
+    Frozen: a row is a reduced historical fact whose derived fields
+    (``r_multiple``, ``mae_r``, ``outcome``) are consistent with
+    ``pnl``/``initial_risk`` only as computed at construction — mutating any
+    one field downstream would silently desynchronize the others, and
+    ``ledger_statistics`` must be able to trust rows it didn't build.
+    """
+
+    strategy: str          # "covered_call" (both CC engines) or the overlay's STRUCTURE_SPECS
+                           # key: "short_vol", "straddle", "strangle", "iron_condor",
+                           # "risk_reversal", "credit_spread", "calendar" (the short put is
+                           # "short_vol" run with a put leg, not its own label). Free-form
+                           # passthrough, not validated — the set grows with grammar widenings.
     ticker: str
-    entry_date: str        # kept for regime_analysis (date, pnl) compatibility
+    entry_date: str        # kept alongside close_date for regime_analysis (date, pnl) use
     close_date: str
-    pnl: float             # realized dollars, already computed by the engine
-    risk_basis: str        # WHICH R convention was used (audit trail): one of
-                           # "defined_max_loss" | "stop_distance" | "premium_collected"
-                           # (ex-post "avg_loss_1R" is applied at the statistics layer, not here)
+    pnl: float             # realized dollars, read from the engine's terminal event
+    risk_basis: str        # which R convention produced initial_risk (audit trail);
+                           # "premium_collected_abs" marks the mixed-sign normalization
     initial_risk: float    # R, dollars, > 0
     r_multiple: float      # pnl / initial_risk
     mae: float             # worst intratrade unrealized P&L, dollars, <= 0
     mae_r: float           # mae / initial_risk
-    outcome: str           # "win" | "loss", from sign of pnl
+    outcome: str           # "win" | "loss" — pnl >= 0 is a win (the engines' convention)
 ```
 
 The `pnl` field is the same rounded dollar P&L the engines already compute at every settle/close site
@@ -119,8 +138,12 @@ an unambiguous positive credit. The mixed-sign risk reversal (short put + long c
 realchains/vol_premium.py:557-563) and the calendar (short near + long far,
 realchains/vol_premium.py:653-660) use the `each_short_positive` guard
 (realchains/vol_premium.py:872), which only checks each short leg — so their `entry_credit` is signed and can
-be a net debit. **The R basis for those two is the absolute net premium at risk, floored positive**, and the
-`risk_basis` string records that the debit case was normalized. Premium-collected R makes the fat left tail
+be a net debit. **The R basis for those two is floored at the gross short-leg premium —
+`max(|net credit|, Σ short-leg entry_net)` — the resolved form of the deferred floor choice** (the premium at
+risk is never less than what the short legs collected; for an all-short structure the two coincide, so the
+floor is a no-op there). The `risk_basis` string records when the floor bound (`premium_collected_abs`), and
+the floor-binds decision is made within the event credit's 4-decimal rounding quantum so float noise cannot
+mislabel an all-short structure. Premium-collected R makes the fat left tail
 **visible**: an undefined-risk tail loss surfaces as an R-multiple well past `−1R`, exactly the behavior the
 Van Tharp view wants to expose.
 
@@ -150,9 +173,10 @@ the proxy engine recomputes the mark fresh every day, its MAE has no stale-mark 
 
 **Structure engine.** Thread MAE at the mark step (realchains/vol_premium.py:976-981), after per-leg
 `mid` is refreshed (realchains/vol_premium.py:934). The running unrealized P&L is
-`(entry_credit + sum(-leg['sign'] * leg['mid'])) * shares` — the current cost to close against the credit
-collected — using only `entry_credit` (a stable loop scalar, realchains/vol_premium.py:876) and the current
-mids, both already in hand. Reset MAE at entry (realchains/vol_premium.py:879) and finalize it at the
+`(entry_credit + realized_settle_flow + sum(leg['sign'] * leg['mid'])) * shares` — the credit collected,
+plus any near-leg settle flow already booked (a calendar's staggered branch; 0.0 for single-expiration
+cycles), plus the current position mark (the same `sign * mid` sum the equity line uses) — using only
+stable loop scalars and the current mids, all already in hand. Reset MAE at entry (realchains/vol_premium.py:879) and finalize it at the
 settle/close sites (realchains/vol_premium.py:925-929, :949-952).
 
 **Do entry marks need retaining?** No. The structure engine mutates `leg['mid']` in place each day
@@ -184,9 +208,12 @@ direction clean (no cycle) and lets both engines feed it the same trades list th
 The module exposes three public symbols:
 
 - `TradeRecord` — the frozen dataclass above.
-- `build_trade_ledger(events, risk_basis, ...)` — reduces one overlay's event stream into a list of
-  `TradeRecord`, pairing each `enter`/`sell` with its matching `settle`/`close`/`expiration`, computing
-  `pnl`, `initial_risk`, `r_multiple`, and `mae` per the declared `risk_basis`.
+- `build_trade_ledger(trades, *, strategy, ticker, shares, risk_basis, stop_loss_mult=None)` — reduces one
+  overlay's event stream into a list of `TradeRecord`, pairing each `enter`/`sell` with its matching
+  `settle`/`close`/`expiration`, computing `pnl`, `initial_risk`, `r_multiple`, and `mae` per the declared
+  `risk_basis`. Everything after `trades` is keyword-only (the bare `*`): the parameters are mostly
+  same-typed strings, so a positional call could silently swap `strategy`/`ticker`/`risk_basis` — the call
+  site must name each declaration.
 - `ledger_statistics(records)` — returns `{n, expectancy_r, sqn, r_newey_west_t, win_rate, avg_win_r,
   avg_loss_r, mae_r_distribution}`.
 
@@ -209,13 +236,14 @@ labelled columns; only the last is an authority.
   value would no longer map to them. It is labelled anti-conservative: short-vol trade outcomes are
   positively autocorrelated through regime persistence, so the naive t overstates.
 - `r_newey_west_t` — the HAC-honest sibling: the same Bartlett-weighted Newey-West correction the repo
-  already uses (`_newey_west_t`, factor/factor_backend.py:123, auto-lag `L = 4·(n/100)^(2/9)`), applied to
-  the R-multiple column. R-normalization suits it — dividing each trade by its own initial risk strips
-  cross-trade scale differences, so the series is better behaved than raw dollar P&L. Its lag lives in
-  trade-index units: lag 1 is one \~30-day cycle, not one day. Dependency note: `common/trade_ledger.py`
-  cannot import from `factor/` without inverting the leaf-module direction, so the \~12-line function is
-  either duplicated with a cross-reference comment or hoisted into `common/` — an implementation-time
-  choice.
+  already uses (`newey_west_t`, auto-lag `L = 4·(n/100)^(2/9)`), applied to the R-multiple column.
+  R-normalization suits it — dividing each trade by its own initial risk strips cross-trade scale
+  differences, so the series is better behaved than raw dollar P&L. Its lag lives in trade-index units:
+  lag 1 is one \~30-day cycle, not one day. Dependency note: `common/trade_ledger.py` cannot import from
+  `factor/` without inverting the leaf-module direction, so the function was HOISTED into the leaf —
+  `common/stats.py` (`newey_west_summary` / `newey_west_t`) is the single definition, consumed by the
+  ledger, `factor/factor_backend.py`, and both daily judges (`compute_statistics` /
+  `short_vol_statistics`), each of which previously carried its own copy.
 - The **daily Newey-West HAC t** (`short_vol_statistics` / `compute_statistics`) remains the sole
   significance authority, unchanged, for three reasons. The daily series carries thousands of observations
   against the ledger's low-hundreds of trade cycles, and NW is asymptotic — its standard errors bias down

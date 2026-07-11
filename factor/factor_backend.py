@@ -30,13 +30,13 @@ the `ticker` slot carries the universe id, no core change.
 from __future__ import annotations
 
 import hashlib
-import math
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
+from common.stats import newey_west_t        # the shared Bartlett-weighted HAC t (one definition, leaf-homed)
 from search.evalue_fdr import _asymptotic_p   # the shared asymptotic-p convention (one definition; option-independent)
 from factor.factor_mechanism import loading_family
 
@@ -120,28 +120,6 @@ def information_coefficient(values: pd.DataFrame, prices: pd.DataFrame, fwd: int
     return ic.dropna().to_numpy(dtype=float)
 
 
-def _newey_west_t(x: np.ndarray) -> float:
-    """The Newey-West HAC t-stat of a series' mean against H0: mean = 0 — the SAME Bartlett-weighted
-    autocovariance correction the option path uses (`cc_backtest.compute_statistics`), here applied to the
-    daily IC series. The IC is autocorrelated (adjacent days share most of the cross-section), so the simple
-    ICIR t (mean/(std/√n)) is INFLATED; this corrects it, so the shared `t_stat_newey_west` field is now
-    accurate for factors too. `L = int(4·(n/100)^(2/9))`; the NW variance is floored at 0 (returns t = 0 at
-    short samples / zero variance, where the data-insufficiency guard already fires)."""
-    n = x.size
-    mean = float(x.mean())
-    var0 = float(np.var(x, ddof=1))
-    if n < 2 or var0 == 0.0:
-        return 0.0
-    lag_max = int(4 * (n / 100) ** (2 / 9))
-    nw_sum = 0.0
-    for k in range(1, lag_max + 1):
-        weight = 1.0 - k / (lag_max + 1)
-        nw_sum += weight * float(np.mean((x[:-k] - mean) * (x[k:] - mean)))   # Bartlett-weighted autocov at lag k
-    var_mean = (var0 + 2.0 * nw_sum) / n
-    se = math.sqrt(max(var_mean, 0.0))
-    return mean / se if se > 0 else 0.0
-
-
 def ic_to_row(ic: np.ndarray, family: str | None, predicted_sign: int, key: str, universe: str, end: str,
               lineage: str, min_periods: int = MIN_IC_PERIODS) -> dict[str, Any]:
     """Build the honest-core-facing row from a factor's IC series + its mechanism `family` (H1b) — the
@@ -164,7 +142,7 @@ def ic_to_row(ic: np.ndarray, family: str | None, predicted_sign: int, key: str,
     # The IC t-stat, NEWEY-WEST HAC-corrected for the IC series' autocorrelation (adjacent days share most
     # of the cross-section) — so the shared honest-core field `t_stat_newey_west` is now LITERALLY accurate
     # for factors, the same HAC convention the option path uses (cc_backtest.compute_statistics).
-    t_ic = _newey_west_t(ic)
+    t_ic = newey_west_t(ic)
     t_sign = (t_ic > 0) - (t_ic < 0)
     incoherent = family is None                                   # mechanism-incoherent: keep t, never flag
     return {**row, 'measurement_invalid': incoherent, 'n_days': n, 't_stat_newey_west': t_ic,

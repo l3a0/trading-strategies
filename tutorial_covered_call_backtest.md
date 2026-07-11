@@ -304,7 +304,7 @@ We work **backwards** from delta:
 
 This is called a **grid search**. It checks every whole-dollar strike in a range and picks the one whose delta is closest to the target. With only \~30–50 candidates to check, it runs instantly — and it naturally returns whole-dollar strikes that match real option chains.
 
-The production implementation is [`cc_backtest.py::find_strike_for_delta`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L84). It scans whole-dollar strikes in `[0.80·S, 1.02·S]` for puts and `[0.98·S, 1.25·S]` for calls — the asymmetric ranges cover the relevant out-of-the-money zone for each option type while keeping the candidate count small. For each candidate it calls `bs_delta(...)` and tracks the strike whose computed delta is closest to `target_delta`.
+The production implementation is [`cc_backtest.py::find_strike_for_delta`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L85). It scans whole-dollar strikes in `[0.80·S, 1.02·S]` for puts and `[0.98·S, 1.25·S]` for calls — the asymmetric ranges cover the relevant out-of-the-money zone for each option type while keeping the candidate count small. For each candidate it calls `bs_delta(...)` and tracks the strike whose computed delta is closest to `target_delta`.
 
 **Example run:**
 
@@ -315,7 +315,7 @@ The production implementation is [`cc_backtest.py::find_strike_for_delta`](https
 
 ### Code Walkthrough: bs_price(), bs_delta(), find_strike_for_delta()
 
-The full Black-Scholes toolkit — `normal_pdf`, `normal_cdf`, `bs_price`, `bs_delta`, and `find_strike_for_delta` — lives in [`cc_backtest.py`'s section 1](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L12). What each one does:
+The full Black-Scholes toolkit — `normal_pdf`, `normal_cdf`, `bs_price`, `bs_delta`, and `find_strike_for_delta` — lives in [`cc_backtest.py`'s section 1](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L13). What each one does:
 
 | Function | What it computes |
 | --- | --- |
@@ -386,7 +386,7 @@ In our backtest, we **don't have historical option prices**, so we can't extract
 
 In practice, we calculate **rolling historical volatility** and multiply by a **regime-dependent** factor — higher when vol is low (markets underpricing risk), lower when vol is already elevated (IV converges toward HV).
 
-The three helpers — [`calc_rolling_volatility`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L127), [`detect_regime`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L162), and [`estimate_iv`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L171) — are implemented in `cc_backtest.py`. Part 3 walks through both in detail (see *Rolling Historical Volatility* for the log-returns identity, Bessel's correction, and the √252 annualization derivation; see *The Dynamic IV Multiplier* for the regime → multiplier table). The skeleton in plain English:
+The three helpers — [`calc_rolling_volatility`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L128), [`detect_regime`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L163), and [`estimate_iv`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L172) — are implemented in `cc_backtest.py`. Part 3 walks through both in detail (see *Rolling Historical Volatility* for the log-returns identity, Bessel's correction, and the √252 annualization derivation; see *The Dynamic IV Multiplier* for the regime → multiplier table). The skeleton in plain English:
 
 - For each day, `rolling_vol = std_dev(last 30 log returns) × √252` (annualized).
 - Classify the regime: `"high"` if `rolling_vol > 25%`, `"low"` if `< 15%`, else `"normal"`.
@@ -437,7 +437,7 @@ Answer from memory before revealing — if one doesn't come, that section is wor
 
 ### The Core Rule: "Never Sell Your Shares"
 
-This is the invariant the rest of the engine is built around. It's what makes this an income *overlay* — premium collected on top of a share position you would hold anyway — rather than a directional bet on the stock: [`run_cc_overlay`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L202) never liquidates the underlying; only the short call cycles (sell → bought back, expires, or assigns → sell again). Why it earns its place rather than just sounding sensible: holding through every regime instead of timing exits is exactly what produces the defensive return profile measured in [Part 5's regime analysis](#regime-analysis-does-it-work-in-bulls-bears-and-sideways) — the overlay's per-day edge there is roughly 10× larger in bear and sideways markets (\~$23/day bull vs. \~$303 / \~$402) precisely *because* it keeps selling against the same shares no matter the trend. Abandon the rule and you forfeit that profile.
+This is the invariant the rest of the engine is built around. It's what makes this an income *overlay* — premium collected on top of a share position you would hold anyway — rather than a directional bet on the stock: [`run_cc_overlay`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L203) never liquidates the underlying; only the short call cycles (sell → bought back, expires, or assigns → sell again). Why it earns its place rather than just sounding sensible: holding through every regime instead of timing exits is exactly what produces the defensive return profile measured in [Part 5's regime analysis](#regime-analysis-does-it-work-in-bulls-bears-and-sideways) — the overlay's per-day edge there is roughly 10× larger in bear and sideways markets (\~$23/day bull vs. \~$303 / \~$402) precisely *because* it keeps selling against the same shares no matter the trend. Abandon the rule and you forfeit that profile.
 
 **Mistake:** Selling a 0.60Δ call, hoping the stock goes down, so you keep the premium AND the shares. If it rises above the strike, the shares get called away at a loss.
 
@@ -540,7 +540,7 @@ RESET (sold and closed; ready for next call)
   └─ [Wait 1 day, then go back to IDLE]
 ```
 
-The real engine has no separate per-day function — [`cc_backtest.py::run_cc_overlay`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L202) inlines exactly this loop body, with the four transitions above as its `if`/`elif` branches. *The Run_cc_overlay() Function: Full Walkthrough*, later in this part, traces it line by line.
+The real engine has no separate per-day function — [`cc_backtest.py::run_cc_overlay`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L203) inlines exactly this loop body, with the four transitions above as its `if`/`elif` branches. *The Run_cc_overlay() Function: Full Walkthrough*, later in this part, traces it line by line.
 
 **Then how does any call reach the expiration branch at all?** The two early-close gates only run while time remains. They sit in the `else` of the `days_left ≤ 0` check, so on the day a call expires the engine handles it and never re-checks profit or delta. A call reaches expiration only when both gates stayed false on every day it still had time: it never decayed to 25% of the premium, and its delta never crossed 0.70.
 
@@ -556,7 +556,7 @@ Leave transaction costs out of a backtest and every trade looks more profitable 
 - You pay $0.65 per contract to close
 - You have slippage: the bid-ask spread might mean you sell the call for 95¢ but it's worth $1.00
 
-The engine doesn't wrap this in a helper — it's one line inside [`cc_backtest.py::run_cc_overlay`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L336): `net_premium = premium * (1 - 0.03) - 0.0065` on the sell side (3% slippage; $0.65/contract commission = $0.0065/share), with a matching `- 0.65 * num_contracts` charged when the call is bought back to close. If costs would exceed the credit — a near-worthless deep-OTM call — it skips the trade rather than open at a loss.
+The engine doesn't wrap this in a helper — it's one line inside [`cc_backtest.py::run_cc_overlay`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L337): `net_premium = premium * (1 - 0.03) - 0.0065` on the sell side (3% slippage; $0.65/contract commission = $0.0065/share), with a matching `- 0.65 * num_contracts` charged when the call is bought back to close. If costs would exceed the credit — a near-worthless deep-OTM call — it skips the trade rather than open at a loss.
 
 **Example:**
 
@@ -577,11 +577,11 @@ We use a simple regime-based IV multiplier. `detect_regime(rolling_vol)` classif
 | **Normal** | 15–25% | 1.3× | Typical HV-to-IV adjustment in calm markets. |
 | **Low** | < 15% | 1.5× | IV is suppressed; expect mean reversion to higher values. |
 
-Implementations: [`cc_backtest.py::detect_regime`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L162) and [`::estimate_iv`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L171).
+Implementations: [`cc_backtest.py::detect_regime`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L163) and [`::estimate_iv`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L172).
 
 ### Rolling Historical Volatility: 30-Day Window, Log Returns, Annualize
 
-The implementation is [`cc_backtest.py::calc_rolling_volatility`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L127) — for each price index, it computes the standard deviation of the last `window` log returns and annualizes by `√252`.
+The implementation is [`cc_backtest.py::calc_rolling_volatility`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L128) — for each price index, it computes the standard deviation of the last `window` log returns and annualizes by `√252`.
 
 Four pedagogical notes worth pulling out, because they show up in every volatility-related calculation in this codebase:
 
@@ -601,7 +601,7 @@ Four pedagogical notes worth pulling out, because they show up in every volatili
 
 ### The Run_cc_overlay() Function: Full Walkthrough
 
-The core backtesting engine lives in [`cc_backtest.py::run_cc_overlay`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L202). It's heavily commented and small enough to read end-to-end. Function signature:
+The core backtesting engine lives in [`cc_backtest.py::run_cc_overlay`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L203). It's heavily commented and small enough to read end-to-end. Function signature:
 
 ```python
 def run_cc_overlay(
@@ -759,11 +759,11 @@ The walk-forward optimizer searches a small grid of three parameters:
 
 That's 3 × 3 × 3 = **27 parameter sets**.
 
-Expanding the grid into all 27 combinations is one Cartesian product — [`cc_backtest.py::_param_combinations`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L874) — which `walk_forward_optimization` loops over on each training window.
+Expanding the grid into all 27 combinations is one Cartesian product — [`cc_backtest.py::_param_combinations`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L866) — which `walk_forward_optimization` loops over on each training window.
 
 ### How to Stitch Out-of-Sample Results into a Single Equity Curve
 
-The implementation is [`cc_backtest.py::walk_forward_optimization`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L888). Signature:
+The implementation is [`cc_backtest.py::walk_forward_optimization`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L880). Signature:
 
 ```python
 def walk_forward_optimization(
@@ -786,7 +786,7 @@ What it does per iteration:
 3. Run those locked params on the out-of-sample test window. Append the resulting daily equity to the stitched curve.
 4. Advance `current_date` by `roll_months` and repeat until the next test window would run past `end_date`.
 
-The production implementation in [`cc_backtest.py::walk_forward_optimization`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L888) is heavily commented. It carries the teaching content (window arithmetic diagram, boolean-indexing explainer, Sharpe-built-inside-out walkthrough, Bessel's correction, √252 annualization derivation, "rules are LOCKED — no re-tuning" emphasis) right next to the code that does the work. The fixing test [`test_cc_backtest.py::TestMsftTenYearRegression::test_walk_forward_optimization`](https://github.com/l3a0/trading-strategies/blob/main/tests/test_cc_backtest.py#L1573) pins the 13 walk-forward periods, the most chosen parameters, and the cumulative OOS compound return on the bundled MSFT data.
+The production implementation in [`cc_backtest.py::walk_forward_optimization`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L880) is heavily commented. It carries the teaching content (window arithmetic diagram, boolean-indexing explainer, Sharpe-built-inside-out walkthrough, Bessel's correction, √252 annualization derivation, "rules are LOCKED — no re-tuning" emphasis) right next to the code that does the work. The fixing test [`test_cc_backtest.py::TestMsftTenYearRegression::test_walk_forward_optimization`](https://github.com/l3a0/trading-strategies/blob/main/tests/test_cc_backtest.py#L1573) pins the 13 walk-forward periods, the most chosen parameters, and the cumulative OOS compound return on the bundled MSFT data.
 
 ### What the Optimizer Chose
 
@@ -858,7 +858,7 @@ The same span trap applies to the buy-and-hold baseline. The README's \~646% buy
 
 We optimize on a **3-year** window, and Pardo's degrees-of-freedom checks are the reason. Robert Pardo's *The Evaluation and Optimization of Trading Strategies* (2008) gives two checks, and they disagree at a window length of two years. That disagreement is what drives the choice.
 
-The first is **degrees of freedom** in the literal sense. Each free parameter you optimize consumes one degree of freedom. Each indicator consumes data equal to its lookback — the 30-day rolling-volatility window "uses up" its first 30 bars. A 2-year (504-day) window spends `3 + 30 = 33` and keeps **93.5%** free; the 3-year (756-day) window keeps **95.6%**. Pardo's rule of thumb wants that above ~90% (the [quantstrat](https://rdrr.io/github/braverock/quantstrat/man/degrees.of.freedom.html) port of his method tightens it to 95%), so *both* windows pass. [`degrees_of_freedom`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L1098) computes it, and `TestDegreesOfFreedom` pins the arithmetic.
+The first is **degrees of freedom** in the literal sense. Each free parameter you optimize consumes one degree of freedom. Each indicator consumes data equal to its lookback — the 30-day rolling-volatility window "uses up" its first 30 bars. A 2-year (504-day) window spends `3 + 30 = 33` and keeps **93.5%** free; the 3-year (756-day) window keeps **95.6%**. Pardo's rule of thumb wants that above ~90% (the [quantstrat](https://rdrr.io/github/braverock/quantstrat/man/degrees.of.freedom.html) port of his method tightens it to 95%), so *both* windows pass. [`degrees_of_freedom`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L1090) computes it, and `TestDegreesOfFreedom` pins the arithmetic.
 
 The second check is the one that decides. Pardo argues — in separate chapters on sample size and "How Many Trades?" — that the unit of statistical evidence is the **trade**, not the time bar. The time bar count flatters a covered call: one short option drives P&L for weeks, so consecutive daily bars are not independent observations. The real sample size is the number of option cycles. At a **2-year** window the median across the grid is just **24 trades** (range 12–50), and the *winning* fit clears the conventional 30-trade floor in only 8 of the 15 walk-forward periods — 7 fall short. Lengthen the window to **3 years** and every one of the 13 periods clears it (median **54 trades**). That is precisely why the engine optimizes on three years rather than two.
 
@@ -936,7 +936,7 @@ If no → the strategy exploits a specific *sequence* of returns (could be luck)
 
 **Why this works:** Real prices have a specific order — trends, mean-reversion, volatility clusters. Shuffling destroys that order while keeping the exact same set of daily returns (same mean, same volatility, same distribution). So if your strategy profits on both real and shuffled paths, it's capturing **statistical properties** of the returns (e.g., collecting premium in a volatile market) — those survive shuffling. But if it only works on the real path, it was exploiting the **specific sequence** — like selling calls right before drops and not selling before rallies. That pattern won't repeat, so it's likely overfitting or luck. Think of it like poker: if you win with many random deals, you have real skill. If you only win with the exact hand order you practiced on, you just memorized that deck.
 
-The implementation is [`cc_backtest.py::monte_carlo_shuffle`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L1185) — it computes daily returns from the real prices, shuffles their order with a fixed seed, rebuilds a synthetic price path from each shuffled sequence, runs the overlay backtest on each, then compares the real ordered path's total return against the distribution. The fixing test [`test_cc_backtest.py::TestMsftTenYearRegression::test_monte_carlo_shuffle`](https://github.com/l3a0/trading-strategies/blob/main/tests/test_cc_backtest.py#L1469) pins the resulting percentile, MC mean, and best-shuffled return on the bundled MSFT data (500 paths, `seed=42`, `__main__` params).
+The implementation is [`cc_backtest.py::monte_carlo_shuffle`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L1177) — it computes daily returns from the real prices, shuffles their order with a fixed seed, rebuilds a synthetic price path from each shuffled sequence, runs the overlay backtest on each, then compares the real ordered path's total return against the distribution. The fixing test [`test_cc_backtest.py::TestMsftTenYearRegression::test_monte_carlo_shuffle`](https://github.com/l3a0/trading-strategies/blob/main/tests/test_cc_backtest.py#L1469) pins the resulting percentile, MC mean, and best-shuffled return on the bundled MSFT data (500 paths, `seed=42`, `__main__` params).
 
 **Fixed parameters, by design.** Each shuffle reruns the overlay with the *same* fixed `__main__` parameters. It does not re-optimize or walk-forward on the synthetic path. Walk-forward and Monte Carlo vary *different* inputs: walk-forward holds the price path fixed and searches the parameters without hindsight, testing for parameter overfitting; Monte Carlo holds the parameters fixed and scrambles the path's order, testing for sequence-luck. Re-optimizing inside each shuffle would blur that separation. It would also be far slower — each of the 500 shuffles would run a full walk-forward search over the parameter grid instead of a single backtest, orders of magnitude more computation. Holding the strategy fixed is what lets the percentile carry one clean meaning: did the result need the real *sequence*, or only the real return *distribution*?
 
@@ -957,7 +957,7 @@ The implementation is [`cc_backtest.py::monte_carlo_shuffle`](https://github.com
 
 **Idea:** Unlike a grid search (which tries many combinations to find the *best* params), sensitivity analysis starts from already-chosen params and nudges *one at a time* to check *stability*. Grid search answers "what's optimal?" — sensitivity analysis answers "how fragile is that optimum?" If returns change drastically from a small tweak, you're overfitting that parameter. A robust strategy should stay in a similar range across small perturbations.
 
-The implementation is [`cc_backtest.py::sensitivity_analysis`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L1266) — it sweeps `call_delta` and `close_at_pct` at ±0.05 / ±0.10 / ±0.20 offsets from base. The algorithm: hold all params fixed except one, vary that one by a small offset in both directions, measure each variant's total return, then compute the worst drop from base. The fixing test [`test_cc_backtest.py::TestMsftTenYearRegression::test_sensitivity_perturbations`](https://github.com/l3a0/trading-strategies/blob/main/tests/test_cc_backtest.py#L1427) pins each variant's return and asserts the worst drop from base stays under 10% (the "robust" verdict) on the bundled MSFT data — the notebook companion calls the same function, so the two can't drift.
+The implementation is [`cc_backtest.py::sensitivity_analysis`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L1258) — it sweeps `call_delta` and `close_at_pct` at ±0.05 / ±0.10 / ±0.20 offsets from base. The algorithm: hold all params fixed except one, vary that one by a small offset in both directions, measure each variant's total return, then compute the worst drop from base. The fixing test [`test_cc_backtest.py::TestMsftTenYearRegression::test_sensitivity_perturbations`](https://github.com/l3a0/trading-strategies/blob/main/tests/test_cc_backtest.py#L1427) pins each variant's return and asserts the worst drop from base stays under 10% (the "robust" verdict) on the bundled MSFT data — the notebook companion calls the same function, so the two can't drift.
 
 **Example output** (`__main__` params on the bundled MSFT data, run against the current engine):
 
@@ -1003,7 +1003,7 @@ Math behind the close_at_pct sensitivity:
 
 **Idea:** Classify each day as bull, bear, or sideways, then bucket the overlay's trade P&L by regime. If most of the income comes from one regime, the strategy isn't actually market-neutral.
 
-The implementations are [`cc_backtest.py::classify_regime`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L725) and [`::regime_analysis`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L772). `classify_regime` looks at where the last price sits relative to its trailing 200-day SMA — `bull` if it's >5% above, `bear` if >5% below, `sideways` if within the band, `unknown` for the first 199 days when there aren't enough observations yet. `regime_analysis` runs the classifier at each day (using only past prices — no future peeking) and sums each closed trade's P&L into the regime active on its close date.
+The implementations are [`cc_backtest.py::classify_regime`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L717) and [`::regime_analysis`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L764). `classify_regime` looks at where the last price sits relative to its trailing 200-day SMA — `bull` if it's >5% above, `bear` if >5% below, `sideways` if within the band, `unknown` for the first 199 days when there aren't enough observations yet. `regime_analysis` runs the classifier at each day (using only past prices — no future peeking) and sums each closed trade's P&L into the regime active on its close date.
 
 **Our result** (`__main__` params on the bundled MSFT data, pinned by `test_regime_analysis`):
 
@@ -1171,7 +1171,7 @@ The intuition transfers nicely. If your data has long memory (momentum factors, 
 
 #### The Code
 
-The full implementation is [`cc_backtest.py::compute_statistics`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L600). Signature:
+The full implementation is [`cc_backtest.py::compute_statistics`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L611). Signature:
 
 ```python
 def compute_statistics(
@@ -1253,7 +1253,7 @@ Our excess returns show mild day-to-day mean reversion — likely from the way p
 
 ![Bar chart of the autocorrelation of daily excess P&L at lags 1–20. Most bars sit just below zero; the bars inside the Newey-West window (lags 1–8) are predominantly negative, and almost all lie within a shaded ±1.96/√n white-noise band.](docs/figures/11_excess_acf.png)
 
-*The IID t-stat assumes every bar here is zero. They aren't — but they lean *negative* across the lags Newey-West actually weights, not positive. Negative short-lag autocovariance means the effective sample is slightly larger than a naive day-count, so the HAC correction nudges 0.40 up to 0.46 rather than shrinking it. This is the picture behind "Newey-West can move the t-stat either way." (Computation: standard sample autocovariance γₖ = (1/n)·Σ(eᵢ−ē)(eᵢ₊ₖ−ē) on daily excess returns — the same formula that feeds the NW SE in [`compute_statistics`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L600); the bars above are the normalized version γₖ/γ₀.)*
+*The IID t-stat assumes every bar here is zero. They aren't — but they lean *negative* across the lags Newey-West actually weights, not positive. Negative short-lag autocovariance means the effective sample is slightly larger than a naive day-count, so the HAC correction nudges 0.40 up to 0.46 rather than shrinking it. This is the picture behind "Newey-West can move the t-stat either way." (Computation: standard sample autocovariance γₖ = (1/n)·Σ(eᵢ−ē)(eᵢ₊ₖ−ē) on daily excess returns — the same formula that feeds the NW SE in [`compute_statistics`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L611); the bars above are the normalized version γₖ/γ₀.)*
 
 #### Why Is This Lower Than the Volatility Risk Premium Literature?
 
@@ -1281,7 +1281,7 @@ There is one more thing we can do without changing markets, sample length, or wh
 >
 > Components 1 and 2 are real, persistent, harvestable premiums. Component 3 is essentially zero in expectation but adds substantial variance — it's a coin flip you didn't sign up for. The paper's prescriptive fix is the **risk-managed covered call**: dynamically rebalance the underlying share position so the portfolio's net delta stays pinned at the buy-and-hold equivalent (e.g., 100 shares for a 1-contract position). Same equity exposure as buy-and-hold, plus the vol premium, minus the equity-timing wiggle.
 
-The implementation is one extra block in [`cc_backtest.py::run_cc_overlay`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L202). Each day with an open call, compute `target_extra = round(call_delta_today × base_shares)`, then buy or sell shares to match. The hedge trades come out of `cash` (which may go negative — a zero-interest financing simplification we'd refine in production). Set `delta_hedge: True` in `params` to enable. No transaction costs are modeled on the share legs; in liquid names that's defensible at daily rebalance frequency, but it's a place a real production model would tighten.
+The implementation is one extra block in [`cc_backtest.py::run_cc_overlay`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L203). Each day with an open call, compute `target_extra = round(call_delta_today × base_shares)`, then buy or sell shares to match. The hedge trades come out of `cash` (which may go negative — a zero-interest financing simplification we'd refine in production). Set `delta_hedge: True` in `params` to enable. No transaction costs are modeled on the share legs; in liquid names that's defensible at daily rebalance frequency, but it's a place a real production model would tighten.
 
 Running the bundled MSFT backtest in both modes:
 
@@ -1421,7 +1421,7 @@ Here's the complete process:
 - ✅ Monte Carlo: real ordered path at the \~99th percentile of orderings (percentile prints 100 in the seed-42 sample — no scramble beat it there; max shuffled return \~870%)
 - ✅ Sensitivity: single-digit-% drops across both `call_delta` and `close_at_pct` perturbations
 - ✅ All regimes: bull, bear, sideways all profitable
-- ✅ Sharpe ratio vs cash (**rf** = risk-free rate; 4.5% is the engine default — see the `risk_free_rate` parameter in [`run_cc_overlay`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L202)): \~1.12, vs buy-and-hold MSFT's \~0.72 over the same window — risk-adjusted *absolute* returns are strong
+- ✅ Sharpe ratio vs cash (**rf** = risk-free rate; 4.5% is the engine default — see the `risk_free_rate` parameter in [`run_cc_overlay`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L203)): \~1.12, vs buy-and-hold MSFT's \~0.72 over the same window — risk-adjusted *absolute* returns are strong
 - ⚠️ **Newey-West t-stat on excess returns: 0.46** (overlay's *excess* over buy-and-hold is not statistically distinguishable from zero on this single-stock 10-year sample; see Part 5). The dollar P&L is real, but the evidence for "the overlay specifically is adding value beyond holding MSFT" doesn't clear the statistical bar. This is consistent with what the literature finds — single-stock CCs underperform index CCs on a risk-adjusted basis ([Israelov & Nielsen 2015](https://rpc.cfainstitute.org/research/financial-analysts-journal/2015/covered-calls-uncovered); see [Why Is This Lower Than the Volatility Risk Premium Literature?](#why-is-this-lower-than-the-volatility-risk-premium-literature) in Part 5 for the full case).
 
 ### Check Your Understanding
@@ -1539,7 +1539,7 @@ The full implementation lives in this repository. Each file is the source of tru
 
 | File | What it contains |
 | --- | --- |
-| [`cc_backtest.py`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L202) | Black-Scholes pricing, rolling-volatility helpers, the [`run_cc_overlay`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L202) engine, and [`compute_statistics`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L600) for Newey-West t-stats |
+| [`cc_backtest.py`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L203) | Black-Scholes pricing, rolling-volatility helpers, the [`run_cc_overlay`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L203) engine, and [`compute_statistics`](https://github.com/l3a0/trading-strategies/blob/main/engine/cc_backtest.py#L611) for Newey-West t-stats |
 | [`test_cc_backtest.py`](https://github.com/l3a0/trading-strategies/blob/main/tests/test_cc_backtest.py#L39) | Pytest suite covering pricing primitives, the overlay state machine, scenario tests, and the statistics helper |
 | [`download_prices.py`](https://github.com/l3a0/trading-strategies/blob/main/pipeline/download_prices.py#L12) | Fetches historical daily closes via yfinance |
 | [`msft_10yr_prices.csv`](https://github.com/l3a0/trading-strategies/blob/main/data/msft_10yr_prices.csv) | Bundled 10-year MSFT daily-close dataset used in the worked examples |

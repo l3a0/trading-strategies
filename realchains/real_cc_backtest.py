@@ -367,6 +367,7 @@ def run_real_cc_overlay(
                             'entry_date': date,
                             'last_mid': mid,
                             'real_delta': _delta,
+                            'worst_unrealized': 0.0,  # Gap A (A2): running min of daily MTM P&L, dollars
                         }
                         sell_record = {'date': date, 'price': price, 'action': 'sell',
                                        'premium': net_premium, 'strike': strike,
@@ -429,9 +430,11 @@ def run_real_cc_overlay(
                        - short_intrinsic + long_intrinsic) * shares
                 realized_pnl += pnl
                 wins, losses = (wins + 1, losses) if pnl >= 0 else (wins, losses + 1)
+                mae_out = position['worst_unrealized']
                 position = None
                 trades.append({'date': date, 'price': settle_price, 'action': 'expiration',
-                               'pnl': pnl, 'realized_pnl': realized_pnl})
+                               'pnl': pnl, 'realized_pnl': realized_pnl,
+                               'mae': round(mae_out, 2)})
             else:
                 # Refresh the cap leg's quote independently of the short — the
                 # two legs can print on different days, and a close may fire on
@@ -475,10 +478,12 @@ def run_real_cc_overlay(
                         wins, losses = (wins + 1, losses) if pnl >= 0 else (wins, losses + 1)
                         action = ('close' if hit_target
                                   else 'close_stop' if hit_stop else 'close_itm')
+                        mae_out = position['worst_unrealized']
                         position = None
                         trades.append({'date': date, 'price': price, 'action': action,
                                        'call_value': ask_q, 'pnl': pnl,
-                                       'realized_pnl': realized_pnl})
+                                       'realized_pnl': realized_pnl,
+                                       'mae': round(mae_out, 2)})
                 # No quote today: no close can trigger; mark carries forward below.
 
         # Risk-managed rebalance (after the entry/close logic, like the proxy
@@ -510,7 +515,11 @@ def run_real_cc_overlay(
             spread_mark = position['last_mid']
             if 'cap_quote' in position:
                 spread_mark -= position['cap_quote'][2]  # cap mid
-            equity += (position['premium_collected'] - spread_mark) * shares
+            unrealized = (position['premium_collected'] - spread_mark) * shares
+            equity += unrealized
+            # Gap A (A2): running MAE on the open spread's daily mark (carried-forward
+            # marks on missing-quote days, same convention as the equity above).
+            position['worst_unrealized'] = min(position['worst_unrealized'], unrealized)
         daily_rows.append({'date': date, 'equity': round(equity, 2), 'price': price})
         prev_date, prev_price = date, price
 

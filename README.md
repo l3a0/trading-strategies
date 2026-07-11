@@ -115,12 +115,12 @@ The code is grouped into domain packages, imported as top-level packages and run
 - `generative/` and `factor/` — the generative structure search and the alpha-factor search.
 - `proposer/` — the shared LLM-proposer transport and read-gate wire contract.
 - `trendgate/` — the registered trend-gate experiment.
-- `common/` — shared path resolution (`DATA_DIR`, `FIGURES_DIR`).
+- `common/` — the leaf package: shared path resolution (`DATA_DIR`, `FIGURES_DIR`), the single Newey-West significance block (`newey_west_summary`, consumed by both engines, the factor IC, and the trade ledger), and the Gap A trade ledger.
 - `tests/` — the full pytest suite; `data/` — all CSV/JSONL/checksum data; `scripts/` — the fetch/onboard/publish shell tooling.
 
 | File | What it is |
 | --- | --- |
-| [engine/cc_backtest.py](engine/cc_backtest.py#L202) | Backtest engine: Black-Scholes pricing, rolling vol, regime-based IV, day-by-day overlay state machine, Newey-West t-stat reporting on excess returns |
+| [engine/cc_backtest.py](engine/cc_backtest.py#L203) | Backtest engine: Black-Scholes pricing, rolling vol, regime-based IV, day-by-day overlay state machine, Newey-West t-stat reporting on excess returns |
 | [tests/test_cc_backtest.py](tests/test_cc_backtest.py#L39) | Unit and scenario tests covering pricing, the overlay state machine, and the statistics helper |
 | [realchains/real_cc_backtest.py](realchains/real_cc_backtest.py#L260) | Real-chain adapter: the same overlay on traded option quotes (bid entries, ask buybacks, real deltas and expirations; the 2008→2010 placeholder-greeks era excluded via `CHAIN_CLEAN_START`), printed REAL vs PROXY |
 | [tests/test_real_cc_backtest.py](tests/test_real_cc_backtest.py) | Adapter unit tests (entry selection, era clip + mark clamp, fill models, delta-hedge mechanics) plus the MSFT/SPY/QQQ real-chain regression and walk-forward pins (skip when the datasets are absent) |
@@ -131,6 +131,10 @@ The code is grouped into domain packages, imported as top-level packages and run
 | [docs/explorations.md](docs/explorations.md) | Exploration log — cheap kill-gate scouts on ideas that didn't survive (the post-rip cooldown, the IV-richness gate), pinned so dead ends aren't re-explored; exploratory, not registered verdicts |
 | [search/explorations.py](search/explorations.py) | The scout code behind the exploration log (reuses the pinned naked runs + fixed seeds), printed via `python -m search.explorations` |
 | [tests/test_explorations.py](tests/test_explorations.py) | Pins the killed scouts' key outputs (wrong-signed statistic, permutation percentile, no-memory measurement) plus always-run cycle/tagging logic |
+| [docs/van_tharp_test_plan.md](docs/van_tharp_test_plan.md) | Gap analysis for testing Van Tharp's *Trade Your Way to Financial Freedom* lessons against the repo's short-vol strategies — seven measurement-infrastructure gaps (A–G) in dependency order. Design/plan only — nothing registered |
+| [docs/van_tharp_gap_a.md](docs/van_tharp_gap_a.md) | Gap A build spec: the trade-level R-multiple ledger (`TradeRecord` schema, the pinned R-basis conventions, MAE threading, "three statistics, one judge") — implemented by `common/trade_ledger.py` |
+| [common/trade_ledger.py](common/trade_ledger.py) | Gap A implementation: reduces every overlay's trade-event stream to per-trade `TradeRecord`s (`build_trade_ledger` — dollar P&L, declared initial-risk basis R, R-multiple, MAE) and computes the Van Tharp trade-level statistics (`ledger_statistics` — expectancy, SQN, `r_newey_west_t` via the shared `common/stats.py` HAC t that `factor/` also imports). Leaf module (imports nothing above `common/`); EXPLORATORY measurements — the daily Newey-West t stays the significance authority |
+| [tests/test_trade_ledger.py](tests/test_trade_ledger.py) | Always-run ledger mechanics (`TestTradeLedgerMechanics` — the three R bases, the mixed-sign premium floor, MAE finalization, hand-computed SQN/NW) plus the dataset-gated `TestTradeLedgerRegression` pinning the MSFT real-CC and SPY short-vol ledgers — both show the Van Tharp flip (win rate \~two-thirds, per-cycle expectancy negative) |
 | [search/edge_search.py](search/edge_search.py) | Automated FDR-controlled edge-search harness — two phases + sealed vault: the cheap **re-tag** class (entry-conditioning templates, MSFT+SPY, QQQ sealed; BY-gated) and the **engine-re-run** class (`run_structure_campaign` — short-vol/straddle/condor/strangle/risk-reversal/credit-spread/calendar overlays across seven tickers scored by `short_vol_statistics`' HAC-t asymptotic null, TLT sealed; **e-LOND control**, BY diagnostic) (`python -m search.edge_search [structure]`) |
 | [tests/test_edge_search.py](tests/test_edge_search.py) | Pins both campaigns (Campaign 1 re-tag — no survivor under BY; Campaign 2 structure — 0/56 flagged under e-LOND, the control) plus always-run FDR / enumerator / kill-gate / seal / scale-guard logic |
 | [generative/generative_grammar.py](generative/generative_grammar.py) | **Phase 1** of the generative grammar ([docs/generative_grammar_plan.md](docs/generative_grammar_plan.md)): the grammar CORE — leg primitives on frozen lattice buckets composed into a bounded, typed `Composition`, a production-rule `validate_composition` (the numberless-value boundary — coordinates are buckets, never free numbers), a content-addressed `canonical_key` (total / order-invariant / sign-excluded — replaces `_overlay_params_key`), and the reachable-count bound (`leg_type_count` / `reachable_upper_bound`, a governance/review number — the lifetime budget is the power bound). `composition_of` maps the 7 named overlays to compositions; they are a verified SUB-GRAMMAR (70 templates → 70 distinct keys). `enumerate_compositions` is the deterministic menu-walker (Phase 3): a bounded slice of the production grammar (140 single-leg + 2,030 same-expiration two-leg, canonical-key order, no randomness — the calendar/3-4-leg families and the saturation-stop are widenings / run-time, not the enumerator). Pure, additive, no engine/LLM |
@@ -186,7 +190,7 @@ The code is grouped into domain packages, imported as top-level packages and run
 | [scripts/publish_dailies.sh](scripts/publish_dailies.sh) | Publishes a validated store to the release: gzip → sha256 → `gh release upload` → round-trip verify; prints the ci.yml/cold-storage follow-up (`DRY_RUN=1` rehearses) |
 | [scripts/onboard_ticker.sh](scripts/onboard_ticker.sh) | End-to-end onboarding orchestrator — fetch → validate → **sign-off gate** → publish → single-ticker structure-campaign smoke test (`./scripts/onboard_ticker.sh NVDA [--publish]`) |
 | [.claude/workflows/onboard.js](.claude/workflows/onboard.js) | The agentic version of that pipeline as a Claude-Code Workflow — clean-gate agent per ticker → structure campaign → triage (kill / adversarially-vetted survivor flag). SAFE (read-only) by default; `args.live=true` adds fetch + auto-apply of **known** repairs (proposed clip, split back-out) + publish. Novel pathologies and survivors always flag to a human |
-| [engine/make_figures.py](engine/make_figures.py#L889) | Regenerates the tutorial and blog figures (`fig1`–`fig13`) into `docs/figures/` |
+| [engine/make_figures.py](engine/make_figures.py#L890) | Regenerates the tutorial and blog figures (`fig1`–`fig13`) into `docs/figures/` |
 | [engine/make_notebook.py](engine/make_notebook.py#L1) | Regenerates the runnable notebook from the tutorial markdown + figure script |
 | [msft_10yr_prices.csv](data/msft_10yr_prices.csv) | Sample MSFT price data, 2016-04 to 2026-04 |
 | [msft_10yr_prices_unadjusted.csv](data/msft_10yr_prices_unadjusted.csv) / [qqq_10yr_prices_unadjusted.csv](data/qqq_10yr_prices_unadjusted.csv) | Unadjusted closes (actual traded prices, matching option strikes) for the real-chain runs |
@@ -195,11 +199,11 @@ The code is grouped into domain packages, imported as top-level packages and run
 | [docs/figures/](docs/figures/) | Generated PNGs embedded in the tutorial; regenerable from `engine/make_figures.py` |
 | [requirements.txt](requirements.txt) | Runtime + dev dependencies |
 
-**Where to start:** the [tutorial](tutorial_covered_call_backtest.md) is the source of truth for *why* every part works the way it does (Black-Scholes math, rolling vol, the overlay state machine, walk-forward optimization, robustness checks). For *what* a function actually does, read [engine/cc_backtest.py](engine/cc_backtest.py#L202) end-to-end — it's heavily commented and the link jumps to `run_cc_overlay`, the engine entry point. For the behavior the engine guarantees, see the scenario tests in [tests/test_cc_backtest.py](tests/test_cc_backtest.py#L478) covering the major trade flows: sell + expire OTM, called away, profit-target close, and multi-cycle accumulation.
+**Where to start:** the [tutorial](tutorial_covered_call_backtest.md) is the source of truth for *why* every part works the way it does (Black-Scholes math, rolling vol, the overlay state machine, walk-forward optimization, robustness checks). For *what* a function actually does, read [engine/cc_backtest.py](engine/cc_backtest.py#L203) end-to-end — it's heavily commented and the link jumps to `run_cc_overlay`, the engine entry point. For the behavior the engine guarantees, see the scenario tests in [tests/test_cc_backtest.py](tests/test_cc_backtest.py#L478) covering the major trade flows: sell + expire OTM, called away, profit-target close, and multi-cycle accumulation.
 
 ## Strategy parameters
 
-Edit the `params` dict at the bottom of [engine/cc_backtest.py](engine/cc_backtest.py#L1352):
+Edit the `params` dict at the bottom of [engine/cc_backtest.py](engine/cc_backtest.py#L1344):
 
 | Param | Default | Meaning |
 | --- | --- | --- |

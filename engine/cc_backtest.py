@@ -1,5 +1,6 @@
 from __future__ import annotations
 from common.paths import data_path
+from common.stats import newey_west_summary
 
 import itertools
 import math
@@ -348,6 +349,7 @@ def run_cc_overlay(
                 'entry_price': price,
                 'entry_idx': day_idx,
                 'entry_date': date,
+                'worst_unrealized': 0.0,  # Gap A (A2): running min of daily MTM P&L, dollars
             }
             num_calls_sold += 1
             total_premium_collected += net_premium * shares
@@ -402,6 +404,7 @@ def run_cc_overlay(
                     wins += 1
                 else:
                     losses += 1
+                mae_out = position['worst_unrealized']
                 position = None
 
                 trades.append({
@@ -410,6 +413,7 @@ def run_cc_overlay(
                     'action': 'expiration',
                     'pnl': pnl,
                     'realized_pnl': realized_pnl,
+                    'mae': round(mae_out, 2),
                 })
 
             else:
@@ -427,6 +431,7 @@ def run_cc_overlay(
                         wins += 1
                     else:
                         losses += 1
+                    mae_out = position['worst_unrealized']
                     position = None
 
                     trades.append({
@@ -437,6 +442,7 @@ def run_cc_overlay(
                         'profit_pct': profit_pct,
                         'pnl': pnl,
                         'realized_pnl': realized_pnl,
+                        'mae': round(mae_out, 2),
                     })
 
                 else:
@@ -451,6 +457,7 @@ def run_cc_overlay(
                             wins += 1
                         else:
                             losses += 1
+                        mae_out = position['worst_unrealized']
                         position = None
 
                         trades.append({
@@ -460,6 +467,7 @@ def run_cc_overlay(
                             'call_value': call_value_today,
                             'pnl': pnl,
                             'realized_pnl': realized_pnl,
+                            'mae': round(mae_out, 2),
                         })
 
         # === Risk-managed (delta-hedged) rebalance ===
@@ -503,7 +511,10 @@ def run_cc_overlay(
             T_remaining = max(days_left / 252, 0)
             call_value = bs_price(price, position['strike'], T_remaining, r, iv_estimate, option_type='call')
             # The short call covers `shares` base shares (one contract per 100 base shares).
-            equity += (position['premium_collected'] - call_value) * shares
+            unrealized = (position['premium_collected'] - call_value) * shares
+            equity += unrealized
+            # Gap A (A2): running MAE on the open overlay's daily mark.
+            position['worst_unrealized'] = min(position['worst_unrealized'], unrealized)
         daily_rows.append({'date': date, 'equity': round(equity, 2), 'price': price})
 
     # Materialize the per-day snapshots as a DataFrame once at the return
@@ -675,33 +686,14 @@ def compute_statistics(
     if n < 2:
         raise ValueError(f"Need at least 2 daily observations, got {n}")
 
-    mean_e = float(np.mean(excess))
-    var_e = float(np.var(excess, ddof=1))
-
-    # Naive t-stat: SE = sigma / sqrt(n). Assumes IID.
-    se_naive = math.sqrt(var_e / n) if var_e > 0 else 0.0
-    t_naive = mean_e / se_naive if se_naive > 0 else 0.0
-
-    # Newey-West: variance of the mean under autocorrelation.
-    #   Var(mean) = (1/n) * [gamma_0 + 2 * sum_{k=1}^{L} w_k * gamma_k]
-    # where gamma_k is the k-th autocovariance and w_k = 1 - k/(L+1)
-    # are the Bartlett weights that enforce positive-definiteness.
-    L = int(4 * (n / 100) ** (2 / 9))
-    nw_sum = 0.0
-    for k in range(1, L + 1):
-        weight = 1.0 - k / (L + 1)
-        # autocovariance at lag k (demeaned)
-        cov_k = float(np.mean((excess[:-k] - mean_e) * (excess[k:] - mean_e)))
-        nw_sum += weight * cov_k
-    var_mean_nw = (var_e + 2 * nw_sum) / n
-    # Newey-West variance can be non-positive at short samples; floor at
-    # zero so se_nw == 0 trips the guard below and we report t_nw = 0.
-    se_nw = math.sqrt(max(var_mean_nw, 0.0))
-    t_nw = mean_e / se_nw if se_nw > 0 else 0.0
+    # The naive/NW pair, Bartlett weights, auto-lag, and guards live in
+    # common.stats.newey_west_summary — the single shared definition
+    # (byte-identical to the block formerly inlined here).
+    s = newey_west_summary(excess)
 
     # Annualized context
-    ann_excess_return = mean_e * periods_per_year
-    ann_excess_vol = math.sqrt(var_e * periods_per_year)
+    ann_excess_return = s.mean * periods_per_year
+    ann_excess_vol = math.sqrt(s.var * periods_per_year)
     sharpe_excess = ann_excess_return / ann_excess_vol if ann_excess_vol > 0 else 0.0
 
     return {
@@ -710,11 +702,11 @@ def compute_statistics(
         'ann_excess_return_pct': round(ann_excess_return * 100, 3),
         'ann_excess_vol_pct': round(ann_excess_vol * 100, 2),
         'sharpe_excess': round(sharpe_excess, 3),
-        't_stat_naive': round(t_naive, 2),
-        't_stat_newey_west': round(t_nw, 2),
-        'nw_lag': L,
-        'passes_t_2': abs(t_nw) > 2.0,
-        'passes_t_3': abs(t_nw) > 3.0,
+        't_stat_naive': round(s.t_naive, 2),
+        't_stat_newey_west': round(s.t_newey_west, 2),
+        'nw_lag': s.lag,
+        'passes_t_2': abs(s.t_newey_west) > 2.0,
+        'passes_t_3': abs(s.t_newey_west) > 3.0,
     }
 
 
