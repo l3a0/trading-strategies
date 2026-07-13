@@ -1314,6 +1314,64 @@ def sensitivity_analysis(
     return out
 
 
+def six_regime_map(
+    dates: list[str] | NDArray[Any],
+    prices: NDArray[np.floating[Any]] | list[float],
+    window: int = 200,
+    threshold: float = 0.05,
+    vol_window: int = 30,
+) -> dict[str, str]:
+    """Van Tharp's six market types per day: direction × volatility (Gap D,
+    docs/van_tharp_gap_d.md).
+
+    Composes the two PINNED classifiers this module already carries —
+    `classify_regime` (price vs `window`-day SMA, ±`threshold` band) for the
+    direction axis and `calc_rolling_volatility` + `detect_regime` for the
+    volatility axis — into the per-day cell label Tharp's per-regime
+    R-distributions need (Loc 1885–1888). The volatile/quiet split is the
+    engine's pinned high-vol boundary: volatile iff `detect_regime` reads
+    'high' (rolling vol > 25%); 'normal' and 'low' are both quiet. A fixed
+    threshold keeps the axis lookahead-clean — a data-relative split (e.g.
+    the sample median) would classify early days using the whole sample, a
+    postdictive error.
+
+    Both axes use start-of-day semantics (the `regime_analysis` convention):
+    the label for day i is computed from prices through day i − 1 only, via
+    `.shift(1)` on the direction series and an explicit one-day lag on the
+    vol series (whose window itself ends at the prior close). Days where
+    either axis is still in rolling-window warmup are 'unknown'.
+
+    Returns:
+        dict mapping each date label to one of 'bull_quiet', 'bull_volatile',
+        'sideways_quiet', 'sideways_volatile', 'bear_quiet', 'bear_volatile',
+        or 'unknown'. Consumed by `common.trade_ledger.
+        regime_ledger_statistics`, which buckets TradeRecords by close date —
+        composition at the caller keeps `common/` a leaf (it never imports
+        this module).
+    """
+    p = np.asarray(prices, dtype=float)
+    direction: pd.Series[str] = (
+        classify_regime(p, window, threshold)
+        .shift(1)
+        .fillna('unknown')  # pyright: ignore[reportUnknownMemberType]
+    )
+    # calc_rolling_volatility is aligned to log-returns: vols[j] uses prices
+    # through index j + 1. The vol KNOWN at the start of day i therefore is
+    # vols[i - 2] (window ends at the prior close) — the same one-day lag the
+    # direction axis gets from .shift(1).
+    vols = calc_rolling_volatility(p, vol_window)
+    out: dict[str, str] = {}
+    for i, date in enumerate(dates):
+        d = str(direction.iloc[i])
+        vol_known = vols[i - 2] if i >= 2 else float('nan')
+        if d == 'unknown' or math.isnan(vol_known):
+            out[str(date)] = 'unknown'
+        else:
+            bucket = 'volatile' if detect_regime(float(vol_known)) == 'high' else 'quiet'
+            out[str(date)] = f'{d}_{bucket}'
+    return out
+
+
 # ====================
 # 8. Main
 # ====================
