@@ -21,13 +21,17 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from common.trade_ledger import (
+    SIX_REGIME_CELLS,
     TradeRecord,
     build_trade_ledger,
     ledger_statistics,
+    regime_ledger_statistics,
 )
+from engine.cc_backtest import six_regime_map
 
 _DATA = Path(__file__).resolve().parent.parent / 'data'
 _MSFT_DAILIES = _DATA / 'msft_option_dailies.csv'
@@ -36,6 +40,59 @@ _SPY_DAILIES = _DATA / 'spy_option_dailies.csv'
 
 def _have(base: Path) -> bool:
     return base.exists() or base.with_suffix('.csv.gz').exists()
+
+
+@pytest.fixture(scope='module')
+def msft_run() -> tuple[list[str], list[float], list[TradeRecord]]:
+    """One MSFT real-CC engine pass shared by every dataset-gated class:
+    (dates, prices, ledger). Mirrors TestMsftRealChainRegression's setup."""
+    from realchains.real_cc_backtest import (
+        load_chain_store,
+        load_unadjusted_prices,
+        run_real_cc_overlay,
+    )
+    store = load_chain_store(str(_MSFT_DAILIES))
+    days = sorted(store)
+    dates, prices = load_unadjusted_prices('MSFT', days[0], '2026-06-06')
+    pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
+    run_dates = [d for d, _ in pairs]
+    run_prices = [p for _, p in pairs]
+    s, trades, _ = run_real_cc_overlay(
+        run_dates, run_prices, store,
+        {'call_delta': 0.25, 'close_at_pct': 0.75, 'dte': 30,
+         'risk_free_rate': 0.045, 'capital': 100_000},
+    )
+    ledger = build_trade_ledger(trades, strategy='covered_call', ticker='MSFT',
+                                shares=100 * s['num_contracts'],
+                                risk_basis='premium_collected')
+    return run_dates, run_prices, ledger
+
+
+@pytest.fixture(scope='module')
+def spy_run() -> tuple[list[str], list[float], list[TradeRecord]]:
+    """One SPY short-vol engine pass shared by every dataset-gated class:
+    (dates, prices, ledger). Mirrors TestSpyShortVolRegression's setup."""
+    from realchains.real_cc_backtest import (
+        REGISTERED_CLEAN_START,
+        load_chain_store,
+        load_unadjusted_prices,
+    )
+    from realchains.vol_premium import run_real_short_vol_overlay
+    store = load_chain_store(str(_SPY_DAILIES), start=REGISTERED_CLEAN_START['SPY'])
+    days = sorted(store)
+    dates, prices = load_unadjusted_prices('SPY', days[0], '2026-06-06')
+    pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
+    run_dates = [d for d, _ in pairs]
+    run_prices = [p for _, p in pairs]
+    s, trades, _ = run_real_short_vol_overlay(
+        run_dates, run_prices, store,
+        {'target_delta': 0.25, 'dte': 30, 'capital': 100_000,
+         'risk_free_rate': 0.045, 'hedge_cost_bps': 0.0},
+    )
+    ledger = build_trade_ledger(trades, strategy='short_vol', ticker='SPY',
+                                shares=100 * s['num_contracts'],
+                                risk_basis='premium_collected')
+    return run_dates, run_prices, ledger
 
 
 class TestTradeLedgerMechanics:
@@ -284,45 +341,12 @@ class TestTradeLedgerRegression:
     """
 
     @pytest.fixture(scope='class')
-    def msft_ledger(self) -> list[TradeRecord]:
-        from realchains.real_cc_backtest import (
-            load_chain_store,
-            load_unadjusted_prices,
-            run_real_cc_overlay,
-        )
-        store = load_chain_store(str(_MSFT_DAILIES))
-        days = sorted(store)
-        dates, prices = load_unadjusted_prices('MSFT', days[0], '2026-06-06')
-        pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
-        s, trades, _ = run_real_cc_overlay(
-            [d for d, _ in pairs], [p for _, p in pairs], store,
-            {'call_delta': 0.25, 'close_at_pct': 0.75, 'dte': 30,
-             'risk_free_rate': 0.045, 'capital': 100_000},
-        )
-        return build_trade_ledger(trades, strategy='covered_call', ticker='MSFT',
-                                  shares=100 * s['num_contracts'],
-                                  risk_basis='premium_collected')
+    def msft_ledger(self, msft_run) -> list[TradeRecord]:
+        return msft_run[2]
 
     @pytest.fixture(scope='class')
-    def spy_ledger(self) -> list[TradeRecord]:
-        from realchains.real_cc_backtest import (
-            REGISTERED_CLEAN_START,
-            load_chain_store,
-            load_unadjusted_prices,
-        )
-        from realchains.vol_premium import run_real_short_vol_overlay
-        store = load_chain_store(str(_SPY_DAILIES), start=REGISTERED_CLEAN_START['SPY'])
-        days = sorted(store)
-        dates, prices = load_unadjusted_prices('SPY', days[0], '2026-06-06')
-        pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
-        s, trades, _ = run_real_short_vol_overlay(
-            [d for d, _ in pairs], [p for _, p in pairs], store,
-            {'target_delta': 0.25, 'dte': 30, 'capital': 100_000,
-             'risk_free_rate': 0.045, 'hedge_cost_bps': 0.0},
-        )
-        return build_trade_ledger(trades, strategy='short_vol', ticker='SPY',
-                                  shares=100 * s['num_contracts'],
-                                  risk_basis='premium_collected')
+    def spy_ledger(self, spy_run) -> list[TradeRecord]:
+        return spy_run[2]
 
     def test_msft_cc_ledger(self, msft_ledger: list[TradeRecord]) -> None:
         """182 completed cycles: 68.1% win rate, −0.39R expectancy — the flip."""
@@ -346,3 +370,118 @@ class TestTradeLedgerRegression:
         assert stats['win_rate'] == pytest.approx(65.5, abs=0.1)
         assert stats['avg_loss_r'] == pytest.approx(-3.3769, abs=0.005)
         assert stats['mae_r_distribution']['worst'] == pytest.approx(-11.4131, abs=0.05)
+
+
+class TestRegimeLedgerMechanics:
+    """Always-run synthetic layer for the six-regime bucketing (Gap D)."""
+
+    def _records(self, close_dates: list[str]) -> list[TradeRecord]:
+        return [
+            TradeRecord('s', 'T', 'e', d, pnl=100.0, risk_basis='premium_collected',
+                        initial_risk=100.0, r_multiple=1.0, mae=0.0, mae_r=0.0,
+                        outcome='win')
+            for d in close_dates
+        ]
+
+    def test_bucketing_by_close_date_and_floor(self) -> None:
+        """Trades land in their close date's cell; unmapped dates fall to
+        'unknown'; every cell is present; the floor flags under-sampling."""
+        regime = {'d1': 'bull_quiet', 'd2': 'bull_quiet', 'd3': 'bear_volatile'}
+        recs = self._records(['d1', 'd2', 'd3', 'd9'])   # d9 not in the map
+        out = regime_ledger_statistics(recs, regime, min_trades=2)
+        assert set(out) == set(SIX_REGIME_CELLS) | {'unknown'}
+        assert out['bull_quiet']['n'] == 2 and out['bull_quiet']['meets_floor']
+        assert out['bear_volatile']['n'] == 1 and not out['bear_volatile']['meets_floor']
+        assert out['unknown']['n'] == 1
+        assert out['sideways_quiet']['n'] == 0          # empty cell visible, not silent
+        assert out['bull_quiet']['expectancy_r'] == pytest.approx(1.0)
+
+    def test_six_regime_map_crafted_series(self) -> None:
+        """A price path engineered to visit three cells: 210 flat days
+        (sideways_quiet once both windows fill), 40 alternating ±2% days
+        (sideways_volatile — \\~32% annualized), then 60 constant +1.5% days
+        (bull_quiet — constant returns have zero rolling std)."""
+        prices = [100.0]
+        for _ in range(209):
+            prices.append(prices[-1])
+        for i in range(40):
+            prices.append(prices[-1] * (1.02 if i % 2 == 0 else 0.98))
+        for _ in range(60):
+            prices.append(prices[-1] * 1.015)
+        dates = [f'd{i:03d}' for i in range(len(prices))]
+        m = six_regime_map(dates, np.array(prices))
+        assert m['d150'] == 'unknown'                    # direction-axis warmup
+        assert m['d200'] == 'sideways_quiet'             # first fully-labeled day
+        assert m['d210'] == 'sideways_quiet'             # no-peek: the first ±2% jump
+                                                         # day still reads yesterday's calm
+        assert m['d249'] == 'sideways_volatile'          # vol window inside the ±2% era
+        assert m['d309'] == 'bull_quiet'                 # ramp: far above SMA, zero-std returns
+
+    def test_map_days_are_exhaustive(self) -> None:
+        """Every input date gets a label, and labels are cells or 'unknown'."""
+        prices = np.full(250, 50.0)
+        dates = [f'x{i}' for i in range(250)]
+        m = six_regime_map(dates, prices)
+        assert set(m) == set(dates)
+        assert set(m.values()) <= set(SIX_REGIME_CELLS) | {'unknown'}
+
+
+@pytest.mark.skipif(not (_have(_MSFT_DAILIES) and _have(_SPY_DAILIES)),
+                    reason='needs msft/spy option dailies (data-2026-06 release)')
+class TestRegimeLedgerRegression:
+    """Pin the six-regime R-distributions of the two Gap A ledgers —
+    Experiment 5's first measurement (docs/van_tharp_test_plan.md).
+
+    EXPLORATORY, like every ledger number: per-cell sqn/NW stay
+    reported-never-gates, and `meets_floor` is Tharp's \\~30-trade
+    sample-adequacy flag (Loc 1888), not a significance verdict. The
+    interesting pinned fact is WHERE the trades and the left tail sit —
+    and which cells are too thin to read at all.
+    """
+
+    def test_msft_cc_six_regimes(self, msft_run) -> None:
+        """182 trades spread thin: only bull_quiet clears the 30-trade floor.
+        The one readable bleed is bull_quiet (−0.61R — the quiet grind up
+        through the strike). The positive bear_volatile sign (+0.40R, 88%
+        wins) is an UNDER-FLOOR sample observation, consistent with the
+        payoff mechanics (a crash moves price away from a short call) but
+        not a readable expectancy. Every cell's expectancy is pinned so the
+        doc's table stays single-sourced."""
+        dates, prices, ledger = msft_run
+        cells = regime_ledger_statistics(ledger, six_regime_map(dates, prices))
+        assert {c: s['n'] for c, s in cells.items()} == {
+            'bull_quiet': 85, 'bull_volatile': 27,
+            'sideways_quiet': 13, 'sideways_volatile': 16,
+            'bear_quiet': 3, 'bear_volatile': 25, 'unknown': 13,
+        }
+        assert {c for c, s in cells.items() if s['meets_floor']} == {'bull_quiet'}
+        assert {c: s['expectancy_r'] for c, s in cells.items()} == {
+            'bull_quiet': -0.6088, 'bull_volatile': -0.618,
+            'sideways_quiet': 0.2967, 'sideways_volatile': -0.879,
+            'bear_quiet': 0.8055, 'bear_volatile': 0.403, 'unknown': -0.3733,
+        }
+        assert cells['bear_volatile']['win_rate'] == pytest.approx(88.0, abs=0.1)
+
+    def test_spy_short_vol_six_regimes(self, spy_run) -> None:
+        """Same shape, sharper: bull_quiet is −1.18R at a coin-flip 50.5% win
+        rate and carries the −11.4R worst MAE. bear_volatile (+0.58R, \\~89%
+        wins) is an UNDER-FLOOR observation, like MSFT's. bull_volatile has
+        zero TRADES — the span had 8 bull_volatile days, but no trade closed
+        on one. Two of six cells clear the floor."""
+        dates, prices, ledger = spy_run
+        cells = regime_ledger_statistics(ledger, six_regime_map(dates, prices))
+        assert {c: s['n'] for c, s in cells.items()} == {
+            'bull_quiet': 93, 'bull_volatile': 0,
+            'sideways_quiet': 51, 'sideways_volatile': 9,
+            'bear_quiet': 3, 'bear_volatile': 9, 'unknown': 9,
+        }
+        assert ({c for c, s in cells.items() if s['meets_floor']}
+                == {'bull_quiet', 'sideways_quiet'})
+        assert {c: s['expectancy_r'] for c, s in cells.items()} == {
+            'bull_quiet': -1.1789, 'bull_volatile': 0.0,
+            'sideways_quiet': 0.2385, 'sideways_volatile': -0.9311,
+            'bear_quiet': 1.0, 'bear_volatile': 0.5788, 'unknown': 0.3948,
+        }
+        assert cells['bull_quiet']['win_rate'] == pytest.approx(50.5, abs=0.1)
+        assert cells['bull_quiet']['mae_r_distribution']['worst'] == pytest.approx(-11.4131, abs=0.05)
+        assert cells['bear_volatile']['win_rate'] == pytest.approx(88.9, abs=0.1)

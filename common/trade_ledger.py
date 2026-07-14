@@ -295,3 +295,47 @@ def ledger_statistics(
             'worst': round(mae_sorted[0], 4),
         },
     }
+
+
+SIX_REGIME_CELLS = (
+    'bull_quiet', 'bull_volatile',
+    'sideways_quiet', 'sideways_volatile',
+    'bear_quiet', 'bear_volatile',
+)
+
+
+def regime_ledger_statistics(
+    records: list[TradeRecord],
+    regime_by_date: dict[str, str],
+    *,
+    min_trades: int = 30,
+) -> dict[str, dict[str, Any]]:
+    """Bucket a ledger into Van Tharp's six market types (Gap D,
+    docs/van_tharp_gap_d.md) and report each cell's trade-level statistics.
+
+    ``regime_by_date`` maps a date label to a cell name — built by
+    ``engine.cc_backtest.six_regime_map`` (direction × volatility from the
+    engine's pinned classifiers); this module never imports the engine, so
+    the composition happens at the caller and ``common/`` stays a leaf.
+
+    Each trade lands in the cell of its CLOSE date (the `regime_analysis`
+    convention: the regime in force when the outcome was realized). A close
+    date missing from the map falls to 'unknown', as do warmup-era dates.
+    Every cell is always present in the output — a zero-trade cell reports
+    the empty statistics, so under-sampling is visible, not silent.
+
+    ``meets_floor`` is Tharp's sample-size floor (Loc 1888: \\~30 R-multiples
+    per market type before the cell's expectancy is worth reading). It is a
+    SAMPLE-ADEQUACY flag, not a significance verdict — per-cell ``sqn`` /
+    ``r_newey_west_t`` stay reported-never-gates like everything else here,
+    and an under-floor cell's numbers are shown so the reader can see *why*
+    they aren't worth reading yet.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for cell in (*SIX_REGIME_CELLS, 'unknown'):
+        subset = [r for r in records
+                  if regime_by_date.get(r.close_date, 'unknown') == cell]
+        stats = ledger_statistics(subset)
+        stats['meets_floor'] = stats['n'] >= min_trades
+        out[cell] = stats
+    return out
