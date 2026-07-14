@@ -2,7 +2,19 @@
 
 ## Status
 
-**DESIGN document — a build spec, PLAN-level, no code yet.** It designs Gap C (the position-sizing layer)
+**Implementation status (2026-07): BUILT** — `common/position_sizing.py` (`simulate_sizing`, `sizing_sweep`,
+`kelly_fraction`), pinned by `TestPositionSizingMechanics` / `TestPositionSizingRegression` in
+[tests/test_trade_ledger.py](../tests/test_trade_ledger.py). The three open questions below were resolved
+per their stated leanings: `p_ruin` reports at both thresholds (the 0.5 headline plus `p_ruin_25dd` at
+0.75), an `avg_loss_1R`-normalized bag is accepted as any other R list with the labelling left to the
+caller, and the pinned regression uses the same-length-career default. The pre-stated predictions held:
+on both negative-expectancy real ledgers every fraction loses (median terminal < 1 everywhere, 0.84 → 0.08
+on MSFT and 0.79 → 0.03 on SPY across the 0.25%–3% grid) and P(ruin) is monotone in f (reaching 0.9934 and
+0.9981 at the 3% "gunslinger" level); the intratrade MAE basis flags more ruin than close-only (0.9918 vs
+0.9909 at f = 2% on SPY). Line references below describe the tree as of the design commit.
+
+This was written as a **DESIGN document — a build spec, PLAN-level**, ahead of the code. It designs Gap C
+(the position-sizing layer)
 and Gap B (the trade-level resampler) from [docs/van_tharp_test_plan.md](van_tharp_test_plan.md) as one
 change, because they are one mechanism: the marble bag replays trades *through* a sizing rule. Together
 they enable **Experiment 1** — the risk-of-ruin / terminal-wealth Monte Carlo. Predecessors, both merged:
@@ -151,8 +163,8 @@ Proposed output shape (a dict, exact keys settled at build time): `terminal` per
 
 Ruin accounting is three-tiered:
 
-- **Close-only (default).** With `mae_r` absent, a path is ruined if post-trade equity ever falls below
-  `ruin_threshold` of starting equity. The output labels itself `close_only`.
+- **Close-only (default).** With `mae_r` absent, a path is ruin-flagged when post-trade equity ever falls
+  to `ruin_threshold` of starting equity or below (inclusive). The output labels itself `close_only`.
 - **Intratrade (when `mae_r` is supplied).** Each draw carries its trade's MAE-R alongside its R, and the
   trough `pre_trade_equity * (1 + fraction * mae_r)` is what tests the threshold — tested before the
   close multiplication `equity *= (1 + fraction * r)` is applied. Because `mae <= min(pnl, 0)` by

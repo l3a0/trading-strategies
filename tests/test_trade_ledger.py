@@ -1,19 +1,29 @@
-"""Gap A — the trade-level R-multiple ledger (common/trade_ledger.py).
+"""The Van Tharp measurement stack: Gaps A, D, and C+B.
 
-Two layers, per the repo pattern (docs/van_tharp_gap_a.md):
+Three always-run/dataset-gated class pairs, per the repo pattern:
 
-- ``TestTradeLedgerMechanics`` — always-run synthetic layer: hand-built event
-  streams, every assertion against a hand-derived value. Covers the reducer
-  (pairing, the three R bases + the mixed-sign floor, MAE finalization,
-  settle_leg skipping, dangling-entry dropping) and the statistics
-  (expectancy, SQN, ``r_newey_west_t`` against a by-hand Bartlett
-  computation, the ex-post ``avg_loss_1r`` normalizer).
-- ``TestTradeLedgerRegression`` — dataset-gated: pins the ledger statistics
-  of two already-pinned real overlays (the MSFT covered call of
-  ``TestMsftRealChainRegression`` and the SPY short-vol overlay of
-  ``TestSpyShortVolRegression``). EXPLORATORY numbers (kill-or-justify, never
-  a registered verdict); the daily Newey-West t remains the significance
-  authority — these pins exist so the measurement, once made, stays made.
+- Gap A (docs/van_tharp_gap_a.md, common/trade_ledger.py) —
+  ``TestTradeLedgerMechanics`` covers the event-stream reducer (pairing, the
+  three R bases + the mixed-sign floor, MAE finalization, settle_leg
+  skipping, dangling-entry dropping) and the statistics (expectancy, SQN,
+  ``r_newey_west_t`` against a by-hand Bartlett computation, the ex-post
+  ``avg_loss_1r`` normalizer); ``TestTradeLedgerRegression`` pins the
+  ledgers of two already-pinned real overlays (the MSFT covered call of
+  ``TestMsftRealChainRegression``, the SPY short-vol overlay of
+  ``TestSpyShortVolRegression``).
+- Gap D (docs/van_tharp_gap_d.md) — ``TestRegimeLedgerMechanics`` /
+  ``TestRegimeLedgerRegression``: the six-regime (direction × volatility)
+  bucketing and its fully-pinned per-cell distributions.
+- Gaps C+B (docs/van_tharp_gap_cb.md, common/position_sizing.py) —
+  ``TestPositionSizingMechanics`` / ``TestPositionSizingRegression``: the
+  fixed-fractional replay, the marble-bag resampler, and Experiment 1's
+  first pinned ruin/terminal-wealth measurements.
+
+The dataset-gated classes share the module-scoped ``msft_run`` / ``spy_run``
+fixtures (one engine pass per ticker for the whole file). EXPLORATORY
+numbers throughout (kill-or-justify, never a registered verdict); the daily
+Newey-West t remains the significance authority — these pins exist so the
+measurement, once made, stays made.
 """
 
 from __future__ import annotations
@@ -24,6 +34,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from common.position_sizing import (
+    kelly_fraction,
+    simulate_sizing,
+    sizing_sweep,
+)
 from common.trade_ledger import (
     SIX_REGIME_CELLS,
     TradeRecord,
@@ -485,3 +500,120 @@ class TestRegimeLedgerRegression:
         assert cells['bull_quiet']['win_rate'] == pytest.approx(50.5, abs=0.1)
         assert cells['bull_quiet']['mae_r_distribution']['worst'] == pytest.approx(-11.4131, abs=0.05)
         assert cells['bear_volatile']['win_rate'] == pytest.approx(88.9, abs=0.1)
+
+
+class TestPositionSizingMechanics:
+    """Always-run synthetic layer for Gaps C+B (docs/van_tharp_gap_cb.md) —
+    the replay identity, absorption, determinism, Tharp's analytic game."""
+
+    def test_replay_identity_exact(self) -> None:
+        """The bag [+1R] at f=0.10 compounds to 1.1**n, matched to the
+        output's 4dp rounding quantum, with no ruin on any basis."""
+        out = simulate_sizing([1.0], fraction=0.10, n_paths=10, n_trades=25, seed=1)
+        assert out['terminal']['median'] == pytest.approx(1.1 ** 25, abs=5e-5)
+        assert out['p_ruin'] == 0.0 and out['p_ruin_25dd'] == 0.0
+        assert out['max_drawdown']['worst'] == 0.0
+        assert out['ruin_basis'] == 'close_only'
+
+    def test_absorption_wipes_out(self) -> None:
+        """A −12R draw at f=0.10 gives f*r = −1.2: absorbed ruin, terminal 0."""
+        out = simulate_sizing([-12.0], fraction=0.10, n_paths=5, n_trades=3, seed=1)
+        assert out['terminal']['median'] == 0.0
+        assert out['p_ruin'] == 1.0
+        assert out['max_drawdown']['worst'] == 1.0
+
+    def test_determinism_and_common_random_numbers(self) -> None:
+        """Same seed → identical output; every sweep entry equals a fresh
+        standalone call at the same seed (common random numbers)."""
+        bag = [1.0, 0.5, -0.5, -2.0, 3.0]
+        a = simulate_sizing(bag, fraction=0.02, n_paths=200, seed=7)
+        b = simulate_sizing(bag, fraction=0.02, n_paths=200, seed=7)
+        assert a == b
+        sweep = sizing_sweep(bag, fractions=(0.01, 0.02), n_paths=200, seed=7)
+        assert sweep[0.02] == simulate_sizing(bag, fraction=0.02, n_paths=200, seed=7)
+        assert sweep[0.01] == simulate_sizing(bag, fraction=0.01, n_paths=200, seed=7)
+
+    def test_tharp_game_kelly_and_hump(self) -> None:
+        """The 60/40 ±1R game: kelly ≈ 0.2 analytically; median terminal at
+        Kelly beats f=0.02 and f=0.5 on long paths (the Kelly hump); P(ruin)
+        is monotone across the three fractions."""
+        game = [1.0, 1.0, 1.0, -1.0, -1.0]
+        assert kelly_fraction(game) == pytest.approx(0.2, abs=0.002)
+        outs = {f: simulate_sizing(game, fraction=f, n_paths=2000, n_trades=500, seed=42)
+                for f in (0.02, 0.2, 0.5)}
+        assert outs[0.2]['terminal']['median'] > outs[0.02]['terminal']['median']
+        assert outs[0.2]['terminal']['median'] > outs[0.5]['terminal']['median']
+        assert (outs[0.02]['p_ruin'] <= outs[0.2]['p_ruin'] <= outs[0.5]['p_ruin'])
+
+    def test_intratrade_ruin_via_mae(self) -> None:
+        """A trade whose MAE breaches the threshold while its close R
+        recovers ruins the path only when mae_r is passed."""
+        close_only = simulate_sizing([0.5], fraction=0.10, n_paths=5, n_trades=2, seed=1)
+        intratrade = simulate_sizing([0.5], fraction=0.10, n_paths=5, n_trades=2, seed=1,
+                                     mae_r=[-6.0])
+        assert close_only['p_ruin'] == 0.0
+        assert intratrade['ruin_basis'] == 'intratrade'
+        assert intratrade['p_ruin'] == 1.0          # trough 1×(1−0.6)=0.4 ≤ 0.5
+        assert intratrade['terminal']['median'] > 1.0   # the close still won
+
+    def test_ruin_threshold_ordering(self) -> None:
+        """p_ruin_25dd (equity ≤ 0.75) is always ≥ p_ruin at the 0.5 default."""
+        bag = [1.0, -3.0]
+        out = simulate_sizing(bag, fraction=0.1, n_paths=500, n_trades=30, seed=3)
+        assert out['p_ruin_25dd'] >= out['p_ruin']
+
+    def test_edge_rules(self) -> None:
+        """Empty bags raise in both functions; kelly is 0.0 on an all-loser
+        bag and raises on a bag with no losing R."""
+        with pytest.raises(ValueError, match='empty bag'):
+            simulate_sizing([], fraction=0.01)
+        with pytest.raises(ValueError, match='empty bag'):
+            kelly_fraction([])
+        assert kelly_fraction([-1.0, -2.0]) == 0.0
+        with pytest.raises(ValueError, match='no losing R'):
+            kelly_fraction([0.5, 1.0])
+        with pytest.raises(ValueError, match='mae_r length'):
+            simulate_sizing([1.0, 2.0], fraction=0.01, mae_r=[-1.0])
+
+
+@pytest.mark.skipif(not (_have(_MSFT_DAILIES) and _have(_SPY_DAILIES)),
+                    reason='needs msft/spy option dailies (data-2026-06 release)')
+class TestPositionSizingRegression:
+    """Experiment 1's first pinned measurements (docs/van_tharp_gap_cb.md).
+
+    EXPLORATORY, descriptive risk distributions — not edge claims, not
+    advice. Both ledgers are negative expectancy, so Jensen settles the
+    growth half before the sweep runs: every positive fraction loses
+    long-run. The pins record the ruin half — whether P(ruin) rises
+    monotonically with f, the design's pre-stated prediction.
+    """
+
+    def test_msft_cc_sizing_sweep(self, msft_run) -> None:
+        _, _, ledger = msft_run
+        sweep = sizing_sweep([r.r_multiple for r in ledger])
+        p_ruin = [sweep[f]['p_ruin'] for f in (0.0025, 0.005, 0.01, 0.02, 0.03)]
+        assert p_ruin == sorted(p_ruin)            # the pre-stated monotonicity verdict
+        assert p_ruin == [0.0, 0.0107, 0.628, 0.97, 0.9934]
+        assert [sweep[f]['terminal']['median'] for f in (0.0025, 0.005, 0.01, 0.02, 0.03)] \
+            == [0.8359, 0.6955, 0.4749, 0.2086, 0.0843]
+
+    def test_spy_short_vol_sizing_sweep(self, spy_run) -> None:
+        _, _, ledger = spy_run
+        sweep = sizing_sweep([r.r_multiple for r in ledger])
+        p_ruin = [sweep[f]['p_ruin'] for f in (0.0025, 0.005, 0.01, 0.02, 0.03)]
+        assert p_ruin == sorted(p_ruin)
+        assert p_ruin == [0.0, 0.1208, 0.8491, 0.9909, 0.9981]
+        assert [sweep[f]['terminal']['median'] for f in (0.0025, 0.005, 0.01, 0.02, 0.03)] \
+            == [0.7894, 0.6185, 0.371, 0.1207, 0.0339]
+
+    def test_spy_intratrade_vs_close_only(self, spy_run) -> None:
+        """Gap A's MAE column at work: at the same fraction, intratrade ruin
+        accounting can only flag more paths than close-only."""
+        _, _, ledger = spy_run
+        rs = [r.r_multiple for r in ledger]
+        maes = [r.mae_r for r in ledger]
+        close_only = simulate_sizing(rs, fraction=0.02)
+        intratrade = simulate_sizing(rs, fraction=0.02, mae_r=maes)
+        assert intratrade['p_ruin'] >= close_only['p_ruin']
+        assert intratrade['p_ruin'] == 0.9918
+        assert close_only['p_ruin'] == 0.9909
