@@ -56,6 +56,7 @@ realistic transaction costs. Phase B (the put side) is the remaining open work.
 from __future__ import annotations
 
 import math
+from datetime import datetime
 from typing import Any, Callable
 
 import numpy as np
@@ -819,6 +820,14 @@ def run_real_structure_overlay(
     hedge_cost_bps = float(params.get('hedge_cost_bps', 1.0))
     close_at_pct = params.get('close_at_pct')
     manage_deep_itm = bool(params.get('manage_deep_itm', False))
+    stop_loss_mult = params.get('stop_loss_mult')   # Gap E: close cost >= mult × entry credit
+    exit_dte = params.get('exit_dte')               # Gap E: close N calendar days before expiry
+    # Gap E dispatch (docs/van_tharp_gap_e.md): the general exit branch arms iff a new
+    # knob is set, or close_at_pct is set on a 'hold' structure (previously a silent
+    # no-op). Unarmed — every pinned caller — runs the pre-Gap-E code verbatim; armed
+    # runs bypass the legacy single-leg block so the two paths can never double-fire.
+    exits_armed = (stop_loss_mult is not None or exit_dte is not None
+                   or (close_at_pct is not None and management == 'hold'))
     daily_rf = rf / 252.0
 
     initial_price = prices[0]
@@ -935,7 +944,56 @@ def run_real_structure_overlay(
                 q = day['marks'].get(leg['contract'])
                 if q is not None:
                     leg['mid'], leg['delta'] = q[2], q[3]
-            if management == 'early_close_single':
+            if exits_armed and entry_credit > 0:
+                # Gap E general exit branch (docs/van_tharp_gap_e.md). Per-trade arm rule:
+                # only a positive booked entry credit gives the multiple-of-credit triggers
+                # a well-defined reference (excludes the net-debit calendar structurally,
+                # and skips a net-debit risk-reversal entry per trade). Triggers evaluate
+                # only when EVERY leg has a live quote — the conservative generalization of
+                # the single-leg q-is-not-None guard; carried marks never manufacture fills.
+                quotes = [day['marks'].get(leg['contract']) for leg in legs]
+                if all(q is not None for q in quotes):
+                    # Ex-commission net close cost per share: buy shorts back at the ask,
+                    # sell longs at the bid under bid_ask; mids under mid fill. Triggers
+                    # compare ex-commission (the close_ref convention); the fill adds
+                    # per-leg commission.
+                    if fill == 'bid_ask':
+                        close_ref = sum(q[1] if leg['sign'] < 0 else -q[0]
+                                        for leg, q in zip(legs, quotes))
+                    else:
+                        close_ref = sum(q[2] if leg['sign'] < 0 else -q[2]
+                                        for leg, q in zip(legs, quotes))
+                    hit_target = (close_at_pct is not None
+                                  and close_ref <= entry_credit * (1 - float(close_at_pct)))
+                    hit_stop = (stop_loss_mult is not None
+                                and close_ref >= entry_credit * float(stop_loss_mult))
+                    hit_time = (exit_dte is not None
+                                and (datetime.strptime(str(expiration), '%Y-%m-%d')
+                                     - datetime.strptime(str(date), '%Y-%m-%d')).days
+                                <= int(exit_dte))
+                    if hit_target or hit_stop or hit_time:
+                        # Same-day priority: target, then stop, then time (the CC precedent).
+                        reason = 'target' if hit_target else 'stop' if hit_stop else 'time'
+                        close_cost = close_ref + COMMISSION_PER_SHARE * len(legs)
+                        cash -= close_cost * shares
+                        # NOTE for the TERM/debit widening: this pnl omits
+                        # realized_settle_flow (cf. the settle branch) — unreachable in
+                        # v1, where a staggered (calendar) structure is net-debit and
+                        # never arms. Fold it in before arming multi-expiration exits.
+                        wins, losses = ((wins + 1, losses)
+                                        if (entry_credit - close_cost) * shares >= 0
+                                        else (wins, losses + 1))
+                        trades.append({'date': date, 'action': 'close', 'reason': reason,
+                                       'pnl': round((entry_credit - close_cost) * shares, 2),
+                                       'mae': round(worst_unrealized, 2)})
+                        legs = None
+                        expiration = None
+            elif not exits_armed and management == 'early_close_single':
+                # An ARMED run bypasses the legacy block entirely (the spec's
+                # takeover-for-the-run rule) — including its manage_deep_itm test,
+                # a spec-sanctioned deferral (docs/van_tharp_gap_e.md, open
+                # question 2). Unarmed runs — every pinned caller — evaluate this
+                # block exactly as before Gap E.
                 leg = legs[0]
                 q = day['marks'].get(leg['contract'])
                 if q is not None:

@@ -2,7 +2,21 @@
 
 ## Status
 
-This is a **DESIGN document — a build spec, PLAN-level**, ahead of any code. It designs Gap E from
+**Implementation status (2026-07): E1 and E2 are BUILT** — the general exit branch in
+`run_real_structure_overlay` (dispatch, per-trade arm rule, all-legs-quoted triggers, target→stop→time
+priority, the `reason` key) with the synthetic `TestExitMechanics` layer, and the pre-committed six-variant
+Experiment 4 grid pinned by `TestSpyExitVariantExploration` plus a
+[docs/explorations.md](explorations.md) entry. Byte-identity held: the full pinned vol-premium,
+edge-search, and ledger suites pass unchanged, and `STRUCTURE_ENGINE_VERSION` stays `'v1'` per the bump
+rule. **The measurement contradicted the pre-stated prior in half**, as the design allowed: on the
+delta-hedged short call the 2× stop improves expectancy (−0.54R → −0.18R), truncates the worst MAE
+(−11.41R → −3.12R), and lowers intratrade P(ruin) at f=2% (0.992 → 0.835) — the hedge had already absorbed
+the trend the CC's stop kept firing into. The other half held: no variant flips the sign — every exit
+leaves the game negative. E3 (escalation) remains unexercised and human-gated. Code file:line references
+in the sections below describe the tree as of the design commit; the implementation inserted lines, so
+some have shifted.
+
+This was written as a **DESIGN document — a build spec, PLAN-level**, ahead of the code. It designs Gap E from
 [docs/van_tharp_test_plan.md](van_tharp_test_plan.md): exit mechanics beyond hold-to-expiry for the
 structure engine. The parent plan sizes it Large and its sequencing table calls it "the heaviest lift"
 (docs/van_tharp_test_plan.md:200, :266): it is the first Van Tharp change that must enter the structure
@@ -300,8 +314,10 @@ Consequences:
 **Fixed entry.** The pinned SPY short vol at `target_delta 0.25 / dte 30` — the committed
 `short_call_25` coordinates (search/edge_search.py:772) and the exact run behind the Gap A SPY ledger
 (`run_real_short_vol_overlay` at tests/test_trade_ledger.py:102-104; the regression is
-`TestSpyShortVolRegression`, tests/test_vol_premium.py:392). Its `early_close_single` spec means the
-variant runs arm the general branch through the dispatch rule above. The MSFT CC side needs no new stop
+`TestSpyShortVolRegression`, tests/test_vol_premium.py:392). Under the dispatch rule above, the stop and
+time variants arm the general branch; the `close_at_pct`-only variants ride the legacy single-leg path
+(identical semantics for the one-leg short_vol — the dispatch-edges mechanics test proves the same close
+date and P&L on both paths). The MSFT CC side needs no new stop
 runs — its stop grid is already pinned by `TestMsftStopLossRegression` — so the CC contributes at most a
 time-exit variant if E2 finds it worth a run; the primary subject is the structure engine.
 
