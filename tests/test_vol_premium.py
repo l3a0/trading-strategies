@@ -31,6 +31,7 @@ from realchains.vol_premium import (
     bs_vega,
     implied_vol,
     run_real_calendar_overlay,
+    run_real_structure_overlay,
     run_real_credit_spread_overlay,
     run_real_iron_condor_overlay,
     run_real_risk_reversal_overlay,
@@ -1709,3 +1710,340 @@ class TestGrammarSignatureMatchesEngine:
             for k in ('legs', 'expirations', 'net_vega', 'net_delta', 'net_skew'):
                 assert derived[k] == declared[k], (
                     f'{name}.{k}: engine-derived {derived[k]!r} != declared {declared[k]!r}')
+
+
+def _two_leg_scenario(
+    leg_specs: list[dict[str, Any]],
+    marks_by_day: list[dict[str, tuple[float, float, float, float]] | None],
+    dates: list[str],
+    prices: list[float] | None = None,
+    entry_date: str | None = None,
+):
+    """Gap E synthetic bed: a store whose marks follow `marks_by_day` and a
+    selector returning `leg_specs` (fresh dicts each call) on any day with a
+    chain — entry-gated to `entry_date` when given. The last date is every
+    leg's expiration unless a spec overrides it."""
+    exp = dates[-1]
+    px = prices if prices is not None else [100.0] * len(dates)
+    store: dict[str, dict[str, Any]] = {}
+    for d, m in zip(dates, marks_by_day):
+        if m is not None:
+            store[d] = {'candidates': [], 'marks': dict(m)}
+
+    def select(day: dict[str, Any], params: dict[str, Any]):
+        if entry_date is not None and not day.get('_entry_ok'):
+            return None
+        return [{'sign': s['sign'], 'right': s['right'], 'strike': s['strike'],
+                 'contract': s['contract'], 'entry_net': s['entry_net'],
+                 'mid': s.get('mid', s['entry_net']), 'delta': s.get('delta', 0.3),
+                 'expiration': s.get('expiration', exp)} for s in leg_specs]
+
+    if entry_date is not None and entry_date in store:
+        store[entry_date]['_entry_ok'] = True
+    return dates, px, store, select
+
+
+class TestExitMechanics:
+    """Gap E (docs/van_tharp_gap_e.md): the general exit branch — synthetic,
+    always-run, every assertion hand-derived. Fills are side-appropriate,
+    triggers compare ex-commission, the all-legs-quoted rule gates, priority
+    is target > stop > time, expiry-day settlement preempts, net-debit
+    entries never arm, and the off path is pinned by a golden run."""
+
+    DAYS = ['2020-01-02', '2020-01-03', '2020-01-06', '2020-01-07', '2020-01-08', '2020-01-09']
+
+    def test_stop_fires_multi_leg_at_asks(self) -> None:
+        """Two short legs (net credit 3.0), stop at 2x: fires the day the
+        ex-commission ask-side close cost reaches 6.0; P&L books the fill
+        with per-leg commission; MAE carries the running min."""
+        legs = [
+            {'sign': -1, 'right': 'call', 'strike': 105.0, 'contract': 'C', 'entry_net': 1.5},
+            {'sign': -1, 'right': 'put', 'strike': 95.0, 'contract': 'P', 'entry_net': 1.5},
+        ]
+        marks = [
+            {'C': (1.4, 1.5, 1.45, 0.3), 'P': (1.4, 1.5, 1.45, -0.3)},
+            {'C': (2.0, 2.1, 2.05, 0.5), 'P': (1.4, 1.5, 1.45, -0.4)},   # ref 3.6 < 6.0
+            {'C': (3.9, 4.0, 3.95, 0.7), 'P': (2.0, 2.1, 2.05, -0.3)},   # ref 6.1 >= 6.0
+            {'C': (5.0, 5.1, 5.05, 0.8), 'P': (2.5, 2.6, 2.55, -0.2)},
+            {'C': (6.0, 6.1, 6.05, 0.9), 'P': (3.0, 3.1, 3.05, -0.1)},
+            {'C': (7.0, 7.1, 7.05, 1.0), 'P': (3.5, 3.6, 3.55, -0.1)},
+        ]
+        dates, px, store, select = _two_leg_scenario(legs, marks, self.DAYS,
+                                                     entry_date=self.DAYS[0])
+        s, trades, _ = run_real_structure_overlay(
+            dates, px, store, {'capital': 100_000, 'risk_free_rate': 0.0,
+                               'stop_loss_mult': 2.0},
+            select=select, entry_guard='each_short_positive', hedge_mode='none')
+        assert [t['action'] for t in trades] == ['enter', 'close']
+        close = trades[1]
+        assert close['reason'] == 'stop'
+        assert close['date'] == self.DAYS[2]
+        # shares = 1000; pnl = (3.0 - (6.1 + 2*0.0065)) * 1000
+        assert close['pnl'] == pytest.approx((3.0 - (6.1 + 2 * 0.0065)) * 1000, abs=0.01)
+        # worst mark through the prior day: (3.0 - (2.05 + 1.45)) * 1000 = -500
+        assert close['mae'] == pytest.approx(-500.0, abs=0.01)
+
+    def test_target_beats_time_and_long_leg_fills_at_bid(self) -> None:
+        """Mixed-sign spread (net credit 1.5) with close_at_pct on 'hold'
+        (the dispatch's third arm) plus exit_dte: on a day when both target
+        and time are true, target wins, and the long leg sells at its BID."""
+        legs = [
+            {'sign': -1, 'right': 'call', 'strike': 100.0, 'contract': 'S', 'entry_net': 2.0},
+            {'sign': 1, 'right': 'call', 'strike': 110.0, 'contract': 'L', 'entry_net': 0.5},
+        ]
+        marks = [
+            {'S': (1.9, 2.0, 1.95, 0.4), 'L': (0.5, 0.55, 0.52, 0.1)},
+            {'S': (1.0, 1.1, 1.05, 0.3), 'L': (0.3, 0.35, 0.32, 0.08)},   # ref 0.8 > 0.375
+            {'S': (0.4, 0.45, 0.42, 0.2), 'L': (0.1, 0.12, 0.11, 0.05)},  # ref 0.35 <= 0.375
+            {'S': (0.3, 0.35, 0.32, 0.1), 'L': (0.05, 0.06, 0.055, 0.02)},
+            {'S': (0.2, 0.25, 0.22, 0.1), 'L': (0.05, 0.06, 0.055, 0.02)},
+            {'S': (0.0, 0.05, 0.02, 0.0), 'L': (0.0, 0.01, 0.005, 0.0)},
+        ]
+        dates, px, store, select = _two_leg_scenario(legs, marks, self.DAYS,
+                                                     entry_date=self.DAYS[0])
+        s, trades, _ = run_real_structure_overlay(
+            dates, px, store, {'capital': 100_000, 'risk_free_rate': 0.0,
+                               'close_at_pct': 0.75, 'exit_dte': 3},
+            select=select, entry_guard='each_short_positive', hedge_mode='none')
+        close = trades[1]
+        assert close['reason'] == 'target'           # time also true: 3 days to expiry
+        assert close['date'] == self.DAYS[2]
+        # close_ref = ask(S) - bid(L) = 0.45 - 0.10 = 0.35; + 2 commissions on fill
+        assert close['pnl'] == pytest.approx((1.5 - (0.35 + 2 * 0.0065)) * 1000, abs=0.01)
+
+    def test_all_legs_quoted_rule(self) -> None:
+        """The stop condition is past its threshold on a day where one leg has
+        no quote: no close fires until the first day both legs print."""
+        legs = [
+            {'sign': -1, 'right': 'call', 'strike': 105.0, 'contract': 'C', 'entry_net': 1.5},
+            {'sign': -1, 'right': 'put', 'strike': 95.0, 'contract': 'P', 'entry_net': 1.5},
+        ]
+        marks = [
+            {'C': (1.4, 1.5, 1.45, 0.3), 'P': (1.8, 2.0, 1.9, -0.3)},
+            {'C': (4.0, 4.1, 4.05, 0.7)},                                  # P unquoted
+            {'C': (4.0, 4.1, 4.05, 0.7), 'P': (2.0, 2.1, 2.05, -0.3)},     # both print
+            {'C': (5.0, 5.1, 5.05, 0.8), 'P': (2.5, 2.6, 2.55, -0.2)},
+            {'C': (6.0, 6.1, 6.05, 0.9), 'P': (3.0, 3.1, 3.05, -0.1)},
+            {'C': (7.0, 7.1, 7.05, 1.0), 'P': (3.5, 3.6, 3.55, -0.1)},
+        ]
+        dates, px, store, select = _two_leg_scenario(legs, marks, self.DAYS,
+                                                     entry_date=self.DAYS[0])
+        s, trades, _ = run_real_structure_overlay(
+            dates, px, store, {'capital': 100_000, 'risk_free_rate': 0.0,
+                               'stop_loss_mult': 2.0},
+            select=select, entry_guard='each_short_positive', hedge_mode='none')
+        close = trades[1]
+        # DAYS[1] must NOT fire: the rejected carried-quote convention would
+        # read C's live 4.1 + P's carried day-0 ask 2.0 = 6.1 >= 6.0 and close
+        # there — the all-legs-quoted rule waits for both to print on DAYS[2].
+        assert close['date'] == self.DAYS[2]
+
+    def test_time_exit_roll_cadence_and_expiry_preemption(self) -> None:
+        """exit_dte closes the first cycle early; re-entry lands on the NEXT
+        chain day (the roll's one-day-gap convention); the second cycle's
+        expiry day settles rather than closing (elif-chain preemption)."""
+        legs = [{'sign': -1, 'right': 'call', 'strike': 105.0, 'contract': 'C',
+                 'entry_net': 1.5}]
+        flat = {'C': (1.0, 1.1, 1.05, 0.3)}
+        marks = [flat, flat, flat, flat, flat, flat]
+        dates, px, store, select = _two_leg_scenario(legs, marks, self.DAYS)
+        s, trades, _ = run_real_structure_overlay(
+            dates, px, store, {'capital': 100_000, 'risk_free_rate': 0.0,
+                               'exit_dte': 2},
+            select=select, entry_guard='each_short_positive', hedge_mode='none')
+        actions = [(t['date'], t['action']) for t in trades]
+        # Expiry 2020-01-09. Entry 01-02 (7 days out — the manage arm is not
+        # reached on the entry day). First trigger-eligible day 01-03 is 6 days
+        # out; the time exit fires when days-to-expiry <= 2: 01-07.
+        assert actions[0] == (self.DAYS[0], 'enter')
+        assert trades[1]['action'] == 'close' and trades[1]['reason'] == 'time'
+        assert trades[1]['date'] == self.DAYS[3]      # 01-07: 2 days to expiry
+        assert actions[2] == (self.DAYS[4], 'enter')  # roll: next chain day, not same-day
+        assert trades[3]['action'] == 'settle'        # expiry day settles, never closes
+        assert trades[3]['date'] == self.DAYS[5]
+
+    def test_net_debit_entry_never_arms(self) -> None:
+        """A net-debit structure (short leg positive, so the guard passes)
+        with a stop set: triggers never evaluate; the cycle settles."""
+        legs = [
+            {'sign': -1, 'right': 'put', 'strike': 95.0, 'contract': 'P', 'entry_net': 1.0},
+            {'sign': 1, 'right': 'call', 'strike': 105.0, 'contract': 'L', 'entry_net': 1.8},
+        ]
+        blowup = {'P': (9.0, 9.1, 9.05, -0.9), 'L': (0.1, 0.11, 0.105, 0.02)}
+        marks = [{'P': (1.0, 1.1, 1.05, -0.3), 'L': (1.7, 1.8, 1.75, 0.3)},
+                 blowup, blowup, blowup, blowup, blowup]
+        dates, px, store, select = _two_leg_scenario(legs, marks, self.DAYS,
+                                                     entry_date=self.DAYS[0])
+        s, trades, _ = run_real_structure_overlay(
+            dates, px, store, {'capital': 100_000, 'risk_free_rate': 0.0,
+                               'stop_loss_mult': 2.0},
+            select=select, entry_guard='each_short_positive', hedge_mode='none')
+        assert [t['action'] for t in trades] == ['enter', 'settle']
+
+    def test_dispatch_edges_on_short_vol(self) -> None:
+        """close_at_pct alone on early_close_single takes the legacy path (no
+        'reason' key); adding a never-firing stop arms the general branch,
+        which closes the same trade at the same P&L WITH a reason."""
+        days = [f'2020-03-0{i+2}' for i in range(6)]
+        price_path = [(d, 100.0) for d in days]
+        option_path = [(2.0, 2.1, 2.05, 0.50), (1.0, 1.1, 1.05, 0.35),
+                       (0.4, 0.5, 0.45, 0.15), (0.3, 0.4, 0.35, 0.10),
+                       (0.2, 0.3, 0.25, 0.05), (0.0, 0.0, 0.0, 0.0)]
+        dates, prices, store = _scenario(price_path, option_path, strike=102.0)
+        base = {'target_delta': 0.50, 'capital': 100_000, 'risk_free_rate': 0.0,
+                'hedge_cost_bps': 0.0, 'close_at_pct': 0.75}
+        _, legacy_trades, _ = run_real_short_vol_overlay(dates, prices, store, dict(base))
+        _, armed_trades, _ = run_real_short_vol_overlay(
+            dates, prices, store, {**base, 'stop_loss_mult': 99.0})
+        legacy_close = next(t for t in legacy_trades if t['action'] == 'close')
+        armed_close = next(t for t in armed_trades if t['action'] == 'close')
+        assert 'reason' not in legacy_close
+        assert armed_close['reason'] == 'target'
+        assert armed_close['date'] == legacy_close['date']
+        assert armed_close['pnl'] == pytest.approx(legacy_close['pnl'], abs=0.01)
+
+    def test_off_equivalence_golden(self) -> None:
+        """No exit knobs: a hold structure runs to expiry with golden-pinned
+        trades and final equity — the off path's synthetic anchor."""
+        legs = [
+            {'sign': -1, 'right': 'call', 'strike': 105.0, 'contract': 'C', 'entry_net': 1.5},
+            {'sign': -1, 'right': 'put', 'strike': 95.0, 'contract': 'P', 'entry_net': 1.5},
+        ]
+        flat = {'C': (1.0, 1.1, 1.05, 0.3), 'P': (1.0, 1.1, 1.05, -0.3)}
+        marks = [flat] * 6
+        dates, px, store, select = _two_leg_scenario(legs, marks, self.DAYS,
+                                                     entry_date=self.DAYS[0])
+        s, trades, eq = run_real_structure_overlay(
+            dates, px, store, {'capital': 100_000, 'risk_free_rate': 0.0},
+            select=select, entry_guard='each_short_positive', hedge_mode='none')
+        assert [t['action'] for t in trades] == ['enter', 'settle']
+        assert trades[1]['pnl'] == pytest.approx(3000.0, abs=0.01)   # both legs expire OTM
+        assert s['final_equity'] == pytest.approx(103_000.0, abs=0.01)
+
+
+@pytest.mark.skipif(not _HAVE_SPY, reason='needs spy_option_dailies.csv or its .gz twin')
+class TestSpyExitVariantExploration:
+    """Gap E / Experiment 4 (docs/van_tharp_gap_e.md): the pre-committed
+    six-variant exit grid on the pinned SPY short vol (0.25Δ / 30 DTE,
+    REGISTERED_CLEAN_START span), measured through the Gap A ledger and the
+    C+B intratrade ruin replay at f = 2%.
+
+    EXPLORATORY — sample-spending, kill-or-justify, never a registered
+    verdict; nothing enters the idea ledger and no e-value is spent. The
+    design pre-stated the CC-derived prior (stops truncate the tail but
+    worsen expectancy — the whipsaw verdict of TestMsftStopLossRegression)
+    and allowed the measurement to contradict it. It did, in half: on the
+    DELTA-HEDGED short call the 2x stop truncates the worst MAE (−11.41R →
+    −3.12R), IMPROVES expectancy (−0.5407R → −0.1848R), and lowers intratrade
+    P(ruin) at f=2% (0.9918 → 0.8350) — the hedge has already absorbed the
+    trend the CC's stop kept firing into, so the whipsaw cost is smaller
+    than the tail protection here. The other half of the prior held: every
+    variant stays NEGATIVE expectancy — no exit flips the sign, so nothing
+    here is an edge; the finding is that exit choice moves risk shape, not
+    sign. Convention caveats travel with these pins: daily-close stop-market
+    (flatters the stop), all-legs-quoted triggers (under-fire), roll = next
+    chain day. Escalation of any variant goes through E3's human-signed
+    grammar widening, never from here.
+    """
+
+    FRACTION = 0.02
+
+    @pytest.fixture(scope='class')
+    def market(self):
+        from realchains.real_cc_backtest import (
+            REGISTERED_CLEAN_START,
+            load_chain_store,
+            load_unadjusted_prices,
+        )
+        store = load_chain_store(_SPY_DAILIES, start=REGISTERED_CLEAN_START['SPY'])
+        days = sorted(store)
+        dates, prices = load_unadjusted_prices('SPY', days[0], '2026-06-06')
+        pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
+        return [d for d, _ in pairs], [p for _, p in pairs], store
+
+    _cache: dict[tuple[tuple[str, Any], ...], tuple[dict[str, Any], float, dict[str, int]]] = {}
+
+    def _measure(self, market, extra: dict[str, Any]) -> tuple[dict[str, Any], float, dict[str, int]]:
+        # Memoized: the sign-flip test revisits all six variants plus the
+        # baseline, so each unique measurement runs once per session.
+        key = tuple(sorted(extra.items()))
+        if key in self._cache:
+            return self._cache[key]
+        from common.position_sizing import simulate_sizing
+        from common.trade_ledger import build_trade_ledger, ledger_statistics
+        dates, prices, store = market
+        s, trades, _ = run_real_short_vol_overlay(
+            dates, prices, store,
+            {'target_delta': 0.25, 'dte': 30, 'capital': 100_000,
+             'risk_free_rate': 0.045, 'hedge_cost_bps': 0.0, **extra})
+        led = build_trade_ledger(trades, strategy='short_vol', ticker='SPY',
+                                 shares=100 * s['num_contracts'],
+                                 risk_basis='premium_collected')
+        ruin = simulate_sizing([r.r_multiple for r in led], fraction=self.FRACTION,
+                               mae_r=[r.mae_r for r in led])['p_ruin']
+        reasons: dict[str, int] = {}
+        for t in trades:
+            if t['action'] == 'close' and 'reason' in t:
+                reasons[t['reason']] = reasons.get(t['reason'], 0) + 1
+        result = (ledger_statistics(led), ruin, reasons)
+        self._cache[key] = result
+        return result
+
+    def test_stop_2x_truncates_tail_and_lowers_ruin(self, market) -> None:
+        """The headline contradiction of the CC prior — and still negative."""
+        st, ruin, reasons = self._measure(market, {'stop_loss_mult': 2.0})
+        assert st['n'] == 243
+        assert st['expectancy_r'] == pytest.approx(-0.1848, abs=0.005)
+        assert st['win_rate'] == pytest.approx(51.4, abs=0.1)
+        assert st['mae_r_distribution']['worst'] == pytest.approx(-3.1222, abs=0.05)
+        assert ruin == pytest.approx(0.8350, abs=0.005)
+        assert reasons == {'stop': 112}
+
+    def test_stop_3x(self, market) -> None:
+        st, ruin, reasons = self._measure(market, {'stop_loss_mult': 3.0})
+        assert st['n'] == 208
+        assert st['expectancy_r'] == pytest.approx(-0.2885, abs=0.005)
+        assert st['mae_r_distribution']['worst'] == pytest.approx(-3.9697, abs=0.05)
+        assert ruin == pytest.approx(0.9420, abs=0.005)
+        assert reasons == {'stop': 64}
+
+    def test_target_variants_legacy_path(self, market) -> None:
+        """close_at_pct alone rides the legacy early_close_single path (no
+        'reason' keys — the dispatch rule), recycles faster (n up), improves
+        expectancy, and DEEPENS the worst MAE-R — the target banks winners
+        early but the tail events land on smaller open premiums."""
+        st50, ruin50, reasons50 = self._measure(market, {'close_at_pct': 0.50})
+        st75, ruin75, reasons75 = self._measure(market, {'close_at_pct': 0.75})
+        assert reasons50 == {} and reasons75 == {}
+        assert (st50['n'], st75['n']) == (339, 259)
+        assert st50['expectancy_r'] == pytest.approx(-0.3796, abs=0.005)
+        assert st75['expectancy_r'] == pytest.approx(-0.2812, abs=0.005)
+        assert st50['mae_r_distribution']['worst'] == pytest.approx(-23.6177, abs=0.05)
+        assert st75['mae_r_distribution']['worst'] == pytest.approx(-17.2542, abs=0.05)
+        assert ruin50 == pytest.approx(0.9986, abs=0.005)
+        assert ruin75 == pytest.approx(0.9563, abs=0.005)
+
+    def test_time_variants(self, market) -> None:
+        st7, ruin7, reasons7 = self._measure(market, {'exit_dte': 7})
+        st14, ruin14, reasons14 = self._measure(market, {'exit_dte': 14})
+        assert (st7['n'], st14['n']) == (214, 293)
+        assert reasons7 == {'time': 214} and reasons14 == {'time': 293}
+        assert st7['expectancy_r'] == pytest.approx(-0.3148, abs=0.005)
+        assert st14['expectancy_r'] == pytest.approx(-0.2021, abs=0.005)
+        assert st7['mae_r_distribution']['worst'] == pytest.approx(-9.7946, abs=0.05)
+        assert st14['mae_r_distribution']['worst'] == pytest.approx(-6.5303, abs=0.05)
+        assert ruin7 == pytest.approx(0.9608, abs=0.005)
+        assert ruin14 == pytest.approx(0.9388, abs=0.005)
+
+    def test_no_variant_flips_the_sign(self, market) -> None:
+        """The half of the prior that held: the baseline and every variant
+        stay negative expectancy — exit choice moves risk shape, not sign."""
+        st_base, ruin_base, _ = self._measure(market, {})
+        assert st_base['n'] == 174                              # baseline reproduced
+        assert st_base['expectancy_r'] == pytest.approx(-0.5407, abs=0.005)
+        assert ruin_base == pytest.approx(0.9918, abs=0.005)    # the C+B pin, reproduced
+        for extra in ({'close_at_pct': 0.50}, {'close_at_pct': 0.75},
+                      {'stop_loss_mult': 2.0}, {'stop_loss_mult': 3.0},
+                      {'exit_dte': 7}, {'exit_dte': 14}):
+            st, _, _ = self._measure(market, extra)
+            assert st['expectancy_r'] < 0

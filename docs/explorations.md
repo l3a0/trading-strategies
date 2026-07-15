@@ -181,6 +181,43 @@ these strikes on these names, at real quotes.
 
 ---
 
+## Exit variants on the SPY short vol — MEASURED, no sign flip (2026-07-14)
+
+**The idea.** Experiment 4 of the Van Tharp test plan
+([van_tharp_gap_e.md](van_tharp_gap_e.md)): hold the pinned 0.25Δ/30-DTE SPY
+short-vol entry fixed and vary only the exit — profit target, premium-multiple
+stop, time exit — over the six-variant grid pre-committed in the design doc.
+Does the exit change per-cycle expectancy, and does a stop truncate the
+negative-skew MAE tail?
+
+**How it was tested.** Six engine re-runs on the registered-span SPY chains
+(`REGISTERED_CLEAN_START`), one exit knob at a time, measured through the Gap A
+R-multiple ledger and the Gaps C+B intratrade ruin replay at f = 2%. The prior
+was pre-stated from the pinned covered-call stop verdict
+(`TestMsftStopLossRegression`: whipsaw machinery — worse at every level).
+All seven runs (baseline + six variants) pinned in
+`TestSpyExitVariantExploration` (tests/test_vol_premium.py).
+
+**The verdict — the prior held in half.** No variant flips the sign: baseline
+−0.54R per cycle, every variant still negative — exit choice moves risk shape,
+not sign, so nothing here is an edge. But on the *delta-hedged* short call the
+2× stop is **not** the CC's whipsaw machinery: expectancy improves to −0.18R,
+the worst intratrade excursion truncates from −11.41R to −3.12R, and intratrade
+P(ruin) at f = 2% falls from 0.992 to 0.835. The mechanism difference: the CC's
+stop fired into an unhedged trending stock and re-sold into the same rally; here
+the daily delta hedge has already absorbed the trend, so the stop's whipsaw cost
+is smaller than its tail protection. The profit targets recycle faster and
+improve expectancy but *deepen* the worst MAE-R (early-banked winners leave the
+tail landing on smaller open premiums — −23.6R at the 50% target).
+
+**The trap for the future.** A better-shaped negative game is still a negative
+game: the improved stop numbers are exploratory, convention-flattered (daily-close
+stop-market, all-legs-quoted triggers under-fire), and sit on a sample the
+baseline already spent. Any promotion runs through the design's E3 gate — a
+human-signed grammar widening and a registered cell — never from this entry.
+
+---
+
 ## Related, recorded elsewhere
 
 - **Trend gate** (suspend selling during a 200-day uptrend) — a *registered*

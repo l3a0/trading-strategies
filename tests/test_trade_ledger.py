@@ -617,3 +617,20 @@ class TestPositionSizingRegression:
         assert intratrade['p_ruin'] >= close_only['p_ruin']
         assert intratrade['p_ruin'] == 0.9918
         assert close_only['p_ruin'] == 0.9909
+
+
+class TestExitReasonInvariance:
+    """Gap E: a structure 'close' event carrying the new 'reason' key reduces
+    to a TradeRecord identical to one without it (extra keys never read)."""
+
+    def test_reason_key_ignored(self) -> None:
+        base = [
+            {'date': 'd1', 'action': 'sell', 'premium': 2.0, 'strike': 100.0, 'pnl': 0},
+            {'date': 'd2', 'action': 'close', 'pnl': 150.0, 'mae': -40.0},
+        ]
+        tagged = [dict(base[0]), {**base[1], 'reason': 'stop'}]
+        a = build_trade_ledger(base, strategy='s', ticker='T', shares=100,
+                               risk_basis='premium_collected')
+        b = build_trade_ledger(tagged, strategy='s', ticker='T', shares=100,
+                               risk_basis='premium_collected')
+        assert a == b
