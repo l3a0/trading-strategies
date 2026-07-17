@@ -197,7 +197,7 @@ expiration, strike strictly below the short, buyable ask, nearest-|δ|.
 Entry guard `net_positive` (credit after commissions > 0). Re-entry on the
 next chain day after a cycle terminates (the engine's one-day-minimum gap).
 
-### 3.2 Exit lattice (7 variants, frozen — the Gap E seams)
+### 3.2 Exit lattice (8 variants, frozen — the Gap E seams; Amendment 1)
 
 | Variant | Knobs |
 |---|---|
@@ -208,6 +208,7 @@ next chain day after a cycle terminates (the engine's one-day-minimum gap).
 | `stop3x` | `stop_loss_mult = 3.0` |
 | `dte21` | `exit_dte = 21` (invalid for 21-DTE entries, §3.5) |
 | `bracket` | `close_at_pct = 0.50` + `stop_loss_mult = 2.0` (the practitioner default) |
+| `bracket75` | `close_at_pct = 0.75` + `stop_loss_mult = 1.5` (the wide-target / tight-stop corner; Amendment 1) |
 
 Semantics are the engine's, byte-frozen: target fires when the ex-commission
 close cost ≤ credit × (1 − pct); stop when close cost ≥ credit × mult; time
@@ -260,18 +261,18 @@ store and is foreclosed here).
 
 ### 3.5 The joint lattice, counted
 
-9 entry × 7 exit = 63, minus the 3 invalid (21-DTE entry × `dte21` exit)
-= **60 valid cells** per training window. The count is fixed here so the
+9 entry × 8 exit = 72, minus the 3 invalid (21-DTE entry × `dte21` exit)
+= **69 valid cells** per training window (Amendment 1). The count is fixed here so the
 hypothesis space is finite and pre-specified — the same closed-grammar
 discipline the campaign enforces, applied to a registered experiment. The
-walk-forward selects among the 60 in sample; **no cell is individually
+walk-forward selects among the 69 in sample; **no cell is individually
 tested** (§7.4).
 
 ---
 
 ## 4. Arms
 
-1. **A — verdict arm (hedged).** The §5 walk-forward on the 60-cell lattice,
+1. **A — verdict arm (hedged).** The §5 walk-forward on the 69-cell lattice,
    `combined` hedge, 0.5 bp. The §2.2 statistic lives here and only here.
 2. **B — retail arm (unhedged).** The identical walk-forward selections
    replayed with the hedge off (`hedge_mode='none'`, §10): raw equity curve,
@@ -314,7 +315,7 @@ tested** (§7.4).
 
 ### 5.1 Walk-forward, not full-span search
 
-A full-span grid search over 60 cells with a reported best is 60 hypotheses
+A full-span grid search over 69 cells with a reported best is 69 hypotheses
 wearing one t-statistic — the exact fork the campaign's FDR machinery exists
 to control, re-created by hand. The registered alternative is walk-forward:
 parameters are chosen only from data that precedes their use, the choice is
@@ -409,13 +410,13 @@ than silently accepted, because its sign is in the pass direction.
 
 ### 6.1 Exits are lattice axes, not a second pass
 
-The exit rules enter as the 7 variants of §3.2, optimized **jointly** with the
+The exit rules enter as the 8 variants of §3.2, optimized **jointly** with the
 entry parameters inside the same §5 walk-forward. A staged design (fix entry,
 then tune exits, or vice versa) is two searches wearing one accounting — the
 order of the stages is itself a fork, and the interaction the practitioner
 lore cares about (wider wings want wider stops; 45-DTE entries want the 21-DTE
 time exit) is exactly what a staged search cannot see. The price of the joint
-design is the larger lattice (60 vs 9), which §5.2's trade floor and §7.4's
+design is the larger lattice (69 vs 9), which §5.2's trade floor and §7.4's
 single-verdict rule absorb.
 
 ### 6.2 The pre-stated expectation (from Experiment 4)
@@ -439,7 +440,7 @@ of sample. Three exit-specific diagnostics are reported: the exit-reason
 composition of the OOS trade ledger (`target` / `stop` / `time` counts — the
 engine's frozen taxonomy); the **entry-only ablation** (the pipeline
 restricted to the 9 hold cells — parameters optimized, exits off); and the
-**exit-only ablation** (the pipeline restricted to the 7 exit variants at the
+**exit-only ablation** (the pipeline restricted to the 8 exit variants at the
 central 30 / 0.25Δ / 0.20Δ-wing entry, arm C2's cell — exits optimized,
 parameters fixed).
 Together with the primary the three runs answer the question of record's
@@ -521,7 +522,7 @@ the §7.3 block-bootstrap companion are reported beside it.
 ### 7.4 Multiplicity accounting (stated, not hand-waved)
 
 This registration runs **one test**: the pre-committed pipeline's single OOS
-statistic (plus arm D's one confirmation statistic on IWM). The 60-cell
+statistic (plus arm D's one confirmation statistic on IWM). The 69-cell
 lattice is selection machinery *inside* the pipeline — cells are never
 individually judged, so no per-cell FDR spend occurs and nothing enters the
 e-LOND ledger (this is a manual registered experiment in the trend-gate /
@@ -607,7 +608,7 @@ exciting one is available.
   land in a separate PR citing this registration's merge commit (not any
   later amendment commit) and the analysis-code commit; the §8 row is
   published verbatim.
-- **Compute note:** \~60 cells × \~23 windows × (train + test) engine runs per
+- **Compute note:** \~69 cells × \~23 windows × (train + test) engine runs per
   arm is the expensive object (\~thousands of overlay runs). The one-store
   memory budget (`portfolio_scout` precedent) and per-ticker sequential
   loading apply; a cached per-cell cycle index inside a window is an
@@ -622,6 +623,29 @@ any result has been computed yet — must be recorded in an "Amendments"
 section appended here, with date, what changed, and why; every claim affected
 by an amendment is demoted to exploratory. Silent edits void the
 registration.
+
+### Amendment 1 — 2026-07-17 (exit-lattice widening; pre-computation)
+
+**What changed:** §3.2 gains an eighth exit variant, `bracket75`
+(`close_at_pct = 0.75` + `stop_loss_mult = 1.5`) — the wide-target /
+tight-stop corner of the bracket quadrant, complementing the existing
+`bracket`'s tight-target / wide-stop (0.50 / 2.0). The joint lattice becomes
+9 × 8 = 72 − 3 = **69 valid cells** (§3.5), with the counts in §4 arm A,
+§5.1, §6.1, §6.3, §7.4, and the §10 compute note updated to match.
+
+**Why:** owner instruction (2026-07-17) to also test the 0.75-target /
+1.5×-stop combination. The prior on the tight stop is adverse and on the
+record — the CC's 1.5× stop was its *worst* variant (−$374,845.50, pinned in
+`TestMsftStopLossRegression`), though that was an unhedged book and the
+hedged short vol's stops behaved differently (§6.2) — which is exactly why
+it belongs in the lattice rather than in a post-hoc follow-up.
+
+**Demotions:** none. No §5 computation has run, no analysis code exists, and
+no number has been produced — the widening precedes all data contact, so the
+amendment affects pre-specification only. The analysis code (the
+`walk_forward_structure` driver) must implement the 69-cell lattice; the
+results PR cites the original registration merge commit, not this
+amendment's, per §10.
 
 ---
 

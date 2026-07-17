@@ -26,8 +26,13 @@ htmlcov/
 *_option_dailies.csv
 *_option_dailies.csv.gz
 # backfill datasets (release assets, e.g. msft_option_dailies_2008_2016.csv[.gz])
+# (the *_option_dailies_full.csv[.gz] full-chain archives ride these patterns too)
 *_option_dailies_*.csv
 *_option_dailies_*.csv.gz
+# 1-min intraday OHLCV archives (personal backups — OneDrive + sidecar sha256,
+# not release assets; see the cold-storage README)
+*_intraday_1min.csv
+*_intraday_1min.csv.gz
 
 # Trend-gate experiment checkpoints (result-bearing JSONL; resumable engine
 # runs — ignored so resumes don't trip trend_gate.py's clean-tree guard)
