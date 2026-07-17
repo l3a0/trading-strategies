@@ -12,13 +12,16 @@ analysis-code merge (prereg section 10 ordering).
 from __future__ import annotations
 
 import math
+import os
 import random
+from collections import Counter
 from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
 import pytest
 
+from common.paths import DATA_DIR
 from common.stats import newey_west_summary
 from realchains.real_cc_backtest import COMMISSION_PER_SHARE
 from realchains.vol_premium import STRUCTURE_SPECS, run_real_structure_overlay
@@ -477,3 +480,221 @@ class TestLoyoStream:
         got = excess_stream(eq, 100_000.0)
         assert got == pytest.approx([(100 - 10) / 100_000,
                                      (50 - 10) / 100_000])
+
+
+# --- registered results pins (dataset-gated) ---------------------------------
+
+_SPY_CALLS = os.path.join(DATA_DIR, 'spy_option_dailies.csv')
+_SPY_PUTS = os.path.join(DATA_DIR, 'spy_option_dailies_puts.csv')
+_IWM_DAILIES = os.path.join(DATA_DIR, 'iwm_option_dailies.csv')
+
+
+def _have(path: str) -> bool:
+    return os.path.exists(path) or os.path.exists(path + '.gz')
+
+
+_HAVE_SPY = _have(_SPY_CALLS) and _have(_SPY_PUTS)
+_HAVE_IWM = _have(_IWM_DAILIES)
+
+
+def _axis_counts(records: list) -> dict[str, dict]:
+    axes: dict[str, Counter] = {'dte': Counter(), 'sd': Counter(),
+                                'exit': Counter()}
+    for r in records:
+        w = r['winner']
+        if w is None:
+            continue
+        axes['dte'][w.dte] += 1
+        axes['sd'][w.short_delta] += 1
+        axes['exit'][w.exit_name] += 1
+    return {k: dict(v) for k, v in axes.items()}
+
+
+def _reasons(records: list) -> dict[str, int]:
+    total: Counter = Counter()
+    for r in records:
+        total.update(r.get('exit_reasons') or {})
+    return dict(total)
+
+
+def _b_sums(rec_b: list) -> dict[str, float]:
+    s = [r['oos_summary'] for r in rec_b if r['oos_summary']]
+    wins = sum(x['wins'] for x in s)
+    losses = sum(x['losses'] for x in s)
+    return {
+        'net': sum(x['net_pnl'] for x in s),
+        'interest': sum(x['interest_earned'] for x in s),
+        'alpha': sum(x['alpha_vs_cash'] for x in s),
+        'win_rate': 100.0 * wins / max(1, wins + losses),
+        'n_spreads': sum(x['num_credit_spreads_sold'] for x in s),
+    }
+
+
+@pytest.mark.skipif(
+    not _HAVE_SPY,
+    reason='needs spy_option_dailies.csv + spy_option_dailies_puts.csv '
+           '(or .gz twins)')
+class TestSpyPutSpreadWfRegression:
+    """The registered put-credit-spread verdict on SPY — §8 row 4, NULL.
+
+    Registration 4ddbbbe (+ Amendment 1); analysis code dd8c428; run of
+    record 2026-07-17 (docs/put_credit_spread_results.md). The stitched OOS
+    hedged-excess NW t is −2.26 — wrong-signed, failing the t > 2 bar at
+    every cost level; the mechanism clause fails both prongs (C2 −1.87 < 0;
+    winners split 8/8/7 across short_delta). Arm B's seductive raw
+    +$55,689 at an 82.6% win rate decomposes into +$51,754 interest
+    + $7,197 delta P&L − $3,262 options residual (the §8 binding clause).
+    Scope: no-GFC span, daily-close exits, EOD stop-markets.
+    """
+
+    @pytest.fixture(scope='class')
+    def pipeline(self) -> dict[str, Any]:
+        from realchains.run_prereg_put_spread import load_spy
+        store, dates, prices = load_spy()
+        rec_a = walk_forward_structure(
+            dates, prices, store, cells=enumerate_joint_cells())
+        stitched, _ = stitch_records(rec_a)
+        out: dict[str, Any] = {
+            'rec_a': rec_a,
+            'stats': verdict_stats(stitched),
+            'curve': {},
+        }
+        for bps in (0.0, 0.2, 1.0):
+            rc = replay_records(rec_a, dates, prices, store, hedged=True,
+                                extra_params={'hedge_cost_bps': bps})
+            out['curve'][bps] = verdict_stats(
+                stitch_records(rc)[0])['t_newey_west']
+        rec_b = replay_records(rec_a, dates, prices, store, hedged=False)
+        out['b'] = _b_sums(rec_b)
+        rec_c2 = walk_forward_structure(
+            dates, prices, store, forced_cell=CENTRAL_CELL)
+        out['c2_t'] = verdict_stats(
+            stitch_records(rec_c2)[0])['t_newey_west']
+        rec_c2_u = replay_records(rec_c2, dates, prices, store, hedged=False)
+        out['c2u'] = _b_sums(rec_c2_u)
+        cells = enumerate_joint_cells()
+        rec_entry = walk_forward_structure(
+            dates, prices, store,
+            cells=[c for c in cells if c.exit_name == 'hold'])
+        out['t_entry_only'] = verdict_stats(
+            stitch_records(rec_entry)[0])['t_newey_west']
+        rec_exit = walk_forward_structure(
+            dates, prices, store,
+            cells=[Cell(CENTRAL_CELL.dte, CENTRAL_CELL.short_delta,
+                        CENTRAL_CELL.wing_delta, name)
+                   for name, _ in EXIT_VARIANTS])
+        out['t_exit_only'] = verdict_stats(
+            stitch_records(rec_exit)[0])['t_newey_west']
+        del store
+        return out
+
+    def test_verdict_null_wrong_signed(self, pipeline):
+        st = pipeline['stats']
+        assert st['t_newey_west'] == pytest.approx(-2.26, abs=0.02)
+        assert st['t_naive'] == pytest.approx(-1.97, abs=0.02)
+        assert st['one_sided_p'] == pytest.approx(0.988, abs=0.005)
+        assert st['sharpe'] == pytest.approx(-0.585, abs=0.005)
+        assert st['n'] == 2862 and st['nw_lag'] == 8
+
+    def test_cost_curve_monotone_negative(self, pipeline):
+        assert pipeline['curve'][0.0] == pytest.approx(-2.14, abs=0.02)
+        assert pipeline['curve'][0.2] == pytest.approx(-2.19, abs=0.02)
+        assert pipeline['curve'][1.0] == pytest.approx(-2.38, abs=0.02)
+
+    def test_winner_axes_and_floors(self, pipeline):
+        rec_a = pipeline['rec_a']
+        assert len(rec_a) == 23
+        assert all(r['winner'] is not None for r in rec_a)  # no SKIPPED
+        assert all(r['n_below_30'] == 0 for r in rec_a)
+        assert all(not r['failed_cells'] for r in rec_a)
+        assert min(r['min_grid_trades'] for r in rec_a) == 32
+        axes = _axis_counts(rec_a)
+        assert axes['dte'] == {45: 15, 30: 6, 21: 2}
+        assert axes['sd'] == {0.3: 8, 0.2: 8, 0.25: 7}  # no modal delta
+        assert axes['exit'] == {'hold': 19, 'target75': 3, 'stop2x': 1}
+        assert _reasons(rec_a) == {'target': 12, 'stop': 6}
+        assert sum(r['seam_charge'] for r in rec_a) == pytest.approx(
+            157.70, abs=1.0)
+        assert sum(r['day0_bound'] for r in rec_a) == pytest.approx(
+            265.00, abs=1.0)
+
+    def test_arm_b_decomposition(self, pipeline):
+        b = pipeline['b']
+        assert b['net'] == pytest.approx(55_689.24, abs=5.0)
+        assert b['interest'] == pytest.approx(51_754.33, abs=5.0)
+        assert b['win_rate'] == pytest.approx(82.6, abs=0.1)
+        assert b['n_spreads'] == 127
+
+    def test_c2_and_ablations(self, pipeline):
+        assert pipeline['c2_t'] == pytest.approx(-1.87, abs=0.02)
+        c2u = pipeline['c2u']
+        assert c2u['net'] == pytest.approx(50_671.74, abs=5.0)
+        assert c2u['alpha'] == pytest.approx(-1_023.01, abs=5.0)
+        assert pipeline['t_entry_only'] == pytest.approx(-1.64, abs=0.02)
+        assert pipeline['t_exit_only'] == pytest.approx(-3.49, abs=0.02)
+
+
+@pytest.mark.skipif(
+    not _HAVE_IWM,
+    reason='needs iwm_option_dailies.csv or its .gz twin')
+class TestIwmPutSpreadWfRegression:
+    """The IWM confirmation arm — does not confirm; independently NULL.
+
+    Same registration/run of record as the SPY class. Stitched OOS
+    hedged-excess NW t −2.51, wrong-signed at every cost level; arm B's raw
+    +$55,141 at 80.2% is +$51,800 interest + $7,434 delta − $4,093 residual.
+    """
+
+    @pytest.fixture(scope='class')
+    def pipeline(self) -> dict[str, Any]:
+        from realchains.run_prereg_put_spread import load_iwm
+        store, dates, prices = load_iwm()
+        rec_a = walk_forward_structure(
+            dates, prices, store, cells=enumerate_joint_cells())
+        stitched, _ = stitch_records(rec_a)
+        out: dict[str, Any] = {
+            'rec_a': rec_a,
+            'stats': verdict_stats(stitched),
+            'curve': {},
+        }
+        for bps in (0.0, 0.2, 1.0):
+            rc = replay_records(rec_a, dates, prices, store, hedged=True,
+                                extra_params={'hedge_cost_bps': bps})
+            out['curve'][bps] = verdict_stats(
+                stitch_records(rc)[0])['t_newey_west']
+        rec_b = replay_records(rec_a, dates, prices, store, hedged=False)
+        out['b'] = _b_sums(rec_b)
+        rec_c2 = walk_forward_structure(
+            dates, prices, store, forced_cell=CENTRAL_CELL)
+        out['c2_t'] = verdict_stats(
+            stitch_records(rec_c2)[0])['t_newey_west']
+        del store
+        return out
+
+    def test_confirmation_arm_null(self, pipeline):
+        st = pipeline['stats']
+        assert st['t_newey_west'] == pytest.approx(-2.51, abs=0.02)
+        assert st['sharpe'] == pytest.approx(-0.700, abs=0.005)
+        assert st['n'] == 2861 and st['nw_lag'] == 8
+
+    def test_cost_curve(self, pipeline):
+        assert pipeline['curve'][0.0] == pytest.approx(-2.40, abs=0.02)
+        assert pipeline['curve'][0.2] == pytest.approx(-2.44, abs=0.02)
+        assert pipeline['curve'][1.0] == pytest.approx(-2.62, abs=0.02)
+
+    def test_winner_axes(self, pipeline):
+        rec_a = pipeline['rec_a']
+        assert len(rec_a) == 23
+        axes = _axis_counts(rec_a)
+        assert axes['dte'] == {45: 20, 30: 2, 21: 1}
+        assert axes['sd'] == {0.2: 9, 0.25: 14}
+        assert axes['exit'] == {'hold': 18, 'target75': 2, 'stop3x': 3}
+        assert _reasons(rec_a) == {'target': 8, 'stop': 6}
+
+    def test_arm_b_and_c2(self, pipeline):
+        b = pipeline['b']
+        assert b['net'] == pytest.approx(55_140.73, abs=5.0)
+        assert b['interest'] == pytest.approx(51_799.82, abs=5.0)
+        assert b['win_rate'] == pytest.approx(80.2, abs=0.1)
+        assert b['n_spreads'] == 114
+        assert pipeline['c2_t'] == pytest.approx(-2.52, abs=0.02)
