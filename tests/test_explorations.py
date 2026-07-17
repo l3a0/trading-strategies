@@ -26,6 +26,8 @@ import numpy as np
 import pytest
 
 from search.explorations import (
+    random_entry_scout,
+    random_entry_selector,
     SCOUT_TICKERS,
     _ann_vol,
     _d_a,
@@ -41,6 +43,7 @@ from test_real_cc_backtest import (
     _HAVE_DAILIES,
     _HAVE_MSFT_DAILIES,
     _HAVE_SPY_DAILIES,
+    _SPY_DAILIES,
 )
 
 _HAVE_ALL = _HAVE_MSFT_DAILIES and _HAVE_DAILIES and _HAVE_SPY_DAILIES
@@ -238,3 +241,184 @@ class TestIvRichnessScout:
         assert iv['mean_trailing_rv_rich'] == pytest.approx(0.1455, abs=0.002)
         assert iv['mean_trailing_rv_not'] == pytest.approx(0.2333, abs=0.002)
         assert iv['mean_trailing_rv_rich'] < iv['mean_trailing_rv_not']
+
+
+def _jitter_scenario(n_days: int, first: str = '2021-01-04',
+                     skip_chain: set[int] | None = None,
+                     bid: float = 1.0):
+    """A minimal one-strike synthetic market for the Gap F selector: every
+    chain day offers one 30-DTE 0.25-delta call candidate; `skip_chain`
+    indices get NO chain (the day never invokes the selector). The candidate
+    tuple order is load_chain_store's: (dte, delta, bid, ask, mid,
+    expiration, strike, contractID)."""
+    from datetime import date as _date, timedelta
+    d0 = _date.fromisoformat(first)
+    dates = [(d0 + timedelta(days=i)).isoformat() for i in range(n_days)]
+    exp = dates[-1]
+    store: dict[str, dict] = {}
+    for i, d in enumerate(dates):
+        if skip_chain and i in skip_chain:
+            continue
+        cand = (30, 0.25, bid, bid + 0.1, bid + 0.05, exp, 100.0, 'C1')
+        store[d] = {'candidates': [cand],
+                    'marks': {'C1': (bid, bid + 0.1, bid + 0.05, 0.25)}}
+    return dates, [100.0] * n_days, store
+
+
+def _run_jitter(dates, prices, store, select):
+    from realchains.vol_premium import STRUCTURE_SPECS, run_real_structure_overlay
+    spec = STRUCTURE_SPECS['short_vol']
+    return run_real_structure_overlay(
+        dates, prices, store,
+        {'target_delta': 0.25, 'dte': 30, 'capital': 100_000,
+         'risk_free_rate': 0.0, 'hedge_cost_bps': 0.0},
+        select=select, entry_guard=spec['entry_guard'],
+        hedge_mode=spec['hedge_mode'], management=spec['management'])
+
+
+class TestRandomEntryMechanics:
+    """Always-run synthetic layer for the Gap F jitter selector
+    (docs/van_tharp_gap_f.md) — the k=0 anchor, chain-day counting,
+    per-stretch redraws, delegation, and the emission-keyed desync
+    convention, all on crafted days."""
+
+    def test_k0_reproduces_baseline_trade_for_trade(self) -> None:
+        """k=0 => J=0 always: the career IS the deterministic baseline."""
+        from realchains.vol_premium import STRUCTURE_SPECS
+        dates, prices, store = _jitter_scenario(12)
+        s_base, t_base, eq_base = _run_jitter(dates, prices, store,
+                                              STRUCTURE_SPECS['short_vol']['select'])
+        s_rand, t_rand, eq_rand = _run_jitter(dates, prices, store,
+                                              random_entry_selector(seed=1, k=0))
+        assert t_rand == t_base
+        assert eq_rand.equals(eq_base)
+
+    def test_wait_is_chain_day_counted(self) -> None:
+        """A career whose first draw is J=2 enters on its third flat CHAIN
+        day; a chainless day mid-wait consumes none of the wait."""
+        seed = next(s for s in range(1000)
+                    if __import__('random').Random(s).randint(0, 10) == 2)
+        # chainless day at index 1: the wait must stretch one calendar day longer.
+        dates, prices, store = _jitter_scenario(12, skip_chain={1})
+        _, trades, _ = _run_jitter(dates, prices, store,
+                                   random_entry_selector(seed=seed, k=10))
+        # chain days are indices 0,2,3,...; J=2 burns 0 and 2; entry on index 3.
+        assert trades[0]['action'] == 'enter'
+        assert trades[0]['date'] == dates[3]
+
+    def test_new_stretch_draws_new_j_and_seed_determinism(self) -> None:
+        """Same-seed engine determinism (the career reproduces exactly), and
+        the career RNG's first two draws differ — the per-stretch redraw the
+        guard-rejection test exercises through the engine itself."""
+        rng_probe = __import__('random').Random
+        # pick a seed whose first two draws differ
+        seed = next(s for s in range(1000)
+                    if (lambda r: r.randint(0, 5) != r.randint(0, 5))(rng_probe(s)))
+        dates, prices, store = _jitter_scenario(10, first='2021-02-01')
+        run1 = _run_jitter(dates, prices, store, random_entry_selector(seed=seed, k=5))
+        run2 = _run_jitter(dates, prices, store, random_entry_selector(seed=seed, k=5))
+        assert run1[1] == run2[1]                       # same seed, same trades
+        r = rng_probe(seed)
+        j1, j2 = r.randint(0, 5), r.randint(0, 5)
+        assert j1 != j2                                 # the career's two draws differ
+
+    def test_post_wait_pick_equals_baseline_pick(self) -> None:
+        """After the wait expires the emitted leg equals the baseline
+        selector's leg field for field (delegation, not reimplementation)."""
+        from realchains.vol_premium import STRUCTURE_SPECS
+        dates, prices, store = _jitter_scenario(8)
+        params = {'target_delta': 0.25, 'dte': 30, 'fill': 'bid_ask'}
+        day = store[dates[0]]
+        base_leg = STRUCTURE_SPECS['short_vol']['select'](day, params)
+        sel = random_entry_selector(seed=1, k=0)
+        assert sel(day, params) == base_leg
+
+    def test_guard_rejected_emission_rearms(self) -> None:
+        """The emission-keyed desync convention, pinned synthetically: a
+        sub-penny-bid day makes the guard reject the emission, and the
+        closure re-arms a fresh J for the same engine-side stretch."""
+        rng_probe = __import__('random').Random
+        # seed whose draws are J1=0 then J2>=1: emission day 0 (rejected),
+        # re-armed wait pushes the real entry past day 1.
+        seed = next(s for s in range(1000)
+                    if (lambda r: r.randint(0, 3) == 0 and r.randint(0, 3) >= 1)(
+                        rng_probe(s)))
+        dates, prices, store = _jitter_scenario(10, bid=0.005)   # sub-penny: entry_net < 0
+        # make later days quotable so the career can eventually enter
+        good = _jitter_scenario(10)[2]
+        for d in dates[2:]:
+            store[d] = good[d]
+        _, trades, _ = _run_jitter(dates, prices, store,
+                                   random_entry_selector(seed=seed, k=3))
+        r = rng_probe(seed)
+        j1, j2 = r.randint(0, 3), r.randint(0, 3)
+        assert j1 == 0 and j2 >= 1
+        # emission on day 0 rejected by the guard; fresh J2 burns chain days
+        # 1..j2; first possible entry index is 1 + j2 (and >= 2 where quotes turn sane).
+        first_enter = next(t for t in trades if t['action'] == 'enter')
+        assert first_enter['date'] == dates[max(1 + j2, 2)]
+
+    def test_post_wait_band_empty_day_spends_no_redraw(self) -> None:
+        """Spec bullet 5: a post-wait day whose only candidate is out of band
+        yields None with the wait already spent — no redraw (exactly one RNG
+        draw consumed), and entry lands on the first in-band day after it."""
+        seed = next(s for s in range(1000)
+                    if __import__('random').Random(s).randint(0, 10) == 1)
+        dates, prices, store = _jitter_scenario(10)
+        exp = dates[-1]
+        # days 1-2: only an OUT-OF-BAND candidate (delta 0.02) — band-empty
+        for d in (dates[1], dates[2]):
+            store[d] = {'candidates': [(30, 0.02, 1.0, 1.1, 1.05, exp, 100.0, 'C1')],
+                        'marks': {'C1': (1.0, 1.1, 1.05, 0.02)}}
+        _, trades, _ = _run_jitter(dates, prices, store,
+                                   random_entry_selector(seed=seed, k=10))
+        # J=1 burns day 0; days 1-2 delegate to a band-empty None (wait spent,
+        # no redraw); entry on day 3, the first in-band day.
+        assert trades[0]['action'] == 'enter'
+        assert trades[0]['date'] == dates[3]
+
+
+@pytest.mark.skipif(not _HAVE_SPY_DAILIES,
+                    reason='needs spy_option_dailies.csv or its .gz twin')
+class TestRandomEntryScout:
+    """Experiment 2's pinned verdict (docs/van_tharp_gap_f.md). No envelope
+    exclusion on either metric — no entry-skill claim in either direction.
+    The two locates, both pinned: on raw per-cycle expectancy_r the baseline
+    sits at the 5th percentile of its own band (worse than 19/20 jittered
+    careers; the band spans -0.58R..-0.03R, so the raw option-cycle number
+    is PLACEMENT-FRAGILE); on the hedged NW t it sits inside at the 85th
+    (2.54 in a 0.98..3.58 band) — the premium isolator is placement-robust.
+    The low expectancy locate is recorded WITHOUT a mechanism story (the
+    pre-stated cooldown-texture mechanism predicted the opposite tail and
+    is thereby not supported). EXPLORATORY — a locate, not significance;
+    per-trade / per-day units only. Pre-committed: N=20, K=10,
+    RANDOM_ENTRY_SEED=20260714."""
+
+    @pytest.fixture(scope='class')
+    def scout(self):
+        from realchains.real_cc_backtest import (
+            REGISTERED_CLEAN_START,
+            load_chain_store,
+            load_unadjusted_prices,
+        )
+        store = load_chain_store(_SPY_DAILIES, start=REGISTERED_CLEAN_START['SPY'])
+        days = sorted(store)
+        dates, prices = load_unadjusted_prices('SPY', days[0], '2026-06-06')
+        pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
+        return random_entry_scout([d for d, _ in pairs], [p for _, p in pairs], store)
+
+    def test_baseline_reproduced(self, scout) -> None:
+        """The harness re-derives the published pins before any percentile."""
+        assert scout['baseline']['n'] == 174
+        assert scout['baseline']['expectancy_r'] == pytest.approx(-0.5407, abs=0.005)
+        assert scout['baseline']['nw_t'] == pytest.approx(2.54, abs=0.01)
+
+    def test_ensemble_and_percentiles(self, scout) -> None:
+        assert scout['ensemble_expectancy']['mean'] == pytest.approx(-0.2711, abs=0.005)
+        assert scout['ensemble_expectancy']['min'] == pytest.approx(-0.5768, abs=0.005)
+        assert scout['ensemble_expectancy']['max'] == pytest.approx(-0.0313, abs=0.005)
+        assert scout['career_n_range'] == [141, 147]
+        assert scout['baseline_pct_expectancy'] == pytest.approx(0.05, abs=0.01)
+        assert scout['baseline_pct_nw_t'] == pytest.approx(0.85, abs=0.01)
+        assert scout['ensemble_nw_t']['min'] == pytest.approx(0.98, abs=0.02)
+        assert scout['ensemble_nw_t']['max'] == pytest.approx(3.58, abs=0.02)

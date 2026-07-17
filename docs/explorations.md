@@ -5,7 +5,7 @@ ideas that were measured and rejected, kept so they aren't re-explored from
 scratch.
 
 **Read this first — what these are and aren't.** Most entries are
-*exploratory scouts*; the last is a real-chain *robustness check* on a
+*exploratory scouts*; one is a real-chain *robustness check* on a
 published refinement. Neither is a registered experiment. Each runs on data
 that has already been used, so it **spends the sample**: it can only *kill* an
 idea or *justify* taking it to a pre-registration. It is never itself a
@@ -215,6 +215,43 @@ game: the improved stop numbers are exploratory, convention-flattered (daily-clo
 stop-market, all-legs-quoted triggers under-fire), and sit on a sample the
 baseline already spent. Any promotion runs through the design's E3 gate — a
 human-signed grammar widening and a registered cell — never from this entry.
+
+---
+
+## Random entry-day jitter on the SPY short vol — MEASURED, no exclusion (2026-07-14)
+
+**The idea.** Experiment 2 of the Van Tharp test plan
+([van_tharp_gap_f.md](van_tharp_gap_f.md)): Tharp's random-entry thesis, mapped to the timing axis this
+engine actually has. Replace the deterministic enter-immediately-when-flat cadence with a random wait
+(`J ~ uniform{0..10}` chain-days per flat stretch), keep the strike rule, hedge, exits, and sizing
+fixed, and locate the pinned delta-targeted baseline inside its own 20-career random band.
+
+**How it was tested.** `random_entry_scout` — 20 pre-committed seeded careers
+(`RANDOM_ENTRY_SEED = 20260714 + i`) plus a baseline re-run through the same harness, each career the
+short_vol spec verbatim with only the selector swapped (zero engine changes: the jitter is a stateful
+closure through the existing `select=` seam, delegating the pick to the baseline selector itself).
+Measured through the Gap A ledger (per-trade `expectancy_r` primary) and `short_vol_statistics` (hedged
+NW t, secondary — jittered careers hold more flat days, a mechanical dilution). All pinned in
+`TestRandomEntryScout`; the selector mechanics, including the k=0 baseline-identity anchor and the
+emission-keyed desync convention, in `TestRandomEntryMechanics`.
+
+**The verdict — no envelope exclusion, two locates.** The prior said the baseline sits inside the band,
+with the cooldown texture naming a possible upper-tail mechanism. Neither exclusion happened, and the
+named mechanism is not supported: on raw per-cycle `expectancy_r` the baseline (−0.5407R) sits at the
+**5th percentile** — worse than 19 of 20 jittered careers, the opposite tail — while the hedged NW t
+(+2.54) sits inside at the **85th** (band 0.98–3.58). The informative fact is the band itself: the same
+strategy at date-shifted entries spans −0.58R to −0.03R per cycle on the raw option-cycle basis
+(placement-fragile), while the hedged premium measure stays in a band containing the baseline
+(placement-robust). Career trade counts 141–147 vs the baseline's 174.
+
+**The trap for the future.** Do not read the 5th-percentile locate as "jitter improves the strategy."
+The raw option-cycle basis excludes the hedge (the covered-call lesson in reverse); on the hedged basis
+the baseline is unremarkable inside its band; a 20-career locate carries no significance; and no
+mechanism is on record — the one pre-stated mechanism predicted the opposite tail. Any
+entry-timing idea built on this locate is a new exploratory scout under the usual rails, and the
+placement-fragility of raw per-cycle expectancy is itself the reusable lesson: per-cycle raw numbers on
+this overlay move materially with entry-calendar placement, so treat any single career's raw expectancy
+as one draw from a wide band.
 
 ---
 

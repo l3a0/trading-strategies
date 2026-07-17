@@ -43,6 +43,7 @@ from common.paths import data_path
 
 import csv
 import json
+import random
 from datetime import datetime
 from typing import Any, Sequence
 
@@ -73,6 +74,16 @@ COOLDOWN_HORIZONS = (7, 14, 21, 30, 45, 60, 90, 120, 180)  # calendar days
 FORWARD_HORIZONS = (21, 30, 45, 60, 90, 120)               # trading days
 PERMUTATION_SEED = 20260613
 PERMUTATION_DRAWS = 1000
+
+# Gap F / Experiment 2 knobs (docs/van_tharp_gap_f.md). RANDOM_ENTRY_SEED
+# follows the design-date convention (PERMUTATION_SEED above). The selector's
+# own RNG is stdlib random.Random — the engine-adjacent precedent
+# (monte_carlo_shuffle, common/position_sizing.py) — unlike the scouts'
+# numpy default_rng: it rides the engine's select= seam, and the draw is a
+# single uniform integer per flat stretch.
+RANDOM_ENTRY_SEED = 20260714
+RANDOM_ENTRY_CAREERS = 20    # pre-committed ensemble size
+RANDOM_ENTRY_K = 10          # J ~ uniform{0..K} chain-days per flat stretch
 TERMINAL_ACTIONS = ('close', 'close_itm', 'expiration')
 
 # IV-richness scout knobs.
@@ -350,6 +361,116 @@ def iv_richness_scout(runs: Sequence[dict[str, Any]]) -> dict[str, Any]:
         # markets, where covered calls do better regardless of any premium.
         'mean_trailing_rv_rich': round(float(trail[rich].mean()), 4),
         'mean_trailing_rv_not': round(float(trail[~rich].mean()), 4),
+    }
+
+
+def random_entry_selector(seed: int, k: int = RANDOM_ENTRY_K):
+    """Gap F (docs/van_tharp_gap_f.md): a STATEFUL ``select(day, params)`` for
+    the structure engine — wait ``J ~ uniform{0..k}`` chain-days at the start
+    of each flat stretch, then delegate the pick to the short_vol baseline
+    selector (``STRUCTURE_SPECS['short_vol']['select']``, the same callable
+    the pinned runs bind), so the strike choice is byte-identical to the
+    baseline's for the same day and only the entry calendar moves.
+
+    Statefulness is EMISSION-KEYED: the closure cannot observe the engine's
+    entry guard, so a new stretch (and a fresh ``J``) begins after each
+    non-``None`` emission. A guard-rejected emission therefore re-arms a
+    fresh ``J`` for the same engine-side flat stretch — a bounded,
+    seed-deterministic desync the entry band makes unreachable on real
+    chains (a penny bid clears the $0.0065 commission; only a sub-penny bid
+    could trip the guard) — pinned synthetically. The wait is counted in
+    CHAIN-days: the engine invokes the selector only on flat days that have
+    a chain, so a chainless calendar day consumes none of it. A post-wait
+    band-empty day returns ``None`` with the wait already spent.
+    """
+    from realchains.vol_premium import STRUCTURE_SPECS
+    baseline = STRUCTURE_SPECS['short_vol']['select']
+    rng = random.Random(seed)
+    state = {'j': -1, 'waited': 0}          # j == -1 -> draw at next invocation
+
+    def select(day: dict[str, Any], params: dict[str, Any]) -> list[dict[str, Any]] | None:
+        if state['j'] < 0:                  # stretch start
+            state['j'] = rng.randint(0, k)
+            state['waited'] = 0
+        if state['waited'] < state['j']:
+            state['waited'] += 1
+            return None
+        picked = baseline(day, params)
+        if picked is not None:
+            state['j'] = -1                 # emission ends the stretch
+        return picked
+
+    return select
+
+
+def random_entry_scout(
+    dates: list[str],
+    prices: list[float],
+    store: dict[str, dict[str, Any]],
+    *,
+    n_careers: int = RANDOM_ENTRY_CAREERS,
+    k: int = RANDOM_ENTRY_K,
+    seed: int = RANDOM_ENTRY_SEED,
+) -> dict[str, Any]:
+    """Experiment 2 (docs/van_tharp_gap_f.md): N jittered careers against the
+    delta-targeted baseline on the SAME market — the ensemble null for the
+    engine's deterministic enter-immediately cadence. EXPLORATORY:
+    sample-spending, kill-or-justify, never a registered verdict.
+
+    Every career runs the short_vol spec's non-select knobs verbatim, so the
+    selector is the only coordinate that moves. The verdict statistic is the
+    baseline's percentile inside its own random band, count(career <=
+    baseline)/N — ``expectancy_r`` primary; the hedged NW t secondary and
+    descriptive (jittered careers hold more flat days, a mechanical
+    dilution). Per-trade / per-day units only — jittered careers trade fewer
+    cycles by design, so cumulative dollars would smuggle in the
+    abstinence confound the cooldown entry documents.
+    """
+    from common.trade_ledger import build_trade_ledger, ledger_statistics
+    from realchains.vol_premium import (
+        STRUCTURE_SPECS,
+        run_real_structure_overlay,
+        short_vol_statistics,
+    )
+    spec = STRUCTURE_SPECS['short_vol']
+    params = {'target_delta': 0.25, 'dte': 30, 'capital': 100_000,
+              'risk_free_rate': 0.045, 'hedge_cost_bps': 0.0}
+
+    def career(select: Any) -> dict[str, Any]:
+        s, trades, eq = run_real_structure_overlay(
+            dates, prices, store, dict(params), select=select,
+            entry_guard=spec['entry_guard'], hedge_mode=spec['hedge_mode'],
+            management=spec['management'])
+        led = build_trade_ledger(trades, strategy='short_vol', ticker='SPY',
+                                 shares=100 * s['num_contracts'],
+                                 risk_basis='premium_collected')
+        st = ledger_statistics(led)
+        nw = short_vol_statistics(eq, s['capital'], rf=params['risk_free_rate'])
+        return {'n': st['n'], 'expectancy_r': st['expectancy_r'],
+                'win_rate': st['win_rate'],
+                'worst_mae_r': st['mae_r_distribution']['worst'],
+                'nw_t': nw['t_stat_newey_west']}
+
+    base = career(spec['select'])
+    careers = []
+    for i in range(n_careers):
+        row = career(random_entry_selector(seed + i, k))
+        row['seed'] = seed + i
+        careers.append(row)
+    exps = [r['expectancy_r'] for r in careers]
+    nws = [r['nw_t'] for r in careers]
+    return {
+        'k': k, 'n_careers': n_careers, 'seed': seed,
+        'baseline': base,
+        'careers': careers,
+        'ensemble_expectancy': {'mean': round(sum(exps) / len(exps), 4),
+                                'min': min(exps), 'max': max(exps)},
+        'ensemble_nw_t': {'min': round(min(nws), 2), 'max': round(max(nws), 2)},
+        'career_n_range': [min(r['n'] for r in careers), max(r['n'] for r in careers)],
+        'baseline_pct_expectancy': round(
+            sum(1 for e in exps if e <= base['expectancy_r']) / len(exps), 2),
+        'baseline_pct_nw_t': round(
+            sum(1 for t in nws if t <= base['nw_t']) / len(nws), 2),
     }
 
 
