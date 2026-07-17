@@ -44,10 +44,12 @@ hold-to-expiry exits*: the campaign's committed cell (30 DTE / 0.25Δ short /
 0.10Δ wing, hedged NW t **−0.91**) and a menu-walker cell (45 DTE / 0.30Δ /
 0.10Δ, **+0.05**). Neither searched the parameter lattice, and neither touched
 the Gap E exit seams — which on the naked short vol *did* materially reshape
-risk (stop 2×: worst MAE −11.41R → −3.12R) without flipping any sign. The open
-question this design closes: **can honest out-of-sample parameter-and-exit
-selection find a corner of the committed lattice with a real edge, or is the
-campaign's kill robust to optimization?** Either answer settles a question the
+risk (stop 2×: worst MAE −11.41R → −3.12R) without flipping any sign. Both
+prior cells were also wide-wing (0.10Δ); this design's lattice deliberately
+re-ties the wing to the short (§3.1), so its narrow-spread cells are
+unmeasured territory. The open question this design closes: **can honest
+out-of-sample parameter-and-exit selection find a corner of its pre-specified
+lattice with a real edge, or is the campaign's kill robust to optimization?** Either answer settles a question the
 one-cell measurements could not.
 
 ---
@@ -100,7 +102,7 @@ An unhedged put-credit-spread program's raw P&L decomposes as:
 ```text
 raw P&L = interest on cash (rf)
         + equity exposure (the spread's net positive delta: short_delta - wing_delta,
-          +0.10 to +0.25 across the lattice, +0.15 at the committed cell)
+          +0.05 by construction for every lattice cell)
         + the carry/vol residual (what selling the spread adds beyond the first two)
 ```
 
@@ -124,7 +126,7 @@ lag, one-sided) is **greater than 2**, net of the §3.4 frictions.
 
 A §8 pass earns *carry-premium mechanism* language ("the put spread harvests a
 premium") only if both of the following also hold: (a) the fixed-defaults
-anchor (§4, arm C2 — the committed cell forced through the identical
+anchor (§4, arm C2 — the lattice's central cell forced through the identical
 window-restart-and-stitch machinery as arm A, so the two differ only in
 selection) has a positive stitched-OOS hedged-excess t, and (b) the
 per-window winning `short_delta` is modal — the same value in at least 12 of
@@ -165,21 +167,35 @@ both wings exist in `iwm_option_dailies.csv`, and IWM has never run a spread.
 
 ## 3. Strategy space and frozen conventions
 
-### 3.1 Entry lattice (18 cells, frozen — the committed grammar values)
-
-Exactly the `ALLOWED_GRID` credit-spread lattice, unchanged:
+### 3.1 Entry lattice (9 cells, frozen)
 
 | Axis | Values |
 |---|---|
 | `dte` (calendar days) | 21, 30, 45 |
 | `short_delta` | 0.20, 0.25, 0.30 |
-| `wing_delta` | 0.05, 0.10 |
+| `wing_delta` | `short_delta − 0.05`, derived (0.15, 0.20, 0.25) |
 
-Selection per `select_credit_spread`: short = `select_put_entry`'s band
-(`bid > 0`, −0.60 < δ < −0.05), nearest-DTE expiration, nearest-|δ| put; wing =
-same expiration, strike strictly below the short, buyable ask, nearest-|δ|.
-Entry guard `net_positive` (credit after commissions > 0). Re-entry on the next
-chain day after a cycle terminates (the engine's one-day-minimum gap).
+The wing is **tied to the short, not a free axis** — a deliberate departure
+from the campaign grammar's independent {0.05, 0.10} wing menu (both prior
+SPY cells were wide-wing 0.10Δ, so these narrow cells are unmeasured
+territory for the family). Three consequences, named now. First, every
+cell's entry net delta is **+0.05 by construction**, so `short_delta`
+selects *where on the skew* the spread sits rather than how much direction
+it takes — the direction axis is flattened out of the lattice instead of
+varying across it. Second, with the legs only 5Δ apart the IV gap and net
+vega between them are small: the structure is a narrow, nearly-flat
+defined-risk carry position (the §1 `long_rich` note is the *wide-wing*
+campaign cell's engine-verified signature; these cells sit closer to
+skew-flat). Third, narrowness worsens the friction ratio — the four
+commission legs are fixed while the net credit shrinks with the width — a
+cost §9 carries.
+
+Selection per `select_credit_spread` with `wing_delta = short_delta − 0.05`
+passed as the wing target: short = `select_put_entry`'s band (`bid > 0`,
+−0.60 < δ < −0.05), nearest-DTE expiration, nearest-|δ| put; wing = same
+expiration, strike strictly below the short, buyable ask, nearest-|δ|.
+Entry guard `net_positive` (credit after commissions > 0). Re-entry on the
+next chain day after a cycle terminates (the engine's one-day-minimum gap).
 
 ### 3.2 Exit lattice (7 variants, frozen — the Gap E seams)
 
@@ -244,18 +260,18 @@ store and is foreclosed here).
 
 ### 3.5 The joint lattice, counted
 
-18 entry × 7 exit = 126, minus the 6 invalid (21-DTE entry × `dte21` exit)
-= **120 valid cells** per training window. The count is fixed here so the
+9 entry × 7 exit = 63, minus the 3 invalid (21-DTE entry × `dte21` exit)
+= **60 valid cells** per training window. The count is fixed here so the
 hypothesis space is finite and pre-specified — the same closed-grammar
 discipline the campaign enforces, applied to a registered experiment. The
-walk-forward selects among the 120 in sample; **no cell is individually
+walk-forward selects among the 60 in sample; **no cell is individually
 tested** (§7.4).
 
 ---
 
 ## 4. Arms
 
-1. **A — verdict arm (hedged).** The §5 walk-forward on the 120-cell lattice,
+1. **A — verdict arm (hedged).** The §5 walk-forward on the 60-cell lattice,
    `combined` hedge, 0.5 bp. The §2.2 statistic lives here and only here.
 2. **B — retail arm (unhedged).** The identical walk-forward selections
    replayed with the hedge off (`hedge_mode='none'`, §10): raw equity curve,
@@ -270,10 +286,11 @@ tested** (§7.4).
    any other number is read. Note the span: the −0.91 was *not* measured on
    the §3.3 span, so the alarm reproduces it where it lives; the \~137 extra
    lead-in days are put-less rf-only days.
-4. **C2 — fixed-defaults anchor.** The committed cell forced through the
-   §5 machinery as the winner of *every* test window — same restarts, same
-   stitching, same statistic as arm A, differing only in that no selection
-   occurs. Its stitched-OOS t feeds the §2.3 mechanism clause and is the
+4. **C2 — fixed-defaults anchor.** The lattice's central cell (30 / 0.25Δ
+   short / 0.20Δ wing — deliberately *not* the campaign's wide-wing cell,
+   whose reproduction is C1's job) forced through the §5 machinery as the
+   winner of *every* test window — same restarts, same stitching, same
+   statistic as arm A, differing only in that no selection occurs. Its stitched-OOS t feeds the §2.3 mechanism clause and is the
    selection-vs-defaults comparator. It carries no reproduction requirement
    (it is a new number on a new construction). Run hedged and unhedged.
 5. **D — IWM confirmation.** The identical §5–§6 pipeline on IWM, run
@@ -297,7 +314,7 @@ tested** (§7.4).
 
 ### 5.1 Walk-forward, not full-span search
 
-A full-span grid search over 120 cells with a reported best is 120 hypotheses
+A full-span grid search over 60 cells with a reported best is 60 hypotheses
 wearing one t-statistic — the exact fork the campaign's FDR machinery exists
 to control, re-created by hand. The registered alternative is walk-forward:
 parameters are chosen only from data that precedes their use, the choice is
@@ -398,7 +415,7 @@ then tune exits, or vice versa) is two searches wearing one accounting — the
 order of the stages is itself a fork, and the interaction the practitioner
 lore cares about (wider wings want wider stops; 45-DTE entries want the 21-DTE
 time exit) is exactly what a staged search cannot see. The price of the joint
-design is the larger lattice (120 vs 18), which §5.2's trade floor and §7.4's
+design is the larger lattice (60 vs 9), which §5.2's trade floor and §7.4's
 single-verdict rule absorb.
 
 ### 6.2 The pre-stated expectation (from Experiment 4)
@@ -421,9 +438,10 @@ pipeline; exits earn their place only by improving the *selected* stream out
 of sample. Three exit-specific diagnostics are reported: the exit-reason
 composition of the OOS trade ledger (`target` / `stop` / `time` counts — the
 engine's frozen taxonomy); the **entry-only ablation** (the pipeline
-restricted to the 18 hold cells — parameters optimized, exits off); and the
+restricted to the 9 hold cells — parameters optimized, exits off); and the
 **exit-only ablation** (the pipeline restricted to the 7 exit variants at the
-committed 30 / 0.25Δ / 0.10Δ entry — exits optimized, parameters fixed).
+central 30 / 0.25Δ / 0.20Δ-wing entry, arm C2's cell — exits optimized,
+parameters fixed).
 Together with the primary the three runs answer the question of record's
 three axes — entry, exit, joint — each through the same window arithmetic,
 each reported beside the primary, none promotable over it.
@@ -460,7 +478,8 @@ risk-free rate plus its own equity delta.** Equivalently: E[daily hedged
 excess] ≤ 0. Two tempting nulls are rejected ex ante:
 
 - *"Mean strategy return = 0"* is wrong because an unhedged spread seller
-  collects rf on \~$100K of cash plus \~+0.1–0.2 delta of equity premium —
+  collects rf on \~$100K of cash plus +0.05 delta of equity premium (uniform
+  across the lattice by construction, §3.1) —
   both positive in expectation over this span and both available without
   touching an option. Under that null the strategy "works" before the options
   add anything; the registered put wing's $150,666-of-$155,853 interest share
@@ -502,7 +521,7 @@ the §7.3 block-bootstrap companion are reported beside it.
 ### 7.4 Multiplicity accounting (stated, not hand-waved)
 
 This registration runs **one test**: the pre-committed pipeline's single OOS
-statistic (plus arm D's one confirmation statistic on IWM). The 120-cell
+statistic (plus arm D's one confirmation statistic on IWM). The 60-cell
 lattice is selection machinery *inside* the pipeline — cells are never
 individually judged, so no per-cell FDR spend occurs and nothing enters the
 e-LOND ledger (this is a manual registered experiment in the trend-gate /
@@ -553,9 +572,12 @@ quantization (`num_contracts = capital // (100 × price)`) deploys roughly
 stream is deliberately heteroskedastic across windows (the HAC variance
 absorbs this for validity) and the MDE above — quoted on the $100K base — is
 optimistic in fully-deployed units; per-window deployed notional is reported
-in the winner table. The modal expected outcome, given §1's priors: arm B's
-raw curve positive and seductive, the verdict t ≤ 0, row 4 language
-published.
+in the winner table. The narrow wings (§3.1) compound the friction problem:
+the per-leg commissions are fixed while the net credit shrinks with the
+5Δ width, so the cost share of any gross edge is structurally higher here
+than in the wide-wing campaign cell. The modal expected outcome, given §1's
+priors: arm B's raw curve positive and seductive, the verdict t ≤ 0, row 4
+language published.
 The registration exists so that sentence gets written even when a more
 exciting one is available.
 
@@ -567,7 +589,8 @@ exciting one is available.
   `walk_forward_structure` driver (the `walk_forward_real` window arithmetic
   around `run_structure_via_spec('credit_spread', …)`), the exit knobs passed
   through `params` (they are engine params, not grammar coordinates — the
-  campaign's `_validate_grammar` rightly rejects them, which is why this is a
+  campaign's `_validate_grammar` rightly rejects them — and the derived wing
+  values are off the campaign grammar's menu; both are why this is a
   registered experiment and not a campaign batch); and, for arm B, a
   spec-override switch letting the `credit_spread` spec run at the engine's
   *existing* `hedge_mode='none'` (the iron condor's committed setting —
@@ -584,7 +607,7 @@ exciting one is available.
   land in a separate PR citing this registration's merge commit (not any
   later amendment commit) and the analysis-code commit; the §8 row is
   published verbatim.
-- **Compute note:** \~120 cells × \~23 windows × (train + test) engine runs per
+- **Compute note:** \~60 cells × \~23 windows × (train + test) engine runs per
   arm is the expensive object (\~thousands of overlay runs). The one-store
   memory budget (`portfolio_scout` precedent) and per-ticker sequential
   loading apply; a cached per-cell cycle index inside a window is an
