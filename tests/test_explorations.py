@@ -26,6 +26,7 @@ import numpy as np
 import pytest
 
 from search.explorations import (
+    portfolio_scout,
     random_entry_scout,
     random_entry_selector,
     SCOUT_TICKERS,
@@ -422,3 +423,181 @@ class TestRandomEntryScout:
         assert scout['baseline_pct_nw_t'] == pytest.approx(0.85, abs=0.01)
         assert scout['ensemble_nw_t']['min'] == pytest.approx(0.98, abs=0.02)
         assert scout['ensemble_nw_t']['max'] == pytest.approx(3.58, abs=0.02)
+
+
+def _mini_stream(dates: list[str], equities: list[float],
+                 rf_credits: list[float] | None = None):
+    """A minimal daily_equity DataFrame in the engines' schema."""
+    import pandas as pd
+    data: dict = {'date': dates, 'equity': equities,
+                  'price': [100.0] * len(dates)}
+    if rf_credits is not None:
+        data['rf_credit'] = rf_credits
+    return pd.DataFrame(data)
+
+
+class TestPortfolioMechanics:
+    """Always-run synthetic layer for the Gap G harness
+    (docs/van_tharp_gap_g.md, common/portfolio.py) — alignment, the rf
+    switch, correlation exactness, combination arithmetic, and the
+    drawdown-subadditivity fixture, all hand-computable."""
+
+    D = ['2021-01-04', '2021-01-05', '2021-01-06', '2021-01-07', '2021-01-08']
+
+    def test_alignment_inner_join_and_missing_day(self) -> None:
+        """Mismatched spans join to their overlap; a leg-specific missing
+        day drops from the join (never interpolated)."""
+        from common.portfolio import align_streams
+        a = _mini_stream(self.D, [100_000, 100_100, 100_200, 100_300, 100_400])
+        b = _mini_stream(self.D[1:4], [100_000, 100_050, 100_150])   # shorter span
+        panel = align_streams({'a': a, 'b': b})
+        # b's diffs exist for 01-06 and 01-07 only -> the join is those two days.
+        assert list(panel.index) == self.D[2:4]
+        assert list(panel.columns) == ['a', 'b']
+        assert panel['a'].iloc[0] == pytest.approx(0.001)   # $100 on $100K
+        assert panel['b'].iloc[0] == pytest.approx(0.0005)
+
+    def test_rf_column_is_the_switch(self) -> None:
+        """A leg carrying rf_credit is netted with the off-by-one honored; a
+        leg without it passes through raw."""
+        from common.portfolio import align_streams
+        eq = [100_000, 100_110, 100_220]
+        rf = [0.0, 10.0, 10.0]     # $10 credited each later day
+        with_rf = _mini_stream(self.D[:3], eq, rf_credits=rf)
+        without = _mini_stream(self.D[:3], eq)
+        panel = align_streams({'net': with_rf, 'raw': without})
+        # raw diff $110/day; netted = (110 - 10)/100K = 0.001
+        assert panel['net'].iloc[0] == pytest.approx(0.001)
+        assert panel['raw'].iloc[0] == pytest.approx(0.0011)
+
+    def test_correlation_exactness(self) -> None:
+        """Crafted co-moving / anti-moving / orthogonal pairs measure
+        exactly +1, −1, and 0."""
+        from common.portfolio import align_streams, stream_correlations
+        base = [100_000, 100_100, 100_050, 100_200, 100_150]
+        co = _mini_stream(self.D, [100_000 + 2 * (e - 100_000) for e in base])
+        anti = _mini_stream(self.D, [100_000 - (e - 100_000) for e in base])
+        a = _mini_stream(self.D, base)
+        panel = align_streams({'a': a, 'co': co, 'anti': anti})
+        corr = stream_correlations(panel)
+        assert corr.loc['a', 'co'] == pytest.approx(1.0)
+        assert corr.loc['a', 'anti'] == pytest.approx(-1.0)
+        # orthogonal: +x then -x vs -x then +x over 4 diffs
+        o1 = _mini_stream(self.D, [100_000, 100_100, 100_000, 100_100, 100_000])
+        o2 = _mini_stream(self.D, [100_000, 100_100, 100_200, 100_100, 100_000])
+        panel2 = align_streams({'o1': o1, 'o2': o2})
+        assert stream_correlations(panel2).loc['o1', 'o2'] == pytest.approx(0.0, abs=1e-12)
+
+    def test_combination_arithmetic_and_weight_guard(self) -> None:
+        """A 50/50 combine reproduces hand arithmetic row for row; weights
+        must cover the legs and sum to 1."""
+        from common.portfolio import align_streams, combine_streams
+        a = _mini_stream(self.D[:3], [100_000, 100_500, 100_200])
+        b = _mini_stream(self.D[:3], [100_000, 99_700, 99_900])
+        panel = align_streams({'a': a, 'b': b})
+        combo = combine_streams(panel, {'a': 0.5, 'b': 0.5})
+        assert combo.iloc[0] == pytest.approx(0.5 * 0.005 + 0.5 * (-0.003))  # +0.001
+        assert combo.iloc[1] == pytest.approx(0.5 * (-0.003) + 0.5 * 0.002)
+        with pytest.raises(ValueError, match='sum to'):
+            combine_streams(panel, {'a': 0.6, 'b': 0.6})
+        with pytest.raises(ValueError, match='legs'):
+            combine_streams(panel, {'a': 1.0})
+
+    def test_drawdown_and_subadditivity_fixture(self) -> None:
+        """The V-shaped curve's max DD equals the hand-computed value, and
+        an anti-correlated pair's combined DD sits strictly below the
+        weighted average of leg DDs — the gap-size fixture."""
+        from common.portfolio import align_streams, combine_streams, max_drawdown_pct
+        # V shape: up to 102K, down to 98K, recover. Peak 102K -> trough 98K.
+        v = _mini_stream(self.D, [100_000, 102_000, 98_000, 99_000, 101_000])
+        panel_v = align_streams({'v': v})
+        assert max_drawdown_pct(panel_v['v']) == pytest.approx(
+            (102_000 - 98_000) / 102_000 * 100, abs=0.01)
+        # anti-correlated legs: each has a real DD; the 50/50 combo is flat.
+        a = _mini_stream(self.D, [100_000, 101_000, 99_000, 101_000, 99_000])
+        b = _mini_stream(self.D, [100_000, 99_000, 101_000, 99_000, 101_000])
+        panel = align_streams({'a': a, 'b': b})
+        combo = combine_streams(panel, {'a': 0.5, 'b': 0.5})
+        dd_a = max_drawdown_pct(panel['a'])
+        dd_b = max_drawdown_pct(panel['b'])
+        assert max_drawdown_pct(combo) == pytest.approx(0.0, abs=1e-9)
+        assert max_drawdown_pct(combo) < 0.5 * dd_a + 0.5 * dd_b
+
+
+_GAP_G_FILES = [
+    'spy_option_dailies.csv', 'qqq_option_dailies.csv',
+    'qqq_option_dailies_2011_2016.csv', 'msft_option_dailies.csv',
+    'msft_option_dailies_2008_2016.csv',
+]
+
+
+def _have_gap_g() -> bool:
+    import os
+    from common.paths import data_path
+    return all(os.path.exists(str(data_path(f))) or os.path.exists(str(data_path(f)) + '.gz')
+               for f in _GAP_G_FILES)
+
+
+@pytest.mark.skipif(not _have_gap_g(),
+                    reason='needs SPY/QQQ/MSFT dailies + era backfills (data-2026-06 release)')
+class TestPortfolioCombos:
+    """Experiment 6's pinned verdicts (docs/van_tharp_gap_g.md). EXPLORATORY
+    — descriptive, kill-or-justify; the scout's internal drift alarm asserts
+    every leg's published pin before any combo number is computed.
+
+    Combo A (noncorrelated systems, Loc 1932): the correlation came back LOW
+    (0.20 — the different-drivers construction held) but the dead leg earned
+    nothing: combined NW t 1.54 vs the better leg's common-span 2.47, and
+    the combined percent-of-peak DD (34.31%) sits ABOVE the 50/50 weighted
+    average (24.04%) — the dollar-space subadditivity did NOT survive the
+    percent transform, because the CC leg's compounding beta dominates the
+    book's later, larger peaks. Variance reduction did not earn the
+    negative-edge leg its place.
+
+    Combo B (independent markets, Loc 1929): SPY~QQQ correlation 0.656 (the
+    shared vol factor, as pre-stated), the MSFT pairs ~0.2; combined NW t
+    1.01 vs best-single 2.56 — the claim killed on this cross-section, with
+    the correlation and the one negative leg each costing as predicted. The
+    combined DD (19.53%) does sit under the weighted average (27.07%) here —
+    the subadditive gap is visible when no leg compounds a stock position —
+    but stays above the best single leg (6.94%).
+    """
+
+    @pytest.fixture(scope='class')
+    def scout(self):
+        return portfolio_scout()
+
+    def test_combo_a_systems_claim(self, scout) -> None:
+        a = scout['combo_a']
+        assert a['span'] == ['2016-04-12', '2026-04-10']
+        assert a['n_days'] == 2514
+        assert a['correlations']['spy_sv~msft_cc'] == pytest.approx(0.1975, abs=0.005)
+        assert a['legs']['spy_sv']['nw_t'] == pytest.approx(2.47, abs=0.02)
+        assert a['legs']['spy_sv']['max_dd_pct'] == pytest.approx(7.08, abs=0.05)
+        assert a['legs']['msft_cc']['nw_t'] == pytest.approx(1.43, abs=0.02)
+        assert a['legs']['msft_cc']['max_dd_pct'] == pytest.approx(40.99, abs=0.05)
+        assert a['combined']['nw_t'] == pytest.approx(1.54, abs=0.02)
+        assert a['combined']['max_dd_pct'] == pytest.approx(34.31, abs=0.05)
+        assert a['weighted_avg_leg_dd'] == pytest.approx(24.04, abs=0.05)
+        # the pre-stated what-counts, recorded as booleans:
+        assert a['combined']['nw_t'] < a['legs']['spy_sv']['nw_t']      # no improvement
+        assert a['combined']['max_dd_pct'] > a['weighted_avg_leg_dd']   # percent form broke subadditivity
+
+    def test_combo_b_markets_claim(self, scout) -> None:
+        b = scout['combo_b']
+        assert b['span'] == ['2011-03-24', '2026-04-10']
+        assert b['n_days'] == 3784
+        assert b['correlations']['spy_sv~qqq_sv'] == pytest.approx(0.656, abs=0.005)
+        assert b['correlations']['spy_sv~msft_sv'] == pytest.approx(0.1925, abs=0.005)
+        assert b['correlations']['qqq_sv~msft_sv'] == pytest.approx(0.2248, abs=0.005)
+        assert b['legs']['spy_sv']['nw_t'] == pytest.approx(2.56, abs=0.02)
+        assert b['legs']['qqq_sv']['nw_t'] == pytest.approx(2.45, abs=0.02)
+        assert b['legs']['msft_sv']['nw_t'] == pytest.approx(-0.28, abs=0.02)
+        assert b['combined']['nw_t'] == pytest.approx(1.01, abs=0.02)
+        assert b['combined']['max_dd_pct'] == pytest.approx(19.53, abs=0.05)
+        assert b['weighted_avg_leg_dd'] == pytest.approx(27.07, abs=0.05)
+        assert b['best_single_leg_dd'] == pytest.approx(6.94, abs=0.05)
+        # the pre-stated kill condition: combined at or below the best single leg.
+        assert b['combined']['nw_t'] < b['legs']['spy_sv']['nw_t']
+        # and the subadditive gap IS visible here (no compounding stock leg):
+        assert b['combined']['max_dd_pct'] < b['weighted_avg_leg_dd']

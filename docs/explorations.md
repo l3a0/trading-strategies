@@ -255,6 +255,43 @@ as one draw from a wide band.
 
 ---
 
+## Portfolio combos on the pinned overlays — MEASURED, neither claim survives (2026-07-14)
+
+**The idea.** Experiment 6 of the Van Tharp test plan
+([van_tharp_gap_g.md](van_tharp_gap_g.md)): Tharp's two portfolio claims on the pairs this repo owns.
+Combo A — noncorrelated systems (the MSFT covered call's equity beta vs the SPY delta-hedged short
+vol), 50/50: does variance reduction earn a negative-edge leg its place on the risk-adjusted metric?
+Combo B — independent markets (the same short-vol system on SPY/QQQ/MSFT), one-third each: do more
+markets improve the whole?
+
+**How it was tested.** `portfolio_scout` — four leg re-runs at pinned coordinates with an internal
+drift alarm asserting each leg's published headline pins first (the three short-vol NW t's; the CC
+leg's overlay P&L and excess NW t), then the harness (`common/portfolio.py`): inner-join
+alignment, per-capital daily P&L over zero-yield cash (structure legs rf-netted by the `rf_credit`
+column switch), pairwise Pearson, pre-committed weights, one fixed-base drawdown definition. All
+pinned in `TestPortfolioCombos`; the harness mechanics in `TestPortfolioMechanics`.
+
+**The verdict — both expected verdicts held; neither claim survives on these legs.** Combo A's correlation is
+genuinely low (0.1975 — beta vs vol premium, as constructed), but the dead leg earned nothing:
+combined NW t 1.54 vs the better leg's 2.47, and the combined percent-of-peak DD (34.31%) sat ABOVE
+the 50/50 weighted average (24.04%) — the dollar-space subadditivity guarantee did not survive the
+percent transform, because the CC leg's compounding stock position dominates the book's later, larger
+peaks. Combo B: SPY\~QQQ correlation 0.656 (the shared vol factor — these markets are not that
+independent), and one pinned-negative leg plus that correlation left the combined NW t at 1.01 vs
+SPY-alone's 2.56 — killed as pre-stated. The DD gap subadditivity IS visible in Combo B (19.53% vs
+27.07%), where no leg compounds stock.
+
+**The trap for the future.** Two, both mechanical. First: percent-of-peak drawdowns on mixed books are
+treacherous — a compounding leg's grown peaks re-weight the whole comparison, so "diversification
+lowers drawdown" can flip sign under the percent definition while holding in dollars; any future
+portfolio claim must state its DD definition before running. Second: low correlation is necessary but
+nowhere near sufficient — Combo A had the low correlation Tharp's lesson wants and still failed both
+verdict metrics, because no amount of variance reduction rescues a leg whose drift is the wrong sign.
+Diversification arithmetic multiplies whatever expectancy the legs supply — negative included (the
+Loc 3791 lesson, portfolio edition).
+
+---
+
 ## Related, recorded elsewhere
 
 - **Trend gate** (suspend selling during a 200-day uptrend) — a *registered*

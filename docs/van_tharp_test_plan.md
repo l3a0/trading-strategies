@@ -224,12 +224,14 @@ the edge survives.
 real CC engine emits `['date', 'equity', 'price']` (realchains/real_cc_backtest.py:514), and the simulated
 CC engine returns a daily curve for `compute_statistics`. Every consumer is single-strategy.
 
-**What's missing.** A harness exists nowhere — a repo-wide grep for
-`corrcoef|\.corr(|cov_matrix|correlation_matrix|portfolio_weight|risk_parity|combine_streams` finds only a
+**What's missing.** As of this plan, a harness existed nowhere — a repo-wide grep for
+`corrcoef|\.corr(|cov_matrix|correlation_matrix|portfolio_weight|risk_parity|combine_streams` found only a
 single-factor Information Coefficient (factor/factor_backend.py) and a scout's Spearman
-(search/explorations.py:335), neither of which aligns multiple overlay streams. The closest portfolio
+(search/explorations.py:346), neither of which aligned multiple overlay streams. (`common/portfolio.py`
+now implements the harness — docs/van_tharp_gap_g.md; `combine_streams` in the grep above is its name
+made real.) The closest portfolio
 construct, `long_short_returns` (factor/factor_mechanism.py), builds one cross-sectional equity book from a
-single signal — orthogonal to combining option-overlay streams. The need is a harness that aligns several
+single signal — orthogonal to combining option-overlay streams. The need was a harness that aligns several
 overlays' `daily_equity` on a common date index, builds a cross-overlay correlation/covariance matrix, and
 sizes a combined book — Tharp's non-correlated-systems lesson (Loc 1929, 1932).
 

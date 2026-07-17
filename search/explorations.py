@@ -474,6 +474,124 @@ def random_entry_scout(
     }
 
 
+def portfolio_scout() -> dict[str, Any]:
+    """Gap G / Experiment 6 (docs/van_tharp_gap_g.md): the two pre-committed
+    combos through the portfolio harness. EXPLORATORY — descriptive,
+    kill-or-justify, never a registered verdict.
+
+    Combo A (the noncorrelated-SYSTEMS claim, Loc 1932): SPY hedged short vol
+    + the MSFT real covered call, 50/50, on their inner-join span. Combo B
+    (the independent-MARKETS claim, Loc 1929): the same short-vol system on
+    SPY / QQQ / MSFT, one-third each. Legs, weights, spans, and bases are
+    pre-committed in the design doc; the DRIFT ALARM re-runs each leg at its
+    pinned coordinates on its full pinned span and asserts the published
+    pins before any combo number is computed. Stores load STRICTLY
+    SEQUENTIALLY and are released before the next load (the one-store CI
+    budget). Every leg is per-capital daily P&L over zero-yield cash on its
+    own $100K (structure legs rf-netted to their published basis by the
+    rf_credit column switch; CC legs rf-free by engine construction).
+    """
+    from common.portfolio import (
+        align_streams,
+        combine_streams,
+        max_drawdown_pct,
+        stream_correlations,
+    )
+    from common.stats import newey_west_summary
+    from realchains.real_cc_backtest import (
+        REGISTERED_CLEAN_START,
+        run_real_cc_overlay,
+    )
+    from realchains.vol_premium import run_real_short_vol_overlay, short_vol_statistics
+
+    sv_params = {'target_delta': 0.25, 'dte': 30, 'capital': 100_000,
+                 'risk_free_rate': 0.045, 'hedge_cost_bps': 0.0}
+    streams: dict[str, Any] = {}
+
+    def _market(ticker: str, dailies: str, end: str, *, extra: list[str] | None = None,
+                start: str | None = None):
+        store = load_chain_store(dailies, extra_paths=extra, start=start) \
+            if extra is not None else load_chain_store(dailies, start=start)
+        days = sorted(store)
+        dates, prices = load_unadjusted_prices(ticker, days[0], end)
+        pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
+        return [d for d, _ in pairs], [p for _, p in pairs], store
+
+    # 1. SPY hedged short vol — the registered-span pin (+2.54). Serves both combos.
+    dates, prices, store = _market('SPY', str(data_path('spy_option_dailies.csv')),
+                                   '2026-06-06', start=REGISTERED_CLEAN_START['SPY'])
+    s, _, eq = run_real_short_vol_overlay(dates, prices, store, dict(sv_params))
+    t = short_vol_statistics(eq, s['capital'], rf=0.045)['t_stat_newey_west']
+    assert abs(t - 2.54) < 0.02, f'SPY short-vol drift: NW t {t} != pinned +2.54'
+    streams['spy_sv'] = eq
+    del store
+
+    # 2. QQQ short vol — canonical + 2011_2016 backfill (+2.07 gross).
+    dates, prices, store = _market('QQQ', str(data_path('qqq_option_dailies.csv')),
+                                   '2026-06-06',
+                                   extra=[str(data_path('qqq_option_dailies_2011_2016.csv'))],
+                                   start=CHAIN_CLEAN_START.get('QQQ'))
+    s, _, eq = run_real_short_vol_overlay(dates, prices, store, dict(sv_params))
+    t = short_vol_statistics(eq, s['capital'], rf=0.045)['t_stat_newey_west']
+    assert abs(t - 2.07) < 0.02, f'QQQ short-vol drift: NW t {t} != pinned +2.07'
+    streams['qqq_sv'] = eq
+    del store
+
+    # 3. MSFT short vol — canonical + 2008_2016 backfill (the -0.26 single-name kill).
+    dates, prices, store = _market('MSFT', str(data_path('msft_option_dailies.csv')),
+                                   '2026-04-11',
+                                   extra=[str(data_path('msft_option_dailies_2008_2016.csv'))],
+                                   start=CHAIN_CLEAN_START['MSFT'])
+    s, _, eq = run_real_short_vol_overlay(dates, prices, store, dict(sv_params))
+    t = short_vol_statistics(eq, s['capital'], rf=0.045)['t_stat_newey_west']
+    assert abs(t - (-0.26)) < 0.02, f'MSFT short-vol drift: NW t {t} != pinned -0.26'
+    streams['msft_sv'] = eq
+    del store
+
+    # 4. MSFT real covered call — the bare canonical store (the -$183.6K pin).
+    dates, prices, store = _market('MSFT', str(data_path('msft_option_dailies.csv')),
+                                   '2026-06-06')
+    s, _, eq = run_real_cc_overlay(dates, prices, store, dict(NAKED_PARAMS))
+    pnl = s['net_overlay_pnl']
+    assert abs(pnl - (-183_552.34)) < 1.0, f'MSFT CC drift: {pnl} != pinned -183552.34'
+    from engine.cc_backtest import compute_statistics
+    t = compute_statistics(eq, num_contracts=s['num_contracts'],
+                           cash=s['cash'])['t_stat_newey_west']
+    assert abs(t - (-1.73)) < 0.02, f'MSFT CC drift: excess NW t {t} != pinned -1.73'
+    streams['msft_cc'] = eq
+    del store
+
+    def _combo(names: list[str], weights: dict[str, float]) -> dict[str, Any]:
+        panel = align_streams({n: streams[n] for n in names})
+        corr = stream_correlations(panel)
+        combined = combine_streams(panel, weights)
+        legs = {}
+        for n in names:
+            s_leg = newey_west_summary(panel[n].to_numpy())
+            legs[n] = {'nw_t': round(s_leg.t_newey_west, 2),
+                       'max_dd_pct': max_drawdown_pct(panel[n])}
+        s_c = newey_west_summary(combined.to_numpy())
+        leg_dds = [legs[n]['max_dd_pct'] for n in names]
+        return {
+            'span': [str(panel.index[0]), str(panel.index[-1])],
+            'n_days': int(len(panel)),
+            'correlations': {f'{a}~{b}': round(float(corr.loc[a, b]), 4)
+                             for i, a in enumerate(names) for b in names[i + 1:]},
+            'legs': legs,
+            'combined': {'nw_t': round(s_c.t_newey_west, 2),
+                         'max_dd_pct': max_drawdown_pct(combined)},
+            'weighted_avg_leg_dd': round(sum(weights[n] * legs[n]['max_dd_pct']
+                                             for n in names), 2),
+            'best_single_leg_dd': min(leg_dds),
+        }
+
+    return {
+        'combo_a': _combo(['spy_sv', 'msft_cc'], {'spy_sv': 0.5, 'msft_cc': 0.5}),
+        'combo_b': _combo(['spy_sv', 'qqq_sv', 'msft_sv'],
+                          {'spy_sv': 1 / 3, 'qqq_sv': 1 / 3, 'msft_sv': 1 / 3}),
+    }
+
+
 def main() -> None:
     print('Loading naked runs (3 chain stores; a few minutes cold) ...', flush=True)
     runs = [load_naked_run(t) for t in SCOUT_TICKERS]
