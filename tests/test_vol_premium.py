@@ -2135,3 +2135,182 @@ class TestSpyExitVariantExploration:
                       {'exit_dte': 7}, {'exit_dte': 14}):
             st, _, _ = self._measure(market, extra)
             assert st['expectancy_r'] < 0
+
+
+@pytest.mark.skipif(not (_HAVE_SPY and _HAVE_SPY_PUTS),
+                    reason='needs spy_option_dailies.csv + spy_option_dailies_puts.csv (or .gz twins)')
+class TestCallSpreadExitSizingExploration:
+    """Widening 5 sections 6-7 (docs/call_spread_widening_plan.md), run 2026-07-18: the
+    pre-committed exit-variant grid + defined-risk sizing sweep on the pinned SPY
+    call-credit-spread campaign cell (30/0.25/0.10 at the CAMPAIGN coordinates — live
+    CHAIN_CLEAN_START + STRUCTURE_END via search.edge_search._load_ticker_data), measured
+    through the Gap A ledger on risk_basis='defined_max_loss' (R = width - credit, its first
+    honest use) and the Gaps C+B intratrade ruin replay.
+
+    EXPLORATORY — sample-spending, kill-or-justify, never a registered verdict; nothing
+    enters the idea ledger and no e-value is spent (risk-shape axes, not significance).
+
+    The verdict, three findings: (1) exits move risk shape, not sign — the third
+    confirmation of the Experiment 4 law (every variant's expectancy stays negative);
+    (2) a stop DOES add something on top of the structural width cap — the cap bounds the
+    settlement at ~1R but intratrade marks ride to -1.007R and 10.5% of f=2% careers still
+    breach 50% drawdown, while the 1.5x stop truncates the worst excursion to -0.458R and
+    takes intratrade P(ruin) to 0.000 — at the price of the ALPHA stream (NW t -0.64 ->
+    -1.89: more cycles, more friction; risk-shaping, never edge); (3) the practitioner
+    BRACKETS churn the raw P&L NEGATIVE (562/598 round trips turn +$57K into -$3.0K/-$1.1K,
+    t ~ -5.3) — bracket75, already killed as a lattice choice, is killed again as
+    risk-shaping. Sizing: the defined-risk sweep runs P(ruin) 0/0/0/0.105/0.692 across the
+    Tharp fractions vs the naked short-vol book's pinned 0/0.121/0.849/0.991/0.998
+    (cross-basis, qualitative — the width cap is worth ~an order of magnitude at
+    practitioner fractions); kelly = 0 on the negative bag (mean R -0.138, terminal medians
+    monotone-declining — every positive fraction still loses long-run); Tharp's
+    percent-volatility model is REDUNDANT on defined risk (p_ruin 0.144 vs 0.105 at f=2% —
+    the R unit already normalizes the risk, vol-scaling just adds dispersion).
+
+    Conventions carried: daily-close stop-markets (flatter the stop), all-legs-quoted
+    triggers (under-fire), one-day re-entry gap; MAE can transiently exceed the cap by
+    mark noise (-1.039R at the 50% target). Promotion of ANY of this runs through a
+    registration, never from this entry (docs/explorations.md)."""
+
+    VARIANTS = {
+        'hold': {},
+        'target50': {'close_at_pct': 0.50},
+        'target75': {'close_at_pct': 0.75},
+        'stop15x': {'stop_loss_mult': 1.5},
+        'stop2x': {'stop_loss_mult': 2.0},
+        'stop3x': {'stop_loss_mult': 3.0},
+        'dte21': {'exit_dte': 21},
+        'bracket': {'close_at_pct': 0.50, 'stop_loss_mult': 2.0},
+        'bracket75': {'close_at_pct': 0.75, 'stop_loss_mult': 1.5},
+    }
+
+    @pytest.fixture(scope='class')
+    def grid(self) -> dict[str, dict[str, Any]]:
+        from collections import Counter
+
+        from common.position_sizing import simulate_sizing
+        from common.trade_ledger import build_trade_ledger, ledger_statistics
+        from search.edge_search import _load_ticker_data
+        store, dates, prices = _load_ticker_data('SPY')
+        base = {'dte': 30, 'short_delta': 0.25, 'wing_delta': 0.10,
+                'capital': 100_000}
+        out: dict[str, dict[str, Any]] = {}
+        for name, knobs in self.VARIANTS.items():
+            s, trades, eq = run_real_call_credit_spread_overlay(
+                dates, prices, store, {**base, **knobs})
+            ledger = build_trade_ledger(
+                trades, strategy='call_credit_spread', ticker='SPY',
+                shares=int(s['num_contracts']) * 100,
+                risk_basis='defined_max_loss')
+            st = ledger_statistics(ledger)
+            rs = [r.r_multiple for r in ledger]
+            maes = [r.mae_r for r in ledger]
+            out[name] = {
+                'n': len(ledger), 'exp': st['expectancy_r'],
+                'win': st['win_rate'], 'worst_mae': min(maes),
+                'p_ruin2': simulate_sizing(rs, fraction=0.02,
+                                           mae_r=maes)['p_ruin'],
+                'nw_t': short_vol_statistics(
+                    eq, s['capital'])['t_stat_newey_west'],
+                'net': s['net_pnl'],
+                'reasons': dict(Counter(
+                    t['reason'] for t in trades
+                    if t['action'] == 'close' and 'reason' in t)),
+                'rs': rs, 'maes': maes,
+                'entry_dates': [r.entry_date for r in ledger],
+            }
+        out['_market'] = {'dates': dates, 'prices': prices}
+        del store
+        return out
+
+    def test_no_variant_flips_the_sign(self, grid) -> None:
+        for name in self.VARIANTS:
+            assert grid[name]['exp'] < 0, name
+        assert grid['hold']['n'] == 180
+        assert grid['hold']['exp'] == pytest.approx(-0.1378, abs=0.005)
+        assert grid['hold']['win'] == pytest.approx(63.3, abs=0.1)
+
+    def test_stop_truncates_below_the_structural_cap(self, grid) -> None:
+        # the cap bounds settlement (~1R); the stop truncates the RIDE
+        assert grid['hold']['worst_mae'] == pytest.approx(-1.007, abs=0.01)
+        assert grid['hold']['p_ruin2'] == pytest.approx(0.1048, abs=0.005)
+        assert grid['stop15x']['worst_mae'] == pytest.approx(-0.458, abs=0.01)
+        assert grid['stop15x']['p_ruin2'] == 0.0
+        assert grid['stop2x']['worst_mae'] == pytest.approx(-0.570, abs=0.01)
+        assert grid['stop2x']['p_ruin2'] == 0.0
+        # ...and charges the alpha stream for it (risk-shape, not edge)
+        assert grid['stop15x']['exp'] == pytest.approx(-0.0520, abs=0.005)
+        assert grid['stop15x']['nw_t'] < grid['hold']['nw_t']
+        assert grid['hold']['nw_t'] == pytest.approx(-0.64, abs=0.02)
+        assert grid['stop15x']['nw_t'] == pytest.approx(-1.89, abs=0.02)
+
+    def test_brackets_churn_raw_pnl_negative(self, grid) -> None:
+        for name, n_trades, t_approx in (('bracket', 562, -5.24),
+                                         ('bracket75', 598, -5.35)):
+            assert grid[name]['net'] < 0, name
+            assert grid[name]['n'] == n_trades
+            assert grid[name]['nw_t'] == pytest.approx(t_approx, abs=0.02)
+        assert grid['bracket']['reasons'] == {'target': 311, 'stop': 249}
+        assert grid['bracket75']['reasons'] == {'target': 217, 'stop': 379}
+        assert grid['hold']['net'] == pytest.approx(56_877, abs=10)
+
+    def test_remaining_variant_table(self, grid) -> None:
+        expected = {
+            'target50': (321, -0.0940, {'target': 232}),
+            'target75': (260, -0.0912, {'target': 170}),
+            'stop3x': (209, -0.0728, {'stop': 71}),
+            'dte21': (483, -0.0463, {'time': 483}),
+        }
+        for name, (n, exp, reasons) in expected.items():
+            assert grid[name]['n'] == n, name
+            assert grid[name]['exp'] == pytest.approx(exp, abs=0.005), name
+            assert grid[name]['reasons'] == reasons, name
+
+    def test_defined_risk_sweep_vs_naked_and_kelly(self, grid) -> None:
+        import numpy as np
+
+        from common.position_sizing import kelly_fraction, sizing_sweep
+        rs, maes = grid['hold']['rs'], grid['hold']['maes']
+        sweep = sizing_sweep(rs, mae_r=maes)
+        p_ruins = [sweep[f]['p_ruin'] for f in sorted(sweep)]
+        assert p_ruins[:3] == [0.0, 0.0, 0.0]
+        assert p_ruins[3] == pytest.approx(0.1048, abs=0.005)
+        assert p_ruins[4] == pytest.approx(0.6917, abs=0.005)
+        assert p_ruins == sorted(p_ruins)                    # monotone in f
+        terms = [sweep[f]['terminal']['median'] for f in sorted(sweep)]
+        assert terms == sorted(terms, reverse=True)          # every f loses
+        assert float(np.mean(rs)) < 0
+        assert kelly_fraction(rs) == 0.0                     # negative bag
+
+    def test_percent_volatility_arm_is_redundant_on_defined_risk(
+        self, grid
+    ) -> None:
+        """Tharp's percent-volatility model, replayed at matched average
+        exposure (position scaled by median(sigma)/sigma_i, sigma = trailing
+        30-trading-day RV at entry): indistinguishable from fixed-fractional
+        on the defined-risk book — the R unit already normalizes the risk, so
+        vol-scaling only adds dispersion (0.1435 vs 0.1048 at f = 2%)."""
+        import numpy as np
+
+        from common.position_sizing import sizing_sweep
+        dates = grid['_market']['dates']
+        prices = grid['_market']['prices']
+        rs = np.asarray(grid['hold']['rs'])
+        maes = np.asarray(grid['hold']['maes'])
+        rets = np.diff(np.log(np.asarray(prices, float)))
+        date_ix = {d: i for i, d in enumerate(dates)}
+        sig = []
+        for d in grid['hold']['entry_dates']:
+            i = date_ix[d]
+            w = rets[max(0, i - 30):i]
+            sig.append(float(np.std(w, ddof=1) * np.sqrt(252))
+                       if len(w) > 2 else np.nan)
+        sig = np.asarray(sig)
+        ok = ~np.isnan(sig) & (sig > 0)
+        wts = np.where(ok, np.median(sig[ok]) / np.where(ok, sig, 1.0), 1.0)
+        sweep_ff = sizing_sweep(list(rs), mae_r=list(maes))
+        sweep_pv = sizing_sweep(list(rs * wts), mae_r=list(maes * wts))
+        assert sweep_pv[0.02]['p_ruin'] == pytest.approx(0.1435, abs=0.005)
+        for f in sorted(sweep_ff):
+            assert abs(sweep_pv[f]['p_ruin']
+                       - sweep_ff[f]['p_ruin']) < 0.05, f
