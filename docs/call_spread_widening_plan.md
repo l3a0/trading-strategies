@@ -209,7 +209,46 @@ widening narrative gains the 70→88 / 56→63 update.
    comparison.
 
 Out of scope, each needing its own design: the trend-switched composites
-(blocked on this), any registered call-spread walk-forward or registered
-exit verdict (the put side's registration is the template if the baseline
-earns it), ATR-scaled stop variants (a Gap E widening of its own), and any
-change to the put-side family's record.
+(blocked on this), the registered call-spread walk-forward (§11 pre-commits
+its escalation path; the registration itself is a separate future doc),
+registered exit verdicts, ATR-scaled stop variants (a Gap E widening of its
+own), and any change to the put-side family's record.
+
+## 11. If the baseline lives: the optimization path (pre-committed now)
+
+Recorded before any call-spread number exists, so the escalation logic is
+on the record rather than chosen after a result:
+
+- **The gate.** Optimization happens only via the §4 escalation rule — a
+  committed cell right-signed at t > 2. A dead baseline ends the family's
+  optimization question: *"optimization does not rescue the family"* is a
+  pinned put-side result (docs/put_credit_spread_results.md), not a
+  hypothesis, and it is presumed to transfer until a live baseline says
+  otherwise. No walk-forward runs on a dead family.
+- **The machinery.** The put-side registration's driver is the instrument:
+  `walk_forward_structure` needs only a `spec_name` seam (\~10 lines —
+  `run_cell` / `_cell_select` currently hardcode
+  `STRUCTURE_SPECS['credit_spread']`), default-preserving and pinned
+  byte-identical for the put side by the existing equivalence-test pattern.
+  Window arithmetic, selection rule, stitching, seam accounting, and the
+  §7.3 companions transfer unchanged, mechanics pins included.
+- **The registration.** A new prereg in the put-side template with the wing
+  flipped: stitched OOS hedged-excess NW t against the replication null,
+  one verdict, IWM confirmation arm, the same qualifiers. 4-year trains
+  stay (the 45-DTE cells' 30-entry floor forces them regardless of wing).
+- **Put-side-informed lattice choices, committed here** (cross-experiment
+  learning is legitimate exactly because it is frozen before the call-side
+  run, not after): (a) a **shrunken exit menu** — `hold`, `stop2x`,
+  `bracket` only — on the put side's findings that `hold` won 19 of 23
+  windows and the exit-only ablation was the experiment's worst arm; the
+  selection budget goes to the DTE axis, where the action was (45 DTE won
+  15 of 23); (b) the **derived-wing rule** (`wing_delta = short_delta −
+  0.05`, uniform −0.05 net delta) for measurement cleanliness and
+  like-for-like comparability with the registered put side. Nine entry
+  cells × three exits = a **27-cell joint lattice** (no `dte21` variant in
+  the menu, so no exclusions), counted in that registration.
+- **Expectation management, carried from the put side:** walk-forward
+  efficiency there was −4.96/−10.19 — in-sample selection anti-predicted
+  out-of-sample. The optimizer is the honesty harness that prevents
+  self-deception, not an edge amplifier; the §8-style outcome language of
+  that future registration inherits the row-4 sentence as its modal case.
