@@ -211,6 +211,10 @@ def composition_of(overlay: str, params: dict, predicted_sign: int = 1) -> Compo
         s, w = p['short_delta'], p['wing_delta']
         legs = (Leg('short', 'put', ('delta', s), p['dte']),
                 Leg('long', 'put', ('delta', w), p['dte']))
+    elif overlay == 'call_credit_spread':                       # short call + long higher-strike call wing
+        s, w = p['short_delta'], p['wing_delta']                # (widening 5 — the CARRY call side)
+        legs = (Leg('short', 'call', ('delta', s), p['dte']),
+                Leg('long', 'call', ('delta', w), p['dte']))
     elif overlay == 'calendar':                                 # short near call + long far call, same K
         legs = (Leg('short', 'call', ('delta', 0.50), p['near_dte']),
                 Leg('long', 'call', ('same',), p['far_dte']))
