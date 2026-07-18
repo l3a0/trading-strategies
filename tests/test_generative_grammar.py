@@ -208,11 +208,12 @@ class TestNamedSubGrammar:
             comp = composition_of(t.overlay, dict(t.params))
             assert validate_composition(comp) is comp                    # already valid (no raise)
 
-    def test_seventy_templates_seventy_distinct_keys(self) -> None:
+    def test_every_template_has_a_distinct_key(self) -> None:
+        # 70 -> 88 at widening 5 (the call credit spread's mirror lattice)
         templates = enumerate_grammar_templates()
         keys = [canonical_key(composition_of(t.overlay, dict(t.params))) for t in templates]
-        assert len(templates) == grid_universe_size() == 70
-        assert len(set(keys)) == 70                                      # INJECTIVE: no collision
+        assert len(templates) == grid_universe_size() == 88
+        assert len(set(keys)) == 88                                      # INJECTIVE: no collision
 
     def test_composition_of_is_stable(self) -> None:
         # same template -> same key on every call (recordable, dedup-stable identity)

@@ -296,6 +296,34 @@ def select_credit_spread(
     return short_put, long_put
 
 
+def select_call_credit_spread(
+    day: dict[str, Any], target_dte: int,
+    short_delta: float = 0.30, wing_delta: float = 0.10,
+) -> tuple[tuple[Any, ...], tuple[Any, ...]] | None:
+    """The two CALL legs of a BEAR CALL CREDIT SPREAD at ONE expiration: short a
+    ~short_delta call (nearer the money) + long a ~wing_delta call (further OTM at a
+    strictly HIGHER strike, the defined-risk wing). This is the CALL HALF of the iron
+    condor — the exact mirror of select_credit_spread's put half, using that selector's
+    call-side band + wing logic. Returns (short_call, long_call) candidate tuples or
+    None when either leg is unavailable.
+
+    EXPLORATORY, not a registered instrument (Widening 5,
+    docs/call_spread_widening_plan.md): a practical retail CARRY structure
+    (theta-positive, defined-risk), not the delta-hedged-gain VRP isolator.
+    """
+    short_call = select_entry(day, target_dte, short_delta)
+    if short_call is None:
+        return None
+    exp = short_call[5]
+    calls = [c for c in day['candidates'] if c[5] == exp and c[1] > 0]
+    # Long wing: strictly further OTM than the short (HIGHER strike), and buyable (ask > 0).
+    long_call = min([c for c in calls if c[6] > short_call[6] and c[3] > 0],
+                    key=lambda c: abs(c[1] - wing_delta), default=None)
+    if long_call is None:
+        return None
+    return short_call, long_call
+
+
 def select_calendar(
     day: dict[str, Any], near_dte: int = 30, far_dte: int = 60,
     target_delta: float = 0.50, min_gap_dte: int = 30,
@@ -585,6 +613,35 @@ def _legs_credit_spread(day: dict[str, Any], params: dict[str, Any]) -> list[dic
     ]
 
 
+def _legs_call_credit_spread(day: dict[str, Any], params: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Bear CALL credit spread — SHORT a short_delta call (nearer ATM) + LONG a wing_delta call
+    (further OTM at a HIGHER strike, the defined-risk wing) at one expiry. The CARRY family's
+    call-side structure, the exact mirror of _legs_credit_spread: it collects a net CREDIT and is
+    theta-positive, the call half of the iron condor. Combined-delta-hedged so the residual is the
+    carry, not direction — and the hedge goes LONG stock (short a call = short the underlying),
+    making this the grammar's first short-vega-AND-short-delta overlay. The short call fills at
+    bid, the long-call wing at ask. net_skew is declared in STRUCTURE_GRAMMAR only as the engine
+    measures it (the Widening-3 lesson; see docs/call_spread_widening_plan.md section 3)."""
+    dte = int(params.get('dte', 30))
+    fill = str(params.get('fill', 'bid_ask'))
+    short_delta = float(params.get('short_delta', 0.30))
+    wing_delta = float(params.get('wing_delta', 0.10))
+    pick = select_call_credit_spread(day, dte, short_delta, wing_delta)
+    if pick is None:
+        return None
+    sc, lc = pick
+    sc_in = sc[2] if fill == 'bid_ask' else sc[4]      # short the near call — collect the bid
+    lc_in = lc[3] if fill == 'bid_ask' else lc[4]      # long the wing — pay the ask
+    return [
+        {'sign': -1, 'right': 'call', 'strike': sc[6], 'contract': sc[7],
+         'entry_net': sc_in - COMMISSION_PER_SHARE, 'mid': sc[4], 'delta': sc[1],
+         'expiration': sc[5]},
+        {'sign': +1, 'right': 'call', 'strike': lc[6], 'contract': lc[7],
+         'entry_net': lc_in + COMMISSION_PER_SHARE, 'mid': lc[4], 'delta': lc[1],
+         'expiration': sc[5]},
+    ]
+
+
 def _summary_strangle(q: dict[str, Any], p: dict[str, Any]) -> dict[str, Any]:
     return {                                       # same field set as the straddle (its OTM cousin)
         'capital': q['capital'], 'num_contracts': q['num_contracts'],
@@ -619,6 +676,19 @@ def _summary_credit_spread(q: dict[str, Any], p: dict[str, Any]) -> dict[str, An
         'total_premium_collected': q['total_premium_collected'],
         'total_hedge_cost': q['total_hedge_cost'], 'hedge_cost_bps': q['hedge_cost_bps'],
         'num_credit_spreads_sold': q['num_sold'], 'wins': q['wins'], 'losses': q['losses'],
+        'win_rate': q['win_rate'], 'max_drawdown_pct': q['max_drawdown_pct'],
+        'risk_free_rate': q['risk_free_rate'], 'cash': q['cash'],
+    }
+
+
+def _summary_call_credit_spread(q: dict[str, Any], p: dict[str, Any]) -> dict[str, Any]:
+    return {                              # hedged two-leg structure (same shape as the strangle);
+        'capital': q['capital'], 'num_contracts': q['num_contracts'],   # CARRY: a net CREDIT
+        'final_equity': q['final_equity'], 'net_pnl': q['net_pnl'],     # (short call > long wing)
+        'alpha_vs_cash': q['alpha_vs_cash'], 'interest_earned': q['interest_earned'],
+        'total_premium_collected': q['total_premium_collected'],
+        'total_hedge_cost': q['total_hedge_cost'], 'hedge_cost_bps': q['hedge_cost_bps'],
+        'num_call_credit_spreads_sold': q['num_sold'], 'wins': q['wins'], 'losses': q['losses'],
         'win_rate': q['win_rate'], 'max_drawdown_pct': q['max_drawdown_pct'],
         'risk_free_rate': q['risk_free_rate'], 'cash': q['cash'],
     }
@@ -689,6 +759,9 @@ STRUCTURE_SPECS: dict[str, dict[str, Any]] = {
     'credit_spread': {'select': _legs_credit_spread, 'entry_guard': 'net_positive',
                     'hedge_mode': 'combined', 'management': 'hold',   # CARRY: short near put + long wing
                     'defaults': {'hedge_cost_bps': 0.5}, 'summary': _summary_credit_spread},
+    'call_credit_spread': {'select': _legs_call_credit_spread, 'entry_guard': 'net_positive',
+                    'hedge_mode': 'combined', 'management': 'hold',   # CARRY: short near call + long wing
+                    'defaults': {'hedge_cost_bps': 0.5}, 'summary': _summary_call_credit_spread},
     'calendar':    {'select': _legs_calendar, 'entry_guard': 'each_short_positive',
                     'hedge_mode': 'combined', 'management': 'hold',   # TERM: two expirations, staggered
                     'defaults': {'hedge_cost_bps': 0.5}, 'summary': _summary_calendar},
@@ -751,6 +824,22 @@ def run_real_credit_spread_overlay(
     the iron condor). A pure STRUCTURE_SPEC + delegate, no engine change — single-expiration, so the
     Stage-B engine already handles it. Net SHORT vega, net LONG delta, long_rich skew (engine-verified)."""
     return run_structure_via_spec('credit_spread', dates, prices, store, params)
+
+
+def run_real_call_credit_spread_overlay(
+    dates: list[str],
+    prices: list[float],
+    store: dict[str, dict[str, Any]],
+    params: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]], pd.DataFrame]:
+    """Real-chain bear-CALL-credit-spread overlay — SHORT a short_delta call + LONG a wing_delta
+    call (further OTM, HIGHER strike), combined-delta-hedged, held to expiry. The fifth grammar
+    WIDENING (docs/call_spread_widening_plan.md): the CARRY family's call side, the exact mirror
+    of the put credit spread and the call half of the iron condor. A pure STRUCTURE_SPEC +
+    delegate, no engine change — single-expiration, Stage-B handles it. Net SHORT vega, net
+    SHORT delta (the combined hedge goes LONG stock — the grammar's first short-vega-AND-
+    short-delta overlay); net_skew as engine-measured (STRUCTURE_GRAMMAR)."""
+    return run_structure_via_spec('call_credit_spread', dates, prices, store, params)
 
 
 def run_real_calendar_overlay(

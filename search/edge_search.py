@@ -461,7 +461,13 @@ def run_campaign(cd: CycleData, seed: int = CAMPAIGN_SEED,
 
 def write_ledger(rows: Sequence[dict[str, Any]], path: str | None = None) -> None:
     """Append-only ledger: one immutable JSON row per candidate, full
-    provenance (seed, search tickers, statistic, p-value, verdict)."""
+    provenance (seed, search tickers, statistic, p-value, verdict). Default
+    path is the .gitignore'd data/edge_ledger.jsonl (regenerable; the pins
+    live in the tests) — None resolved here, not in the signature, because
+    the #122 package refactor left the old flat-layout literal behind and
+    every CLI campaign run crashed at the write step (found by Widening 5)."""
+    if path is None:
+        path = data_path('edge_ledger.jsonl')
     stamp = datetime.now().isoformat(timespec='seconds')
     with open(path, 'a', encoding='utf-8') as f:
         for r in rows:
@@ -645,6 +651,17 @@ STRUCTURE_GRAMMAR: dict[str, OverlayGrammar] = {
                                   # OTM wing sits on the steep part of the put skew, so it carries
                                   # HIGHER IV than the nearer-ATM short — the same long_rich read as
                                   # the iron condor (which also longs its richer OTM wings).
+    'call_credit_spread': OverlayGrammar({'dte': (21, 30, 45), 'short_delta': (0.20, 0.25, 0.30),
+                                   'wing_delta': (0.05, 0.10)},
+                                  PremiumFamily.CARRY,      # widening 5: the CARRY family's call side
+                                  {'expirations': 1, 'legs': 2, 'net_vega': 'short',
+                                   'net_delta': 'short', 'net_skew': 'short_rich'}),
+                                  # net_skew short_rich (engine-VERIFIED before declaring — the
+                                  # Widening-3 lesson made this order mandatory): on the equity call
+                                  # smile the far-OTM long wing carries LOWER IV than the nearer
+                                  # short leg, so this spread SELLS the rich leg and BUYS the cheap
+                                  # one — the opposite read from its put-side twin. First overlay
+                                  # that is short-vega AND short-delta (the hedge goes LONG stock).
     'calendar':    OverlayGrammar({'near_dte': (21, 30), 'far_dte': (60, 90)},
                                   PremiumFamily.TERM,       # widening 4: the first TERM family
                                   {'expirations': 2, 'legs': 2, 'net_vega': 'long',
@@ -782,8 +799,10 @@ STRUCTURE_TEMPLATES: tuple[StructureTemplate, ...] = (
                       (('dte', 30), ('short_delta', 0.25), ('wing_delta', 0.10)), +1),
     StructureTemplate('calendar', 'calendar',         # widening 4 (the first TERM family: two expirations)
                       (('near_dte', 30), ('far_dte', 90)), +1),   # far_dte 60->90: the far-DTE backfill
-)                                                                  # lets the far leg reach a real ~90-DTE
-#                                                                  # expiration (off the old 60-DTE data edge)
+    StructureTemplate('call_credit_spread', 'call_credit_spread',  # widening 5 (the CARRY call side —
+                      (('dte', 30), ('short_delta', 0.25), ('wing_delta', 0.10)), +1),  # the put cell's
+)                                                                  # exact mirror; split prior on record in
+#                                                                  # docs/call_spread_widening_plan.md §1
 
 
 @dataclass(frozen=True)
@@ -971,6 +990,7 @@ def structure_kill_gate(cand: StructureCandidate,
     HAC t-stat's asymptotic null — no RNG, closed-form p (the only mechanical
     difference from the re-tag gate)."""
     from realchains.vol_premium import (run_real_calendar_overlay,
+                             run_real_call_credit_spread_overlay,
                              run_real_credit_spread_overlay,
                              run_real_iron_condor_overlay,
                              run_real_risk_reversal_overlay,
@@ -983,6 +1003,7 @@ def structure_kill_gate(cand: StructureCandidate,
                 'strangle': run_real_strangle_overlay,
                 'risk_reversal': run_real_risk_reversal_overlay,
                 'credit_spread': run_real_credit_spread_overlay,
+                'call_credit_spread': run_real_call_credit_spread_overlay,
                 'calendar': run_real_calendar_overlay}
     store, dates, prices = loaded
     summary, trades, eq = overlays[cand.overlay](dates, prices, store,

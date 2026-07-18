@@ -41,21 +41,28 @@ def derive_family(signature: dict[str, Any]) -> PremiumFamily | None:
     fail-closed verdict the inline gate turns into a rejected / `measurement_invalid` cell (the
     foil-paper defense, per composition rather than per overlay name).
 
-    The rule reproduces the 7 committed overlays' DECLARED families exactly (pinned by
+    The rule reproduces the 8 committed overlays' DECLARED families exactly (pinned by
     test_generative_engine.py; and via `TestGrammarSignatureMatchesEngine` pinning declared ==
     engine-derived, it is engine-consistent too), in priority order:
 
-      * TWO expirations           -> TERM     (opposite-sign vega across tenors — the calendar);
-      * net_skew + NEUTRAL vega   -> SKEW     (the risk reversal's wing asymmetry on a vega-flat book);
-      * LONG delta + SHORT vega   -> CARRY    (the credit spread — theta-positive defined-risk);
-      * (else) SHORT vega         -> VARIANCE (the four short-vol overlays);
-      * (else)                    -> None     (no term, no skew-on-neutral-vega, no short premium).
+      * TWO expirations              -> TERM     (opposite-sign vega across tenors — the calendar);
+      * net_skew + NEUTRAL vega      -> SKEW     (the risk reversal's wing asymmetry, vega-flat);
+      * DIRECTIONAL delta + SHORT
+        vega + a wing-skew reading   -> CARRY    (the two credit-spread twins — theta-positive
+                                                  defined-risk at either tilt; widening 5 made the
+                                                  old LONG-delta-only rule wrong. The skew clause
+                                                  keeps the naked short_vol out — one leg, skew
+                                                  flat; the neutral-delta clause keeps the condor
+                                                  out — rich wings, no tilt);
+      * (else) SHORT vega            -> VARIANCE (the four short-vol overlays);
+      * (else)                       -> None     (no term, no skew-on-neutral-vega, no premium).
     """
     if signature['expirations'] >= 2:
         return PremiumFamily.TERM
     if signature['net_skew'] != 'flat' and signature['net_vega'] == 'neutral':
         return PremiumFamily.SKEW
-    if signature['net_delta'] == 'long' and signature['net_vega'] == 'short':
+    if (signature['net_vega'] == 'short' and signature['net_delta'] != 'neutral'
+            and signature['net_skew'] != 'flat'):
         return PremiumFamily.CARRY
     if signature['net_vega'] == 'short':
         return PremiumFamily.VARIANCE

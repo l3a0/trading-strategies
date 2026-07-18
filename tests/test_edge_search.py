@@ -35,6 +35,7 @@ from search.edge_search import (
     PremiumFamily,
     STRUCTURE_GRAMMAR,
     SEALED_TICKERS,
+    write_ledger,
     SEARCH_TICKERS,
     STRUCTURE_CAMPAIGN,
     STRUCTURE_SEALED,
@@ -509,9 +510,9 @@ class TestClosedGrammar:
 
     def test_grid_universe_size_pinned(self) -> None:
         # short_vol 3x3=9, straddle 3, iron_condor 3x3x2=18, strangle 3x3=9, risk_reversal 3x3=9,
-        # credit_spread 3x3x2=18, calendar 2x2=4 -> 70. Bump the grid, bump this pin — the universe
-        # size is on the record by design.
-        assert grid_universe_size() == 70
+        # credit_spread 3x3x2=18, calendar 2x2=4, call_credit_spread 3x3x2=18 -> 88. Bump the
+        # grid, bump this pin — the universe size is on the record by design.
+        assert grid_universe_size() == 88
         by_hand = sum(
             len(grid['target_delta']) * len(grid['dte']) if ov == 'short_vol'
             else len(grid['dte']) if ov == 'straddle'
@@ -525,7 +526,7 @@ class TestClosedGrammar:
         # Importing edge_search already constructed STRUCTURE_TEMPLATES; if any cell
         # were off-menu, __post_init__ would have raised at import. Re-affirm here:
         # every committed template's params match its overlay grid exactly, value-wise.
-        assert len(STRUCTURE_TEMPLATES) == 8   # + strangle (1), risk-reversal (2), credit-spread (3), calendar (4)
+        assert len(STRUCTURE_TEMPLATES) == 9   # + strangle (1), risk-reversal (2), credit-spread (3), calendar (4), call-credit-spread (5)
         for t in STRUCTURE_TEMPLATES:
             grid = ALLOWED_GRID[t.overlay]
             params = dict(t.params)
@@ -578,12 +579,13 @@ class TestClosedGrammar:
     def test_committed_batch_is_the_by_denominator(self) -> None:
         # The cross-section size — the e-LOND stream length and the BY diagnostic's
         # denominator — is the run count, not the grammar universe, so pin it.
-        # 8 committed templates x 7 search tickers = 56 cells (the credit-spread widening took it
-        # 6->7 / 42->49, then the calendar widening 7->8 / 49->56).
+        # 9 committed templates x 7 search tickers = 63 cells (the credit-spread widening took it
+        # 6->7 / 42->49, the calendar widening 7->8 / 49->56, the call-credit-spread widening
+        # 8->9 / 56->63).
         cands = enumerate_structure_candidates(STRUCTURE_CAMPAIGN)
-        assert len(cands) == 56
+        assert len(cands) == 63
         assert len(cands) == len(STRUCTURE_TEMPLATES) * len(STRUCTURE_SEARCH)
-        # and the committed menu is a subset of the reachable universe (8 <= 70),
+        # and the committed menu is a subset of the reachable universe (9 <= 88),
         # so widening either the templates or the grid is a deliberate, pinned edit.
         assert len(STRUCTURE_TEMPLATES) <= grid_universe_size()
 
@@ -613,10 +615,12 @@ class TestClosedGrammar:
         # net_vega / net_delta / net_skew.
         assert {f.name for f in PremiumFamily} == {'VARIANCE', 'SKEW', 'TERM', 'CARRY'}
         assert set(STRUCTURE_GRAMMAR) == {'short_vol', 'straddle', 'iron_condor', 'strangle',
-                                          'risk_reversal', 'credit_spread', 'calendar'}
+                                          'risk_reversal', 'credit_spread',
+                                          'call_credit_spread', 'calendar'}
         families = {name: og.family for name, og in STRUCTURE_GRAMMAR.items()}
         assert families['risk_reversal'] is PremiumFamily.SKEW
         assert families['credit_spread'] is PremiumFamily.CARRY
+        assert families['call_credit_spread'] is PremiumFamily.CARRY  # widening 5: the call side
         assert families['calendar'] is PremiumFamily.TERM
         assert all(families[n] is PremiumFamily.VARIANCE
                    for n in ('short_vol', 'straddle', 'iron_condor', 'strangle'))
@@ -1441,7 +1445,7 @@ class TestStructureCampaign:
 
     def test_batch_all_scored_none_invalid(self, structure_campaign) -> None:
         rows = structure_campaign
-        assert len(rows) == len(STRUCTURE_TEMPLATES) * len(STRUCTURE_SEARCH)  # 56 (credit-spread + calendar)
+        assert len(rows) == len(STRUCTURE_TEMPLATES) * len(STRUCTURE_SEARCH)  # 63 (+call-credit-spread)
         # EVERY cell is now scale-valid and traded — zero measurement-invalid. The MSFT calendar
         # USED to be the lone invalid cell: on the canonical 1-60 DTE store its same-strike far call
         # (DTE >= near + 30 = 60) was at the exact data edge and unlisted at the near's strike, so
@@ -1559,17 +1563,46 @@ class TestStructureCampaign:
         msft = self._cell(rows, 'calendar', 'MSFT')
         assert msft['t_stat_newey_west'] == pytest.approx(-0.45, abs=0.10)
 
-    # --- NVDA's eight cells, read from the full 56-cell campaign. NVDA is one of the seven search
+    def test_call_credit_spread_no_survivor_gld_below_escalation_bar(
+        self, structure_campaign
+    ) -> None:
+        """Widening 5 (the CARRY family's call side, the bear call credit spread): 0/63 holds —
+        no cell flags under e-LOND or the BY diagnostic — but the family finally shows texture.
+        The engine-verified short_rich geometry (this spread SELLS the richer leg, unlike its
+        long_rich put twin) produced the ledger's strongest right-signed CARRY cell: GLD +1.89
+        (one-sided p 0.029), which sits BELOW the design's pre-committed t > 2 manual-escalation
+        bar (docs/call_spread_widening_plan.md section 4) and therefore records as KILLED — no
+        promotion, the honest near-miss on the record. Per-ticker HAC-t: MSFT -0.47 / SPY -0.64
+        / QQQ +0.27 / GLD +1.89 / XLE -2.73 / EEM -2.39 / NVDA -0.96; the crude iron-condor
+        triangulation prior (plan section 1) got 5 of 7 signs right, SPY nearly exactly
+        (predicted -0.62, measured -0.64)."""
+        rows = structure_campaign
+        cc = [r for r in rows if r['template'] == 'call_credit_spread']
+        assert len(cc) == len(STRUCTURE_SEARCH)        # 7 tickers
+        assert all(not r['elond_survivor'] and not r['by_survivor'] for r in cc)
+        assert all(not r.get('measurement_invalid') for r in cc)  # calls-only: every store trades
+        expected = {'MSFT': -0.47, 'SPY': -0.64, 'QQQ': 0.27, 'GLD': 1.89,
+                    'XLE': -2.73, 'EEM': -2.39, 'NVDA': -0.96}
+        for ticker, t in expected.items():
+            cell = self._cell(rows, 'call_credit_spread', ticker)
+            assert cell['t_stat_newey_west'] == pytest.approx(t, abs=0.05)
+        # the near-miss stays a near-miss: right-signed, individually suggestive, below the
+        # pre-committed escalation bar — and the sign split is on the record
+        gld = self._cell(rows, 'call_credit_spread', 'GLD')
+        assert gld['sign_ok'] is True and gld['t_stat_newey_west'] < 2.0
+        assert sum(1 for r in cc if r['sign_ok']) == 2   # GLD and QQQ right-signed
+
+    # --- NVDA's nine cells, read from the full 63-cell campaign. NVDA is one of the seven search
     # tickers, so a separate single-ticker NVDA campaign would just RECOMPUTE these — the engine
     # scores each cell identically in any batch (deterministic, no cross-cell dependence; only the
     # e-LOND/BY verdict is batch-relative, and NVDA has 0 survivors in both contexts). Folding the
     # NVDA pins here drops that redundant campaign run.
 
-    def test_nvda_eight_cells_trade_including_calendar(self, structure_campaign) -> None:
+    def test_nvda_cells_trade_including_calendar(self, structure_campaign) -> None:
         # NVDA's chain lists far calls at the near strike, so the calendar trades here (unlike MSFT,
-        # which needed the far backfill). All eight NVDA structures are real measurements.
+        # which needed the far backfill). All nine NVDA structures are real measurements.
         nvda = [r for r in structure_campaign if r['ticker'] == 'NVDA']
-        assert len(nvda) == len(STRUCTURE_TEMPLATES)                 # 8 cells: NVDA x every template
+        assert len(nvda) == len(STRUCTURE_TEMPLATES)                 # 9 cells: NVDA x every template
         assert all(not r.get('measurement_invalid') for r in nvda)
 
     def test_nvda_every_cell_wrong_signed_except_calendar(self, structure_campaign) -> None:
@@ -2088,3 +2121,26 @@ class TestSearchSaturation:
         assert (keys - {'n'}) <= BANNED_RESULT_FIELDS
         with pytest.raises(ValueError, match='numberless'):
             assert_numberless(search_saturation(self._ledger([0.02])))
+
+
+class TestWriteLedgerDefaultPath:
+    """Regression for the #122 package-refactor crash: write_ledger's default
+    path became None (the old flat-layout literal was dropped without a
+    data-dir replacement), so every CLI campaign run died at open(None) after
+    scoring — found by the Widening 5 run. The default must resolve to the
+    data-dir edge ledger; an explicit path must round-trip."""
+
+    def test_explicit_path_roundtrips_with_run_stamp(self, tmp_path) -> None:
+        p = str(tmp_path / 'ledger.jsonl')
+        write_ledger([{'a': 1}], path=p)
+        row = json.loads((tmp_path / 'ledger.jsonl').read_text().strip())
+        assert row['a'] == 1 and 'run_at' in row
+
+    def test_default_path_resolves_to_data_dir_not_none(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        import search.edge_search as es
+        monkeypatch.setattr(es, 'data_path', lambda name: str(tmp_path / name))
+        write_ledger([{'b': 2}])   # the pre-fix crash path: open(None, 'a')
+        row = json.loads((tmp_path / 'edge_ledger.jsonl').read_text().strip())
+        assert row['b'] == 2

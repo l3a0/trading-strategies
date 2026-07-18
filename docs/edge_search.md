@@ -463,7 +463,7 @@ tickers** (MSFT −2.09 / SPY −1.78 / QQQ −1.27 / GLD −3.30 / XLE −2.00 
 NVDA −0.19): there is no harvestable put-call skew premium at these names/era. (The
 overlay's large *raw* P&L is risk-free interest on the cash balance; the **alpha over
 cash** the campaign scores is negative.) The verdict stays `0 / 42` (then `0 / 49`
-after widening 3, `0 / 56` after widening 4, below).
+after widening 3, `0 / 56` after widening 4, `0 / 63` after widening 5, below).
 
 ### Widening 3 — the bull put credit spread (the first CARRY structure)
 
@@ -562,6 +562,42 @@ checksum, so no short-vol / straddle / strangle / iron-condor / risk-reversal / 
 pin moved (in value OR lineage). The backfill is fetched but **not yet published** — that is a
 separate human-gated finalization step ([term_backfill_plan.md](term_backfill_plan.md)).
 
+### Widening 5 — the bear call credit spread (the CARRY family's call side)
+
+The first widening to arrive with a **pre-committed design doc**
+([call_spread_widening_plan.md](call_spread_widening_plan.md)): the split prior, the
+verify-then-declare signature rule, and a t > 2 manual-escalation bar were all on the
+record before any cell ran. The structure is the iron condor's **call half** — SHORT a
+`short_delta` call + LONG a `wing_delta` call at a strictly higher strike,
+combined-delta-hedged, hold-to-expiry — exactly as widening 3 carved out its put half.
+A pure spec + selector + delegate (zero engine diff), and **calls-only**: every
+canonical store carries the legs, so unlike widening 3 there is no puts merge and no
+data change at all.
+
+**The signature — verified, then declared.** The put spread's corrected skew read made
+the order mandatory, and this time the prediction survived contact:
+`TestGrammarSignatureMatchesEngine` confirmed **`short_rich`** on real SPY chains — on
+the equity call smile the far-OTM long wing carries LOWER IV than the nearer short leg,
+so this spread **sells the rich leg and buys the cheap one**, the opposite geometry of
+its long_rich put twin. It is also the grammar's first **short-vega-AND-short-delta**
+overlay: the combined hedge holds LONG stock (pinned by `TestCallCreditSpreadMechanics`,
+including the hedge-sign behavioral check).
+
+**The result.** Grammar `70 → 88` (the mirror lattice `3 × 3 × 2 = 18`), committed
+batch `8 × 7 = 56 → 9 × 7 = 63`, appending 7 call-credit-spread cells to the lifetime
+e-LOND stream. Per-ticker HAC-t: MSFT −0.47 / SPY −0.64 / QQQ +0.27 / **GLD +1.89** /
+XLE −2.73 / EEM −2.39 / NVDA −0.96. Nothing flags under e-LOND or the BY diagnostic, so
+the verdict holds at **`0 / 63`** — but the family finally shows texture. GLD is the
+ledger's strongest right-signed CARRY cell (one-sided p 0.029) and sits **below the
+design's pre-committed t > 2 escalation bar**, so it records as KILLED — the honest
+near-miss, on the record, with no promotion (at stream position \~76 the e-LOND flag
+bar is t \~6.35, so recording-not-flagging was the expected shape of even a good cell).
+The design's crude iron-condor triangulation prior got 5 of 7 signs right — SPY nearly
+exactly (predicted −0.62, measured −0.64). One infrastructure find rode along: the
+campaign's first run crashed at the write step, exposing that `write_ledger`'s default
+path had been broken since the #122 package refactor — fixed with a regression pin
+(`TestWriteLedgerDefaultPath`).
+
 ### NVDA — the seventh ticker (live-onboarded, folded in)
 
 NVDA was onboarded after the original six tickers were frozen, and is now folded
@@ -569,7 +605,7 @@ into `STRUCTURE_SEARCH` as the seventh — its seven `(template, NVDA)` cells ar
 of the cross-section above. It keeps its own callout here because NVDA's onboarding
 was the worked example of the clean-gate; the verdict is unchanged.
 
-**The result.** No NVDA cell is flagged. Seven of the eight t-stats are negative — on the
+**The result.** No NVDA cell is flagged. Eight of the nine t-stats are negative — on the
 wrong side of the predicted positive premium before any FDR bar (e-LOND or the BY diagnostic)
 applies. The lone exception, the calendar at `far_dte = 90` on the far-DTE backfill, is mildly
 right-signed (+0.67) but clears the bar by a wide margin (one-sided p \~0.25):
@@ -583,6 +619,7 @@ right-signed (+0.67) but clears the bar by a wide margin (one-sided p \~0.25):
 | strangle | −1.33 | 0.9082 | no | yes |
 | risk_reversal | −0.19 | 0.5753 | no | yes |
 | credit_spread | −0.06 | 0.5239 | no | yes |
+| call_credit_spread | −0.96 | 0.8315 | no | yes |
 | calendar | +0.67 | 0.2514 | no | yes |
 
 **A clean data-hygiene read — for once.** Where XLE needed a split repair, NVDA
