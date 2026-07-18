@@ -67,7 +67,7 @@ jobs:
       # the option-dailies fetcher's pure chain-filter logic (put support), plus
       # the e-value FDR control (no data — calibrator / e-LOND / e-BH, oracle-pinned).
       - name: Engine tests
-        run: pytest tests/test_cc_backtest.py tests/test_download_option_dailies.py tests/test_evalue_fdr.py --cov=. --cov-branch -v
+        run: pytest tests/test_cc_backtest.py tests/test_download_option_dailies.py tests/test_evalue_fdr.py tests/test_tharp_random_entry.py --cov=. --cov-branch -v
       # Smoke test: run the actual backtest against the committed MSFT CSV to
       # catch breakage in the main entry point the unit tests might miss
       # (CSV parsing, __main__ wiring, print formatting).

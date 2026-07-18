@@ -339,6 +339,53 @@ cell the campaign already spent; the ruin collapse is a property of *defined
 risk*, not of this strategy having merit — the bag is still negative. Any
 promotion runs through a registration, never from this entry.
 
+## The Tharp/Basso random-entry replication — SENTENCE FAILS, MORAL FAILS (2026-07-18)
+
+**The idea.** Replicate Van Tharp's flagship experiment
+([tharp_random_entry_plan.md](tharp_random_entry_plan.md)) at his own
+coordinates — coin-flip direction, 3×ATR(20) trailing stop, 1% percent-risk
+sizing, always-in — on the repo's nine-ticker basket over 2000–2026 (a span
+with two real bear markets), then subject it to the four nulls his era never
+ran. Phase 1 tests his *sentence* ("it made money consistently"); Phase 2
+tests his *moral* ("exits and sizing carry the system").
+
+**How it was tested.** 100 seeded careers (`20260719+i`) through
+`engine/tharp_random_entry.py` (16 hand-derived mechanics tests green before
+any ensemble ran), measured in his own R units; then the drift twin, a
+1,000-career structure-matched placebo-exit family, the fixed-hold no-stop
+control, and the Gap C+B sizing replay at the median career length. All
+pinned in `TestTharpReplicationEnsemble`.
+
+**Phase 1 — the sentence fails, the shape survives.** Only **54% of careers
+have positive expectancy and 40% end above starting capital**; the median
+career *loses* (final $89,410 on $100K over \~26 years; worst $33,609). Yet
+the trend-follower signature is exactly as he describes — 36.4% win rate,
+1.75 payoff ratio — riding a **zero-expectancy bag** (+0.0011R pooled over
+195,900 trades). The mechanism produces his shape without his profits: what
+made money in his era was the era, not the machinery.
+
+**Phase 2 — every null wins.** The trailing stop manufactures a
+**+25%-of-capital average long tilt out of coin flips** (the endogenous-tilt
+prediction, confirmed), and the drift twin holding just that average
+exposure **beats the live system in 98% of careers** (twin median +$80,654
+vs system −$10,590 — the system's trading destroys \~$91K of the drift it
+captures). The real trailing stop sits at the **44th percentile of
+skill-free placebo exits** (P = 0.44 — no mechanism), and the no-stop
+control is indistinguishable. Sizing: at **his own 1% risk** on the
+zero-edge bag, P(ruin) = 0.32 and P(25% drawdown) = 0.70 with median
+terminal 0.853; the Kelly fraction is **0.0006 — seventeen times smaller
+than the fraction he taught**. Exits and sizing did not carry the system;
+drift did, and the exits threw most of it away.
+
+**The trap for the future.** This does not prove Tharp wrong *in his era* —
+diversified futures in the 1970s–90s were a different regime, and the
+replication is scoped to this basket, span, and cost model (ETF borrow,
+EOD stop-markets, effective breadth \~5–6). What it kills is the *portable*
+version of the claim — that random entries plus trailing stops plus
+percent-risk sizing constitute a system on liquid modern assets. They
+constitute a costly way to hold a drifting basket. Any follow-up (his era's
+futures, other stop multiples) is a new design, never an edit of this one.
+
 ## Related, recorded elsewhere
 
 - **Trend gate** (suspend selling during a 200-day uptrend) — a *registered*
