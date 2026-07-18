@@ -32,6 +32,7 @@ from realchains.vol_premium import (
     implied_vol,
     run_real_calendar_overlay,
     run_real_structure_overlay,
+    run_real_call_credit_spread_overlay,
     run_real_credit_spread_overlay,
     run_real_iron_condor_overlay,
     run_real_risk_reversal_overlay,
@@ -39,6 +40,7 @@ from realchains.vol_premium import (
     run_real_straddle_overlay,
     run_real_strangle_overlay,
     select_calendar,
+    select_call_credit_spread,
     select_credit_spread,
     select_iron_condor,
     select_put_entry,
@@ -1140,6 +1142,80 @@ class TestCreditSpreadMechanics:
         assert s['net_pnl'] >= worst_spread_loss - abs(0.10 * worst_spread_loss)
 
 
+class TestCallCreditSpreadMechanics:
+    """Synthetic, always-run checks of the two-leg run_real_call_credit_spread_overlay
+    (widening 5, the CARRY family's call side — the call half of the iron condor, the
+    exact mirror of the put credit spread): correct two-call-leg selection, the net
+    credit kept when price finishes below the short strike, the loss CAPPED by the
+    long wing on an upside breach, and the combined hedge going LONG stock (the
+    grammar's first short-vega-AND-short-delta overlay). Reuses the condor scenario
+    (its SC=105/0.25d + LC=110/0.10d are exactly this spread's two legs)."""
+
+    def test_selects_two_ordered_call_legs(self) -> None:
+        days = [f'2020-01-0{i + 1}' for i in range(6)]
+        dates, _, store = _condor_scenario([(d, 100.0) for d in days], _flat_condor_legs())
+        pick = select_call_credit_spread(store[dates[0]], 30, 0.25, 0.10)
+        assert pick is not None
+        sc, lc = pick
+        assert lc[6] > sc[6]                          # long-call wing strike ABOVE the short call
+        assert sc[1] > 0 and lc[1] > 0                # both calls (positive vendor delta)
+        assert sc[1] > lc[1]                          # the short sits nearer the money
+
+    def test_below_short_strike_keeps_net_credit(self) -> None:
+        """Price stays below the short strike; both calls expire worthless, so the
+        spread keeps ~its whole net credit (the win case)."""
+        days = [f'2020-02-0{i + 1}' for i in range(6)]
+        dates, prices, store = _condor_scenario([(d, 100.0) for d in days], _flat_condor_legs())
+        s, trades, _ = run_real_call_credit_spread_overlay(
+            dates, prices, store,
+            {'short_delta': 0.25, 'wing_delta': 0.10, 'capital': 100_000, 'risk_free_rate': 0.0})
+        assert len(trades) > 0
+        assert s['num_call_credit_spreads_sold'] == 1
+        assert s['net_pnl'] > 0
+        assert s['net_pnl'] == pytest.approx(s['total_premium_collected'], rel=0.02)
+
+    def test_loss_is_bounded_by_the_wing_on_a_rally(self) -> None:
+        """Price rallies through the long call: the loss is BOUNDED — the long-call
+        wing caps the option-leg payoff at the (long − short) width, so the realized
+        loss stays a fraction of the naked short call's. The combined hedge (LONG
+        stock for this short-delta structure) also GAINS on the rally, so the exact
+        loss sits inside the unhedged width formula."""
+        days = [f'2020-03-0{i + 1}' for i in range(6)]
+        price_path = [(days[0], 100.0)] + [(days[i], 100.0 + 4 * i) for i in range(1, 6)]  # -> 120
+        dates, prices, store = _condor_scenario(price_path, _flat_condor_legs())
+        s, _, _ = run_real_call_credit_spread_overlay(
+            dates, prices, store,
+            {'short_delta': 0.25, 'wing_delta': 0.10, 'capital': 100_000, 'risk_free_rate': 0.0})
+        shares = s['num_contracts'] * 100
+        credit_ps = s['total_premium_collected'] / shares
+        spread_w = 110.0 - 105.0  # short call 105 / long call 110 -> max leg loss = width − credit
+        worst_spread_loss = (credit_ps - spread_w) * shares     # the defined-risk floor on the legs
+        naked_loss = (credit_ps - (120.0 - 105.0)) * shares     # short call ITM by 15, no wing
+        assert s['net_pnl'] < 0 and abs(s['net_pnl']) < abs(naked_loss)
+        # the long-stock hedge cushions a rally, so the floor holds with slack to spare
+        assert s['net_pnl'] >= worst_spread_loss - abs(0.10 * worst_spread_loss)
+
+    def test_combined_hedge_goes_long_stock_and_cushions_the_rally(self) -> None:
+        """The hedge-SIGN pin: the same rally run WITHOUT the hedge loses more than
+        the spec's combined-hedged run — the hedge held LONG stock (short call spread
+        = net short delta) and gained as price rose."""
+        days = [f'2020-04-0{i + 1}' for i in range(6)]
+        price_path = [(days[0], 100.0)] + [(days[i], 100.0 + 4 * i) for i in range(1, 6)]
+        dates, prices, store = _condor_scenario(price_path, _flat_condor_legs())
+        params = {'short_delta': 0.25, 'wing_delta': 0.10, 'capital': 100_000,
+                  'risk_free_rate': 0.0}
+        hedged, _, _ = run_real_call_credit_spread_overlay(dates, prices, store, params)
+        spec = STRUCTURE_SPECS['call_credit_spread']
+        merged = {**spec['defaults'], **params}
+        raw_q, _, _ = run_real_structure_overlay(
+            dates, prices, store, merged, select=spec['select'],
+            entry_guard=spec['entry_guard'], hedge_mode='none',
+            management=spec['management'])
+        unhedged = spec['summary'](raw_q, merged)
+        assert hedged['net_pnl'] > unhedged['net_pnl']
+        assert unhedged['total_hedge_cost'] == 0.0
+
+
 class TestCalendarMechanics:
     """Synthetic, always-run checks of select_calendar — the only selector that
     forces a SECOND, later expiration (widening 4, the TERM family). Pin the
@@ -1433,7 +1509,8 @@ class TestGenericStructureEngineSpecs:
 
     def test_specs_are_well_formed(self) -> None:
         assert set(STRUCTURE_SPECS) == {'short_vol', 'straddle', 'iron_condor', 'strangle',
-                                        'risk_reversal', 'credit_spread', 'calendar'}
+                                        'risk_reversal', 'credit_spread', 'call_credit_spread',
+                                        'calendar'}
         for name, spec in STRUCTURE_SPECS.items():
             assert callable(spec['select'])
             assert spec['entry_guard'] in ('each_short_positive', 'net_positive')
@@ -1477,13 +1554,15 @@ _NAMED_OVERLAY = {'short_vol': run_real_short_vol_overlay,    # post-Stage-B: th
                   'strangle': run_real_strangle_overlay,     # widening 1 (the OTM straddle)
                   'risk_reversal': run_real_risk_reversal_overlay,  # widening 2 (SKEW)
                   'credit_spread': run_real_credit_spread_overlay,  # widening 3 (CARRY)
-                  'calendar': run_real_calendar_overlay}     # widening 4 (TERM, two expirations)
+                  'calendar': run_real_calendar_overlay,     # widening 4 (TERM, two expirations)
+                  'call_credit_spread': run_real_call_credit_spread_overlay}  # widening 5 (CARRY, call side)
 _STRUCT_PARAMS = {'short_vol': {'target_delta': 0.25, 'dte': 30},
                   'straddle': {'dte': 30},
                   'iron_condor': {'dte': 30, 'short_delta': 0.25, 'wing_delta': 0.10},
                   'strangle': {'dte': 30, 'short_delta': 0.25},
                   'risk_reversal': {'dte': 30, 'short_delta': 0.25},
                   'credit_spread': {'dte': 30, 'short_delta': 0.25, 'wing_delta': 0.10},
+                  'call_credit_spread': {'dte': 30, 'short_delta': 0.25, 'wing_delta': 0.10},
                   'calendar': {'near_dte': 30, 'far_dte': 60}}
 
 # The EXACT rich summary field set each named overlay produces — an INDEPENDENT reference (not the
@@ -1514,6 +1593,10 @@ _OVERLAY_SUMMARY_KEYS = {
                       'interest_earned', 'total_premium_collected', 'total_hedge_cost',
                       'hedge_cost_bps', 'num_credit_spreads_sold', 'wins', 'losses', 'win_rate',
                       'max_drawdown_pct', 'risk_free_rate', 'cash'},   # hedged 2-leg put, CARRY
+    'call_credit_spread': {'capital', 'num_contracts', 'final_equity', 'net_pnl', 'alpha_vs_cash',
+                      'interest_earned', 'total_premium_collected', 'total_hedge_cost',
+                      'hedge_cost_bps', 'num_call_credit_spreads_sold', 'wins', 'losses',
+                      'win_rate', 'max_drawdown_pct', 'risk_free_rate', 'cash'},  # 2-leg call, CARRY
     'calendar': {'capital', 'num_contracts', 'final_equity', 'net_pnl', 'alpha_vs_cash',
                  'interest_earned', 'total_premium_collected', 'total_hedge_cost', 'hedge_cost_bps',
                  'num_calendars_sold', 'wins', 'losses', 'win_rate', 'max_drawdown_pct',
@@ -1570,6 +1653,11 @@ class TestGenericStructureEngineEquivalence:
 
     def test_credit_spread_summary_complete(self, spy_merged_market) -> None:
         _assert_engine_equivalent(spy_merged_market, 'credit_spread')  # widening 3 (CARRY, put-leg)
+
+    def test_call_credit_spread_summary_complete(self, spy_merged_market) -> None:
+        # widening 5 (CARRY, call side): calls-only legs, so it trades on the canonical store
+        # even without the puts merge — must_trade keyed off the trade list as everywhere.
+        _assert_engine_equivalent(spy_merged_market, 'call_credit_spread')
 
     def test_calendar_summary_complete(self, spy_merged_market) -> None:
         # widening 4 (TERM): the first TWO-expiration structure — exercises the engine's staggered
