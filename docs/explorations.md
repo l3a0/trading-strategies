@@ -292,6 +292,53 @@ Loc 3791 lesson, portfolio edition).
 
 ---
 
+## Exit variants + defined-risk sizing on the SPY call credit spread — MEASURED, three findings (2026-07-18)
+
+**The idea.** Widening 5's sections 6–7
+([call_spread_widening_plan.md](call_spread_widening_plan.md)): on the pinned
+SPY call-credit-spread campaign cell (30 / 0.25Δ / 0.10Δ, campaign
+coordinates), run the pre-committed exit grid — three stops, two targets, the
+21-DTE time exit, both brackets — and the Gap C+B sizing sweep on the
+`defined_max_loss` risk basis (R = width − credit, its first honest use). The
+committed question the defined-risk structure makes new: does a stop add
+anything **on top of the structural width cap**, or just pay whipsaw for
+redundant protection?
+
+**How it was tested.** Nine engine runs (hold + eight variants), each reduced
+through the Gap A ledger and the intratrade ruin replay at f = 2%; the sweep at
+the Tharp fractions with the Kelly reference; and a percent-volatility
+comparison arm (position scaled by median-normalized trailing 30-day RV at
+entry, matched average exposure). All pinned in
+`TestCallSpreadExitSizingExploration` (tests/test_vol_premium.py).
+
+**The verdict — three findings.** (1) **No sign flip, again**: every variant's
+expectancy stays negative (hold −0.14R, best variant −0.05R) — the third
+independent confirmation that exit choice moves risk shape, not sign. (2) **The
+stop earns its keep even above a width cap — and charges the alpha stream for
+it.** The cap bounds the *settlement* at \~1R, but the ride is unbounded below
+it: hold-to-expiry careers touch −1.007R marks and 10.5% of f = 2% careers
+breach 50% drawdown. The 1.5× stop truncates the worst excursion to −0.458R
+and takes intratrade P(ruin) to **0.000** — while worsening the hedged excess
+(NW t −0.64 → −1.89: more cycles, more friction). Protection, priced; never
+edge. (3) **The practitioner brackets destroy the book by churn**: 562–598
+round trips turn +$57K of raw P&L *negative* (−$3.0K / −$1.1K, t \~ −5.3).
+`bracket75`, killed as a lattice choice in the registered experiment, is
+killed a second way here. Sizing: the defined-risk sweep runs P(ruin)
+0 / 0 / 0 / 0.105 / 0.692 across the Tharp fractions against the naked
+short-vol book's pinned 0 / 0.121 / 0.849 / 0.991 / 0.998 (cross-basis,
+qualitative) — **the width cap is worth roughly an order of magnitude of ruin
+at practitioner fractions**. Kelly = 0 on the negative bag, terminal medians
+monotone-declining — every positive fraction still loses long-run. And
+**Tharp's percent-volatility model is redundant on defined risk** (0.144 vs
+0.105 at f = 2%): the R unit already normalizes the risk; vol-scaling the
+size just adds dispersion.
+
+**The trap for the future.** The stop numbers are convention-flattered
+(daily-close stop-markets, all-legs-quoted triggers under-fire) and sit on a
+cell the campaign already spent; the ruin collapse is a property of *defined
+risk*, not of this strategy having merit — the bag is still negative. Any
+promotion runs through a registration, never from this entry.
+
 ## Related, recorded elsewhere
 
 - **Trend gate** (suspend selling during a 200-day uptrend) — a *registered*
