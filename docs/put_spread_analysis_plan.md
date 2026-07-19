@@ -17,7 +17,7 @@ become code.
 Every §10 requirement, mapped to the artifact that satisfies it:
 
 | §10 requirement | Artifact |
-|---|---|
+| --- | --- |
 | `walk_forward_structure` driver | `realchains/walk_forward_structure.py` (new) |
 | Exit knobs through `params` | the driver's exit-variant dicts (engine reads them natively) |
 | Arm-B spec-override switch at existing `hedge_mode='none'` | the driver's `_run_cell(..., hedged=)` seam (D1) |
