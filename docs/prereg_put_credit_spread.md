@@ -170,7 +170,7 @@ both wings exist in `iwm_option_dailies.csv`, and IWM has never run a spread.
 ### 3.1 Entry lattice (9 cells, frozen)
 
 | Axis | Values |
-|---|---|
+| --- | --- |
 | `dte` (calendar days) | 21, 30, 45 |
 | `short_delta` | 0.20, 0.25, 0.30 |
 | `wing_delta` | `short_delta − 0.05`, derived (0.15, 0.20, 0.25) |
@@ -200,7 +200,7 @@ next chain day after a cycle terminates (the engine's one-day-minimum gap).
 ### 3.2 Exit lattice (8 variants, frozen — the Gap E seams; Amendment 1)
 
 | Variant | Knobs |
-|---|---|
+| --- | --- |
 | `hold` | none (hold to expiry — the campaign convention, the baseline) |
 | `target50` | `close_at_pct = 0.50` |
 | `target75` | `close_at_pct = 0.75` |
@@ -540,7 +540,7 @@ Fixed while the outcome is unknown. Each row is the sentence published
 verbatim in that case.
 
 | Outcome | Registered language |
-|---|---|
+| --- | --- |
 | SPY t > 2 and IWM confirms | "Walk-forward-selected put credit spreads harvest a premium beyond cash and delta on SPY, replicated on a naive index (IWM); scoped to a no-GFC span with daily-close exits. Promote to a registered pin; the §2.3 mechanism clause applies as met or unmet, verbatim." |
 | SPY t > 2, IWM does not confirm | "A cost-surviving SPY result that does not replicate out of sample — treat as index-specific selection until a third index exists. Not confirmed." |
 | 0 < t ≤ 2 | "Consistent with, not evidence for. The house prior stands unrefuted; the campaign's kill is unchallenged at this power." |

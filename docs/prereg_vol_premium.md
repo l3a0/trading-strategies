@@ -264,7 +264,7 @@ Fixed while the outcome is unknown, because after results exist every author rea
 t = 1.9 as "nearly significant." Each row is the sentence published verbatim.
 
 | Outcome | Registered language |
-|---|---|
+| --- | --- |
 | SPY passes §5.1 **and** IWM confirms §5.2 | "The index volatility premium is significant on the put wing, survives realistic costs, and **replicates out-of-sample on a naive index (IWM)** — a confirmed put-wing VRP. Scoped to the in-sample regimes (no GFC); promote to a registered finding and pin." |
 | SPY passes §5.1, IWM does **not** confirm §5.2 | "A significant, cost-surviving put-wing premium on SPY that does **not** replicate out-of-sample on IWM — treat as index-specific, not confirmed, pending a third index." |
 | SPY gross t > 2 but net (0.5 bp) t ≤ 2 | "The SPY put-wing premium is real but not tradeable net of realistic hedge cost — the post-2010 picture (Dew-Becker & Giglio), now on the put wing too. (IWM reported beside.)" |
