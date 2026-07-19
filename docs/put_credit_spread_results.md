@@ -28,7 +28,7 @@ Newey-West t (one-sided, pass bar t > 2 strict) over 23 walk-forward windows,
 2014-12-01 → 2026-05-29, per-window $100K restarts:
 
 | Statistic | SPY (primary) | IWM (confirmation) |
-|---|---|---|
+| --- | --- | --- |
 | Stitched OOS hedged-excess NW t (0.5 bp) | **−2.26** | **−2.51** |
 | One-sided p | 0.988 | 0.994 |
 | Annualized Sharpe of excess | −0.58 | −0.70 |
@@ -52,7 +52,7 @@ raw P&L at an 82.6% win rate** on SPY (+$55,141 at 80.2% on IWM), beating
 cash — and decomposes, in the same breath the §8 binding clause requires:
 
 | Component | SPY | IWM |
-|---|---|---|
+| --- | --- | --- |
 | Interest on collateral | +$51,754 | +$51,800 |
 | Delta P&L (the embedded long-SPY tilt) | +$7,197 | +$7,434 |
 | Options residual (arm A, net of 0.5 bp) | **−$3,262** | **−$4,093** |

@@ -202,7 +202,7 @@ prices — was considered and declined; recording it here forecloses a
 post-registration data backfill.
 
 | Ticker | Span start | Span end | Trading days | Warm-up note |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | MSFT | 2010-05-10 | 2026-04-10 | 4,005 | signal warm 2008-10-16 (pre-span) |
 | SPY | 2010-12-01 | 2026-06-05 | 3,901 | signal warm 2008-10-16 (pre-span) |
 | QQQ | 2012-01-06 | 2026-06-05 | 3,624 | signal warm 2012-01-06; chains clean from 2011-03-23, first \~9.5 months consumed by SMA warm-up |
@@ -249,7 +249,7 @@ Treatment-assignment structure only — no outcome data was viewed. Computed
 2026-06-11 from the unadjusted closes with the §2.1 definition:
 
 | Ticker | Suspended (bull) | Sideways | Bear | Tradeable fraction | Suspension episodes | Episode length min/med/max |
-|---|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- | --- |
 | MSFT | 2,506 d (62.6%) | 23.9% | 13.6% | 0.374 | 69 | 1 / 3 / 531 |
 | SPY | 2,207 d (56.6%) | 35.6% | 7.8% | 0.434 | 86 | 1 / 5 / 229 |
 | QQQ | 2,510 d (69.3%) | 22.2% | 8.5% | 0.307 | 85 | 1 / 4 / 277 |
@@ -536,7 +536,7 @@ results exist every author reads a p of 0.07 as "nearly significant." Each
 row is the sentence that will be published, verbatim, in that case.
 
 | Outcome | Registered language |
-|---|---|
+| --- | --- |
 | Passes §6.3 | "Entry-gated call suspension survives placebo calibration on a mined 2010–2026 sample of three correlated secular-bull underlyings; untested at GFC scale (the 2020 and 2025-04 crash-and-rips are in-sample); confirmation requires a structurally different underlying, not more months of the same three." Plus the §6.3 binding clause if the vol-ablation arm matched it. |
 | `T > 0` but `p_R > 0.05` | "Consistent with, not evidence for. The house prediction stands unrefuted." |
 | `T ≤ 0`, or Stage 1 kill | "Null. The engine's no-trend-filter design choice is validated empirically (tutorial, What We'd Add Next, item 10)." |
@@ -602,7 +602,7 @@ At n ≈ 325, the pooled per-cycle mean needed to clear a conventional t = 2
 (two-sided convention, conservative for this one-sided design):
 
 | Per-cycle σ | SE of mean | Mean at t = 2 | Swing from −\$1,005 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | \$7,000 | \~\$390 | \~+\$780 | \~\$1,800 (\~0.25σ) |
 | \$10,000 | \~\$555 | \~+\$1,110 | \~\$2,100 (\~0.21σ) |
 | \$13,000 | \~\$720 | \~+\$1,440 | \~\$2,450 (\~0.19σ) |
