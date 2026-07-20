@@ -474,3 +474,117 @@ class TestSpyCcRExperiment:
         assert registered['paired']['hedge_pnl_dollars'] == \
             pytest.approx(122_721.94, abs=5.0)
         assert registered['paired']['mean_r'] == pytest.approx(-0.3084, abs=0.001)
+
+
+_NVDA = data_path('nvda_option_dailies.csv')
+_GLD = data_path('gld_option_dailies.csv')
+_HAVE_CODA = all(os.path.exists(p) or os.path.exists(p + '.gz')
+                 for p in (_NVDA, _GLD))
+
+
+@pytest.mark.skipif(not _HAVE_CODA,
+                    reason='needs nvda/gld option dailies (or .gz twins)')
+class TestNvdaGldTrueHoldExploration:
+    """The wing story's coda, pinned (2026-07-20, owner-directed): the
+    true-hold delta-hedged call-selling book (close_at_pct 1.0, no stop,
+    manage_deep_itm False — the SPY flagship's exact configuration) run on
+    the two backwards-sign tickers from the wing diagnostic. The prediction
+    the wing table invites — fattest calibration premium, best book — is
+    demolished in opposite directions:
+
+    - NVDA (+10.5 vol points of wing premium, the table's fattest):
+      **bankruptcy**. Net overlay −$6.5M on $100K; final equity NEGATIVE
+      (−$5.1M); max drawdown 185% — the account hit zero mid-span and the
+      zero-interest, never-margin-called hedge financing let the simulation
+      sail on through; the real book simply dies. Worst cycle −43.5R. The
+      unit trap made flesh: the diagnostic prices the wing against
+      UPSIDE-ONLY movement, the hedged seller pays TOTAL variance plus the
+      overnight gaps a daily close-hedge cannot touch, and NVDA is the
+      gappiest large stock alive. Both are true at once: the wing is
+      overpriced as insurance AND ruinous to sell hedged.
+    - GLD (+5.1 vol points): the best per-cycle hedged book in the
+      program — +0.188R, 65.3% wins, trade-order t **+3.10** (the highest
+      junior-judge score measured) — and the daily authority reads +0.43.
+      The third member of the tidy-endpoints/noisy-journey family, with
+      every usual asterisk: one ticker, spent data, outside any
+      pre-committed grid, so no escalation machinery applies.
+
+    EXPLORATORY, chat-level run formalized — kill-or-justify, no idea-ledger
+    rows, no e-value; the daily NW t stays the authority. Any GLD follow-up
+    is a NEW registration, never a revival of this pin. CI note: two more
+    store loads in the cc-r bucket (~3-5 min cold).
+    """
+
+    @pytest.fixture(scope='class')
+    def books(self) -> dict:
+        from common.trade_ledger import ledger_statistics
+        from engine.cc_backtest import compute_statistics
+        from realchains.cc_r_experiment import (
+            attribute_cycles, open_tail_entry, overlay_excess)
+        from realchains.real_cc_backtest import (
+            CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices,
+            run_real_cc_overlay)
+        from common.trade_ledger import build_trade_ledger
+        out = {}
+        for t in ('NVDA', 'GLD'):
+            store = load_chain_store(data_path(f'{t.lower()}_option_dailies.csv'),
+                                     start=CHAIN_CLEAN_START.get(t))
+            days = sorted(store)
+            pd_, px = load_unadjusted_prices(t, days[0], '2026-06-06')
+            pairs = [(d, p) for d, p in zip(pd_, px) if days[0] <= d <= days[-1]]
+            dates = [d for d, _ in pairs]
+            prices = [p for _, p in pairs]
+            summary, trades, eq = run_real_cc_overlay(
+                dates, prices, store,
+                {'call_delta': 0.25, 'dte': 30, 'close_at_pct': 1.0,
+                 'capital': 100_000, 'delta_hedge': True,
+                 'manage_deep_itm': False})
+            shares = summary['num_contracts'] * 100
+            native = build_trade_ledger(trades, strategy='covered_call',
+                                        ticker=t, shares=shares,
+                                        risk_basis='premium_collected')
+            excess = overlay_excess(eq, shares, summary['cash'])
+            adj, gap, tail, raw = attribute_cycles(
+                native, list(eq['date']), excess,
+                open_entry_date=open_tail_entry(trades))
+            st = ledger_statistics(adj)
+            daily = compute_statistics(eq, num_contracts=summary['num_contracts'],
+                                       cash=summary['cash'])
+            out[t] = {'summary': summary, 'ledger': st, 'records': adj,
+                      'daily_t': daily['t_stat_newey_west'],
+                      'gap_drift': gap, 'conservation': raw + tail,
+                      'excess_final': excess[-1]}
+            del store
+        return out
+
+    def test_nvda_bankruptcy(self, books) -> None:
+        n = books['NVDA']
+        assert n['ledger']['n'] == 166
+        assert n['ledger']['expectancy_r'] == pytest.approx(-0.2907, abs=0.002)
+        assert min(r.r_multiple for r in n['records']) == \
+            pytest.approx(-43.5378, abs=0.05)
+        assert n['summary']['net_overlay_pnl'] == pytest.approx(-6_505_498.38,
+                                                                abs=100.0)
+        assert n['summary']['final_equity'] < 0          # the account DIED
+        assert n['summary']['max_drawdown_pct'] > 100    # ruin mid-span
+        assert n['daily_t'] == pytest.approx(-1.28, abs=0.02)
+
+    def test_gld_best_junior_worst_senior(self, books) -> None:
+        g = books['GLD']
+        assert g['ledger']['n'] == 167
+        assert g['ledger']['expectancy_r'] == pytest.approx(0.1879, abs=0.002)
+        assert g['ledger']['win_rate'] == pytest.approx(65.3, abs=0.1)
+        assert g['ledger']['r_newey_west_t'] == pytest.approx(3.096, abs=0.02)
+        assert g['daily_t'] == pytest.approx(0.43, abs=0.02)
+        assert g['daily_t'] < 2                          # the authority shrugs
+        assert g['summary']['net_overlay_pnl'] == pytest.approx(20_219.34,
+                                                                abs=5.0)
+
+    def test_conservation_holds_even_through_ruin(self, books) -> None:
+        """The attribution identity survives a book that goes bust: cycle
+        sums still telescope to the final excess to the cent."""
+        for t in ('NVDA', 'GLD'):
+            b = books[t]
+            assert b['conservation'] == pytest.approx(b['excess_final'],
+                                                      abs=0.05)
+            assert b['gap_drift'] < 0.02
