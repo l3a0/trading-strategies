@@ -468,7 +468,7 @@ def run_real_cc_overlay(
                     # close_at_pct retains 75% of the credit actually banked.
                     # Deep-ITM keys on the SHORT delta only (the assignment leg).
                     hit_target = close_ref <= position['premium_collected'] * (1 - close_at_pct)
-                    deep_itm = delta_q > 0.70
+                    deep_itm = params.get('manage_deep_itm', True) and delta_q > 0.70
                     hit_stop = (stop_loss_mult is not None
                                 and close_ref >= position['premium_collected'] * float(stop_loss_mult))
                     if hit_target or deep_itm or hit_stop:
@@ -498,8 +498,8 @@ def run_real_cc_overlay(
         # expirations (pre-2015 backfill era) the option settles against
         # Friday's close but the loop reaches the expiration branch on Monday,
         # so the hedge unwinds at Monday's close — one weekend of hedge
-        # exposure the option leg no longer has. No pinned hedged run spans
-        # that era (the canonical chains are 2016+, trading-day expiries).
+        # exposure the option leg no longer has. The SPY cc_r_experiment pins
+        # DO span that era (disclosed in its log entry); MSFT/QQQ pins do not.
         target_hedge = (int(round(min(max(position['real_delta'], 0.0), 1.0) * shares))
                         if delta_hedge and position is not None else 0)
         hedge_trade = target_hedge - hedge_shares

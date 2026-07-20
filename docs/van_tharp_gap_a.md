@@ -252,6 +252,26 @@ labelled columns; only the last is an authority.
   (`_asymptotic_p` → e-LOND) is keyed to the daily t, so gating on a second t would recreate the
   two-authorities problem. `sqn` and `r_newey_west_t` are reported, never gates.
 
+**What each judge counts, in plain terms.** Both statistics ask the same question — is the average
+profit real, or luck? — with the same formula: mean result over the noise in the results. They are
+different judges because they disagree about what "a result" is. The trade-level scores collapse each
+cycle to a single endpoint (its R-multiple) and grade the list of endpoints on a trade-index clock; the
+daily t grades the account's actual dollar value every trading day against its benchmark. Three things
+the trade view is structurally blind to: **the ride inside each cycle** (a trade that ends at +0.8R
+after a violent month looks identical to one that glided there, but the daily test counts every swing
+as noise — the honest frame, since capital is marked and at risk every day); **size** (each R-multiple
+is divided by its own premium, so a $150-premium cycle weighs as much as a $1,500 one, while the daily
+test works in the dollars actually at stake); and **the calendar** (300 trades still live inside the
+same sixteen years of one market — the daily axis keeps that dependence visible where the HAC lags can
+see it). A book can therefore print a tidy trade-level t and an unimpressed daily t on the same P&L:
+tidy endpoints, noisy journey. The 2026-07-19 SPY covered-call re-measurement
+([explorations.md](explorations.md)) is the pinned live example — its two escalated hedged hold cells
+read +2.26 / +2.57 on the trade axis and +0.79 / +1.08 on the daily axis. And the hierarchy is frozen
+rather than weighed case-by-case for the same reason the FDR ledger exists: with two consultable
+judges, a result can always find the friendlier one after the fact — judge-shopping is multiple
+comparisons wearing a robe. One authority, chosen in writing before any result existed, is what keeps
+every pinned verdict in this repo graded on the same scale.
+
 **The only engine-hot-loop change** is recording `worst_unrealized` and emitting it (plus the entry legs /
 credit needed for R) on the close/settle events. Everything else — pairing, R, the R-multiple, the
 statistics — lives in the reduction, off the hot loop, in one place.

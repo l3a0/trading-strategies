@@ -153,6 +153,15 @@ does not survive a 4–5bp hedge cost, but SPY shares do not trade that wide. Th
 risk-free financing is **not** a drag once rf is netted on the right base — the
 verdict is identical whether the engine charges rf=0 or rf=4.5%.
 
+(Plain-language gloss, since this pair is quoted everywhere: a basis point is a
+hundredth of a percent, so charging 0.5 bp means every daily hedge rebalance
+pays 0.005% of its dollar value in friction — **$5 per $100,000 of shares
+traded**, the half-spread toll on the most liquid underlying there is. The
+gross +2.54 is the *existence* test — is a premium there at all before
+frictions? — and the net +2.25 is the **honest headline**: what survives a
+realistic toll. Prose elsewhere that says "the +2.54's honest form is +2.25"
+means exactly this row of the cost curve, not a new measurement.)
+
 ### The cross-section (rf-netted vol-P&L t-stats)
 
 Running the *same* 0.25Δ short-call instrument on every ticker that carries calls,
@@ -446,6 +455,41 @@ accounting is corrected (Lesson 2). What still bounds the result:
    measured here.
 4. **One index, \~10 years.** A short, single-asset sample on a skewed payoff has
    wide error bars; the +2.54 rests on one decade of one underlying.
+5. **The premium is convention-sized (the 2026-07-19 covered-call re-measurement).**
+   The same option, delta-hedged the same daily way, re-measured inside the
+   covered-call frame ([explorations.md](explorations.md), the SPY R-multiple
+   entry) reads **+0.41** at the covered call's baseline exit, **+0.79** with the
+   profit-take removed, and **+1.19 / +1.25** (live / this doc's frozen span)
+   with the deep-ITM forced buyback removed too — a fully-measured
+   exit-convention ladder that still tops out well short of +2.54. That the gap
+   is wrapper and not measurement is now *proven*, not argued: with both exits
+   off, the CC engine's unhedged frozen-span book reproduces this doc's
+   short-vol baseline **exactly** (n = 174 cycles, −0.5407R per cycle — the
+   Gap E pin), two independent engines converging on one book once conventions
+   match. The residual +1.25-vs-+2.54 gap is the remaining conventions: The yardsticks differ
+   (this doc's rf-netted "did the option book beat cash" vs the CC frame's
+   zero-interest "did the hedged book beat the stock" — two estimators, two
+   questions, t-stats not interchangeable). The cadence differs (\~325 round
+   trips vs 174, each paying the spread). Two smaller items pull in opposite
+   directions. The CC frame's hedge shares miss their dividends: both engines
+   mark shares on the as-traded price series and never credit the cash dividend
+   — for *base* shares the omission cancels, because the buy-and-hold benchmark
+   holds the same shares on the same series, but hedge shares are *extra* shares
+   the benchmark never holds, so nothing cancels and their lost dividends purely
+   understate the hedged book (an unpinned \~$12K-order estimate on the
+   comparable MSFT span — material against a book whose entire sixteen-year P&L
+   is −$1,401). Meanwhile this doc's number pays the 0.5 bp hedge fee the CC
+   frame charges at zero, so its honest form is +2.25 (the cost-curve gloss
+   above). Both corrections *narrow* the gap between the two measurements: one
+   small premium, two convention stacks — not two realities. Put beside the
+   entry-jitter band already on record (0.98–3.58 from
+   date placement alone), the lesson compounds: **a robust edge does not halve
+   when the profit-take convention changes — this one does, so the premium, if
+   real, is smaller than the sum of the conventions used to measure it.** That
+   fragility is itself a finding, and it is why the CC re-measurement's
+   above-bar cells (four after the deep-ITM widening, all variants of one
+   hedged hold strategy) went to a registration proposal rather than being
+   believed.
 
 ## Epistemic status
 
@@ -460,4 +504,5 @@ the put side — was **pre-registered** (`prereg_vol_premium.md`, the way
 `prereg_trend_gate.md` does) and run: a **null** on both SPY and IWM (above), the
 informative post-2010 result. The ATM straddle remains the one unspent secondary.
 See the [exploration log](explorations.md) for the prior covered-call dead end this
-builds on.
+builds on — and for the 2026-07-19 covered-call-frame re-measurement of this doc's
+headline number (limitation 5: +0.41/+0.79, the convention-sized-premium read).

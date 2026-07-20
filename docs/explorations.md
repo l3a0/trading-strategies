@@ -386,6 +386,189 @@ percent-risk sizing constitute a system on liquid modern assets. They
 constitute a costly way to hold a drifting basket. Any follow-up (his era's
 futures, other stop multiples) is a new design, never an edit of this one.
 
+## The SPY covered call in R-multiples — THE LOSS IS THE DIRECTION BILL (2026-07-19)
+
+**The idea.** The frozen design in
+[spy_cc_r_experiment_plan.md](spy_cc_r_experiment_plan.md): re-measure the
+SPY covered call in one consistent R-multiple frame — Book U (the plain CC,
+0.25Δ / 30 DTE / 0.75 close) and Book H (the same run delta-hedged, the
+engine's Israelov-Nielsen path — the missing third ticker of the
+risk-managed re-measurement after MSFT −0.23 and QQQ +0.18) — on identical
+cycles, with the hedge's share P&L attributed *into* each cycle's R (fixing
+Gap E's raw-option-cycle seam), plus the 3×3 exit grid, the sizing battery,
+and Tharp's six-market-type read. Seven priors were committed in the plan;
+contradictions are findings.
+
+**How it was tested.** Twenty engine passes (`realchains/cc_r_experiment.py`):
+the 3×3 exit grid × both books on the live span (2010-05-17 → 2026-06-05,
+4,039 days), baseline cells on the frozen registered span for comparability
+with the +2.54 short-vol pin. Every cycle's P&L re-derived from the daily
+overlay-excess path (`attribute_cycles`) under two asserted invariants —
+excess flat outside cycle windows, and Book U's attribution reproducing the
+engine's own per-trade P&L — so Book H's hedge-inclusive R stands on a
+helper validated against the engine, not on trust. (On the real books the
+cycles tile the span back-to-back, so the flatness rail is exercised by the
+synthetic tests; the Book-U per-cycle identity is the rail that bites on
+real data, and it holds on all nine unhedged cells.) All pinned in
+`TestSpyCcRExperiment` (tests/test_cc_r_experiment.py).
+
+**The verdict — the decomposition closes to the dollar.** Book U loses
+**−$124,197** (−0.30R per cycle, 65% wins, trade-order t −3.49, daily NW t
+−1.78). Book H ends at **−$1,401** — statistically and economically zero
+(−0.0001R, daily NW t +0.41). The hedge's share P&L is **+$122,796**, and
+U = H − hedge to the dollar: the SPY covered call's entire sixteen-year loss
+is the direction bill, and the insurance book underneath is breakeven.
+
+**How a buy-high/sell-low rebalancer *gains* $122,796.** The hedge buys
+shares as the market rises (delta climbing) and sells as it falls — a
+pattern that loses on every round trip, and the toll is real: the bill (the
+plan's frozen `R_U − R_H`) is *positive* in 62% of cycles (median +0.58R) —
+the chop cycles, where the hedge bled whipsaw and the plain book came out
+ahead. But the pattern is also always **net long** — it holds the short
+call's delta in shares, between 0 and 1, never short — and a long-on-average
+position collects the market's drift regardless of its rebalancing tempo.
+Over a span in which SPY multiplied \~6×, the drift ride dwarfs the toll:
+buying high only hurts if the price comes back, and SPY's didn't. Net, the
+bill runs **−0.30R per cycle**, many R deep in the rally cycles that decide
+everything — the covered call is short exactly the lumps, the same
+lumpy-drift texture as every other verdict in this log. And the +$122,796
+is not a trading profit in any meaningful sense: the hedge mirrors the short
+call's delta, so it gains almost exactly what the call's direction exposure
+loses in each rally — it doesn't beat the market, it **un-bets the bet**,
+which is why subtracting it from Book H reproduces Book U to the dollar.
+The price of the bet was $122,796. SPY's risk-managed cell joins the family near zero (+0.41 live /
++0.42 frozen): the exploratory +2.54 does **not** carry into the CC frame.
+The reconciliation, itemized — same option, same daily delta hedge, three
+wrapper differences: (1) **the exit rule**, worth roughly half the gap
+(+0.41 → +0.79 at hold): the CC frame takes profit at 75% and force-buys
+deep-ITM calls back *into rallies at the ask*, where the short-vol overlay
+rides every cycle to settlement; (2) **the yardstick**: `short_vol_statistics`
+answers "did the option book beat cash, rf netted," `compute_statistics`
+answers "did the hedged book beat the stock, zero-interest" — two
+estimators, two questions, t-stats not interchangeable across them;
+(3) **the cadence**: 325 round trips here vs the short-vol book's 174, each
+paying the bid/ask toll. Two smaller items pull opposite ways. Uncredited
+hedge-share dividends bias the CC frame *down*: the missing dividends on
+*base* shares cancel against a benchmark holding the same shares, but hedge
+shares are extras the benchmark never holds, so their lost dividends
+(an unpinned \~$12K-order estimate on the comparable MSFT span) understate
+a book whose entire P&L is −$1,401. And the +2.54 pays a **0.5 bp hedge
+fee** — $5 of friction per $100K of hedge shares traded, the half-spread
+toll — which the CC frame charges at zero, so the +2.54's honest form is
+**+2.25** (that is a row of [vol_premium.md](vol_premium.md)'s pinned cost
+curve, not a new measurement: +2.25 @0.5 bp, −0.35 @5 bp). Both
+corrections *narrow* the gap: one small premium, two convention stacks. The
+proportion lesson, next to the entry-jitter band already on record
+(0.98–3.58): **a robust edge does not halve when the profit-take convention
+changes — this premium does, so it is convention-sized**, smaller than the
+measurement choices around it. That fragility is a finding, now also
+recorded as limitation 5 of [vol_premium.md](vol_premium.md).
+
+**Priors, scored.** (1) Book U negative everywhere — confirmed, all nine
+cells (−0.13R to −0.30R). (2) The MSFT stop-whipsaw verdict **does not
+replicate per-cycle on SPY**: stops *improve* Book U's expectancy (−0.30R →
+−0.16R at 1.5×) and truncate the worst cycle (−6.58R → −2.48R) — but cycle
+count balloons 325 → 573, the dollar total barely moves (−$124K → −$118K),
+and the trade-order t **worsens** (−3.49 → −4.75): smaller, more frequent,
+more *consistent* losses. Expectancy-per-cycle and dollars disagree because
+stops manufacture cycles; read the dollars. (3) Gap E's hedged-stop
+improvement does not replicate in the CC frame: on Book H the stops shave
+expectancy at every target. (5) "No variant flips a sign" held for U and
+failed trivially for H — H's baseline sits at zero, so the hold cells tip
+positive. (6) Kelly = 0 on both baseline books. (7) **Hedging flattens the
+regime structure** — floor-cell spread 0.68R → 0.24R — and Book U's death
+cell is `bull_quiet` (−0.617R over 169 cycles, 52% of the book: the QQQ
+pattern replicated on SPY), which the hedge *flips positive* (+0.150R): the
+calm bull grind stops being the loss engine the moment direction is removed.
+Sizing: the unhedged R-stream is catastrophically un-sizable (P(ruin) 0.91
+at f = 1%, 0.997 at 2%; kelly 0), the hedged stream is merely pointless
+(ruin ≈ 0, terminal median < 1); the overwrite dial on Book U walks
+monotonically up toward buy-and-hold ($474.7K → $567.8K at 25% overwrite vs
+$598.9K for none) — every step less covered call is a step richer — while
+Book H's dial sits a whisker under buy-and-hold at every ratio (there is
+nothing to dial on a breakeven overlay).
+
+**The §8 escalation, recorded loudly.** Two hedged hold cells clear the
+pre-committed bar — `close1.0` at +0.1186R (trade-order t +2.26) and with
+the 2× stop +0.0961R (+2.57). The flag is a **doorbell, not a verdict**:
+the bar exists so a promising cell can neither be quietly believed nor
+quietly buried — it must surface, on the record, for a human decision. Per
+the plan they **escalate to a human-signed registration proposal, and
+nothing else**: the daily NW t — the
+repo's sole significance authority — reads +0.79 and +1.08 there, and these
+cells are the known SPY call-wing exploratory premium (the +2.54 family)
+wearing covered-call clothes, measured on a trade-order statistic the
+ledger's own docstring bars from gating. (Why the two scores can disagree on
+the same P&L: the trade-order t grades each cycle's single endpoint,
+equal-weighted per premium dollar, on a trade-index clock; the daily t
+grades every day's actual dollar path — the swings inside cycles, the true
+position sizes, the real calendar. Tidy endpoints, noisy journey. The full
+two-judge rationale, and why the hierarchy is frozen rather than argued
+per-result, lives in [van_tharp_gap_a.md](van_tharp_gap_a.md).) Two further deflators: these are the
+**best two of eighteen** recipes — a pre-committed bar disciplines *conduct*
+(the flag can't be dodged or invented after the fact), but it does not
+un-flatter the winners of a grid, which is precisely the selection bias a
+fresh registration exists to test through; and they are re-observations of
+a premium whose entry-date jitter alone spans 0.98–3.58. One honest arrow
+the other way: the hedge-dividend omission biases these cells *down*, not
+up. If pursued, the proposal is a registration of the delta-hedged
+hold-to-expiry call program on SPY, judged by the daily authority — not a
+promotion of this entry.
+
+**The trap for the future.** The stop cells' conventions still flatter stops
+(daily-close stop-markets, all-legs-quoted triggers), the deep-ITM close
+(delta > 0.70) was an engine invariant in the original grid — the addendum
+below made it the `manage_deep_itm` knob, so only cells without `_noitm` in
+their key carry it, and `close1.0_noitm` is a literal hold-to-expiry — and
+the per-cycle R improvements under stops
+are a denominator effect, not recovered dollars. Two hedged-book accounting
+notes travel with the pins: hedge-share dividends are uncredited (biasing
+Book H and the hedge P&L *down*), and the span includes the pre-2015
+Saturday-expiry era, where the hedge unwinds Monday against a Friday-settled
+option — one weekend of hedge exposure per such cycle (these are the first
+pinned hedged runs to span that era; the engine's convention note says so).
+The registered-span arm matches the live arm to two decimals everywhere, so
+none of this is a boundary artifact. Any follow-up runs through a
+registration.
+
+**Addendum (2026-07-19, owner-directed): the deep-ITM close becomes a knob.**
+The forced buyback at quoted delta > 0.70 was hardcoded in the real CC
+engine; the owner asked to see the experiment with and without it, so it is
+now the `manage_deep_itm` param (the structure engine's existing name;
+default True), added as a one-line, line-count-neutral engine edit —
+**proven byte-identical on the default path: all 22 previously-pinned cells
+reproduced with zero diffs.** The grid is now 3×3×2 per book (36 live
+cells; managed keys and pins untouched, `_noitm` cells new), and the frozen
+arm adds the true-hold `_noitm` pair. Four findings:
+
+1. **The cross-engine identity.** With both exits off, the frozen-span
+   unhedged book reads **n = 174 cycles at −0.5407R** — *exactly* the
+   Gap E short-vol baseline (`TestSpyExitVariantExploration`). Two
+   independent engines converge to the same book once conventions match,
+   which upgrades the +2.54-vs-CC-frame reconciliation from itemized
+   argument to proof: the gap is wrapper, not measurement.
+2. **The exit-convention ladder completes.** Hedged daily NW t: +0.41
+   (baseline) → +0.79 (hold, managed) → **+1.19 live / +1.25 frozen** (true
+   hold). The residual gap to +2.54/+2.25 is now attributable to the
+   yardstick (rf netting), the 0.5 bp hedge fee, and the uncredited hedge
+   dividends — the exit share is fully measured.
+3. **Book U: the forced buyback was a directional stop, and its value is
+   regime-dependent.** At hold its removal is catastrophic (−$78K →
+   −$168K: threatened cycles ride the full rally to expiry) while at the
+   75% target its removal *nets +$37K* (some threatened cycles recover to
+   the target; win rate 65% → 75%) — but the tail always fattens without
+   it (worst R −6.58 managed → −10.98 / −17.25 / **−23.62** across the
+   no-stop `_noitm` cells), and all 18 U cells stay negative. Same law as
+   every exit finding: the knob moves risk shape and loss timing, never
+   sign.
+4. **Book H prefers no deep-ITM close at hold** (+$39.8K vs +$21.4K; the
+   hedge already absorbs direction, so the forced buyback only paid spread
+   and timing). Its trade-order t (+2.31 live / +2.08 frozen) joins the §8
+   above-bar family — now four cells, all variants of the one strategy
+   (delta-hedged hold-to-expiry call selling on SPY), covered by the same
+   single registration proposal, and still junior-judge only: the daily
+   authority tops out at +1.19/+1.25, below 2 everywhere.
+
 ## Related, recorded elsewhere
 
 - **Trend gate** (suspend selling during a 200-day uptrend) — a *registered*
