@@ -919,6 +919,84 @@ at +2.40 — follows the standing rule: it arrives, if ever, as a *new
 registration* with a committed sign and a friction model, never as a
 revival of this entry.
 
+## Tharp's support/resistance catalog, replicated — THE QUOTE MISSES BY 30 POINTS; NOTHING BEATS RANDOM (2026-07-20)
+
+**The idea (design frozen in
+[tharp_sr_replication_plan.md](tharp_sr_replication_plan.md), PR #151).**
+The book's support/resistance catalog carries a handful of *checkable*
+claims, quoted from the committed book notes by Kindle location. We
+counted them on our own price data — two phases, no fills, no fees, just
+"did the market do what the book says," with every conditional rate
+judged against a matched-count resampled null (never the unconditional
+coin) and, in Phase 2, against random entry (never against zero — the
+drift wall). Pinned in `TestSrReplicationPins`
+(tests/test_tharp_sr_replication.py, running in CI); exploratory,
+kill-or-justify, no idea-ledger rows. Five of six committed priors
+confirmed; the contradictions are the interesting part.
+
+**Phase 1 — the "70–80% reliability" claim misses by 30+ points under
+every reading, and splits AMBIGUOUS.** The book says a close in the top
+part of the day's range gives "70 to 80 percent reliability for a more
+extreme opening in the same direction." Measured on QQQ and SPY
+(2,286/2,352 top-quartile days):
+
+| reading | QQQ | SPY | base rate | verdict |
+| --- | --- | --- | --- | --- |
+| strict (next open beyond the day's HIGH — the quote's words) | 40.4% | 39.2% | 21–22% | beats its base, but mechanically |
+| loose (next open merely higher) | 53.1% | 51.3% | 54–55% | **wrong-signed** (below base) |
+
+Neither reading approaches 70–80%. The strict reading's big edge over
+its base rate is **proximity geometry, not prediction**: a close parked
+near the high makes "open beyond the high" a short mechanical hop, the
+same way standing near a door raises the odds of walking through it.
+The loose reading — the one a trader would actually cash — runs slightly
+*below* its base rate on both tickers: after strong closes, the next
+open is marginally less likely up than average, the same mean-reversion
+sign the cooldown scout measured. Strict survives the frozen bar, loose
+fails it → **C1 records AMBIGUOUS**, and the quoted number is simply
+wrong on these instruments.
+
+**The book's "safe" companion claim fails too (prior 2 contradicted).**
+The book says the odds the market *closes* in the direction are "much
+less" than the odds it opens there. Measured: the close-up rate after a
+strong close is \~53.8% and the open-up rate \~53.1% — the same number.
+There is no "much less"; C2 CLOSED. The trending-day reversal claim
+(C3) is flat everywhere (gaps +0.002 to +0.004, p 0.77–0.84): CLOSED.
+
+**Phase 2 — zero beating cells; the book's cited study replicates
+wholesale.** Six signals (three Donchian breakouts at the Turtles' own
+lookbacks, the 200-day cross, the golden cross, the Wilder RSI(14)
+oversold recross) × four time-exit horizons × both sides × eight
+tickers: **not one cell beats matched-count random entry** — not on any
+ticker, any horizon, either side. Every signal closes at 0-of-8 on the
+pre-committed survival bar, and not even the \~5 expected false
+positives showed up. The exemplar: QQQ 20-day breakouts, 377 trades,
+59.2% winners — against a random-entry null that wins 57.3%
+(p 0.23). Entering on a breakout of resistance earns you the drift you
+would have earned entering on a random Tuesday. LeBeau & Lucas's
+conclusion — quoted in the book as "most of the indicators failed to
+perform any better than random" — needed no adjustment for 2026 ETFs.
+
+**Turtle Soup — half right, for the wrong reason.** The book says most
+20-day breakouts *now* fail (implying they used to work). The modern
+panel confirms the failure rates: 52.7% (QQQ) and 54.7% (SPY) of
+breakouts fall back below the level within five sessions. But the
+earliest panel (1999–2009) already failed at 55.0% and 65.2% — the
+decay test reads p 0.72/0.99, nowhere near significance. On index ETFs
+breakouts didn't *stop* working; they mostly *never* worked, which is
+the cooldown scout's rips-mean-revert sign wearing a chart pattern.
+
+**The trap for the future.** This closes the catalog's checkable half
+with pins: the one quantified setup claim misses by 30+ points and
+splits on a geometry artifact; the entry menu is indistinguishable from
+random entry on every instrument we trade; and the era-decay story is a
+universe mismatch (futures lore applied to mean-reverting index ETFs).
+The band-trading family remains unbuilt — it has no book-pinned number
+to check and the widest free-dial space in the catalog — and any
+revival of a specific signal here arrives as a *new* frozen design,
+never as a re-read of these cells. §6's escalation path fires for
+nothing: no claim survived.
+
 ## Related, recorded elsewhere
 
 - **Trend gate** (suspend selling during a 200-day uptrend) — a *registered*
