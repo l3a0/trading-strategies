@@ -225,9 +225,12 @@ class TestMsftCalibration:
         assert v.post_defect_frac == 0.0
 
 
-@pytest.mark.parametrize("ticker", ["GLD", "TLT", "XLE", "EEM"])
+@pytest.mark.parametrize("ticker", ["GLD", "TLT", "XLE", "EEM", "QQQ"])
 class TestNewChainsClean:
-    """The structurally-different new chains start past the placeholder era — no clip needed."""
+    """The structurally-different new chains start past the placeholder era — no clip
+    needed. QQQ joined 2026-07-20 (the wheel plan's §5 commitment): its canonical
+    calls store starts 2016-06, past the QQQQ-era pathology, so the CLEAN verdict
+    is pinned here rather than asserted in prose."""
 
     def test_clean_no_clip(self, ticker):
         path = _resolve(f"{ticker.lower()}_option_dailies.csv")

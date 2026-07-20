@@ -6,7 +6,7 @@ paths the regression tests pin, so a re-pin regenerates the figure and the
 two can never silently disagree. Nothing here is a screenshot of a
 one-off run.
 
-Three figures (house conventions: 16x9 @ 100 dpi, tab10 palette):
+Five figures (house conventions: 16x9 @ 100 dpi, tab10 palette):
 
 - ``ex1_spy_truehold_vs_spy.png`` — the flagship true-hold delta-hedged
   call-selling book indexed against SPY buy-and-hold, over its per-cycle
@@ -17,16 +17,24 @@ Three figures (house conventions: 16x9 @ 100 dpi, tab10 palette):
   the continuation past $0 is the engine's zero-interest,
   never-margin-called financing — the real account dies at the crossing,
   annotated).
+- ``ex5_wheel_r_profile.png`` — the QQQ 1-DTE wheel's Tharp trade
+  profile: per-overnight R-multiple distributions, puts and calls
+  separately (`TestQqqWheel1dteExploration` pins).
+- ``ex6_wheel_when_paid.png`` — when each side of the wheel made money:
+  QQQ with the share-holding stretches shaded, over the put and call
+  R-by-settlement-date scatters (same pins).
 
-NOT run in CI (it needs the full chain stores and produces committed
-PNGs, like the blog-only figures). Regenerate manually after any re-pin
-of the source tests:
+NOT run in CI (it needs the full chain stores — the wheel figures also
+need the local intraday gate archive — and produces committed PNGs, like
+the blog-only figures). Regenerate manually after any re-pin of the
+source tests:
 
     python -m search.make_exploration_figures
 """
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from matplotlib.figure import Figure
@@ -44,6 +52,15 @@ from realchains.real_cc_backtest import (
     load_chain_store,
     load_unadjusted_prices,
     run_real_cc_overlay,
+)
+from realchains.wheel_1dte import (
+    PRIMARY_CELL,
+    PRIMARY_START,
+    build_wheel_index,
+    load_gate_signals,
+    load_wheel_market,
+    overnight_summary,
+    run_wheel,
 )
 
 OUT = 'docs/figures'
@@ -177,6 +194,97 @@ def fig_ex4_nvda(nvda: dict[str, Any]) -> Figure:
     return fig
 
 
+def _wheel_primary() -> tuple[dict[str, Any], list[str], list[float]]:
+    """The wheel's primary cell, re-derived from the exact pinned path
+    (`TestQqqWheel1dteExploration`): the frozen PRIMARY_CELL coordinate on
+    the 2023 -> 2026-06 arm."""
+    dates, closes, store = load_wheel_market(PRIMARY_START)
+    index = build_wheel_index(dates, store)
+    del store
+    signals = load_gate_signals(dates, closes)
+    run = run_wheel(dates, closes, index, signals, **PRIMARY_CELL)
+    return run, list(dates), list(closes)
+
+
+def _side_r(run: dict[str, Any], side: str) -> tuple[list[str], list[float]]:
+    pairs = [(r.close_date, r.r_multiple)
+             for r, s in zip(run['records'], run['record_sides']) if s == side]
+    return [d for d, _ in pairs], [r for _, r in pairs]
+
+
+def _profile_note(stats: dict[str, Any]) -> str:
+    return (f"n {stats['n']}   win {stats['win_rate']}%   "
+            f"expectancy {stats['expectancy_r']:+.2f}R   "
+            f"σ(R) {stats['r_std']:.2f}   worst {stats['worst_r']:.1f}R")
+
+
+def fig_ex5_wheel_profile(run: dict[str, Any]) -> Figure:
+    """The Tharp trade profile: per-overnight R distributions by side."""
+    ov = overnight_summary(run['records'], run['record_sides'])
+    fig = Figure(figsize=FIGSIZE)
+    axes = fig.subplots(2, 1, sharex=True)
+    for ax, side, stats in ((axes[0], 'put', ov['puts']),
+                            (axes[1], 'call', ov['calls'])):
+        _, rs = _side_r(run, side)
+        lo = math.floor(min(rs) * 2) / 2
+        bins = [lo + 0.5 * k for k in range(int((1.5 - lo) / 0.5) + 2)]
+        wins = [r for r in rs if r >= 0]
+        losses = [r for r in rs if r < 0]
+        ax.hist(wins, bins=bins, color=BLUE, label=f'win ({len(wins)})')
+        ax.hist(losses, bins=bins, color=RED, label=f'loss ({len(losses)})')
+        ax.set_yscale('log')
+        ax.axvline(0, color=GRAY, lw=1)
+        ax.set_ylabel(f'{side} sales (log count)')
+        ax.set_title(f'{side}s — {_profile_note(stats)}', loc='left', fontsize=11)
+        ax.legend(loc='upper left', frameon=False)
+        ax.grid(alpha=0.25)
+    axes[1].set_xlabel('per-overnight-trade R (risk = premium collected; +1R = kept it all)')
+    fig.suptitle('QQQ 1-DTE wheel, primary cell — the trade profile: '
+                 'a wall of full premiums, a thin tail of many-R losses')
+    return fig
+
+
+def fig_ex6_wheel_when(run: dict[str, Any], dates: list[str],
+                       closes: list[float]) -> Figure:
+    """When each side made money: price with holding stretches, then the
+    put and call R-by-settlement-date scatters."""
+    fig = Figure(figsize=FIGSIZE)
+    ax_px, ax_put, ax_call = fig.subplots(
+        3, 1, sharex=True, gridspec_kw={'height_ratios': [2, 1.5, 1.5]})
+
+    x_all = [_yf(d) for d in dates[1:]]
+    ax_px.plot(x_all, closes[1:], color=GRAY, lw=1.4, label='QQQ close')
+    spans = [(r['assign_date'], r['close_date']) for r in run['rotations']]
+    if run['open_rotation'] is not None:
+        spans.append((run['open_rotation']['assign_date'], dates[-1]))
+    for j, (a, b) in enumerate(spans):
+        ax_px.axvspan(_yf(a), _yf(b), color=ORANGE, alpha=0.25,
+                      label='holding shares (rotation)' if j == 0 else None)
+    ax_px.set_ylabel('QQQ ($)')
+    ax_px.legend(loc='upper left', frameon=False)
+    ax_px.grid(alpha=0.25)
+    ax_px.set_title('The wheel state over time: cash-and-puts (white) vs '
+                    'holding-and-calls (shaded)', loc='left', fontsize=11)
+
+    for ax, side, label in ((ax_put, 'put', 'put R'), (ax_call, 'call', 'call R')):
+        ds, rs = _side_r(run, side)
+        w = [(d, r) for d, r in zip(ds, rs) if r >= 0]
+        l = [(d, r) for d, r in zip(ds, rs) if r < 0]
+        ax.scatter([_yf(d) for d, _ in w], [r for _, r in w], s=14, color=BLUE,
+                   label=f'win ({len(w)})')
+        ax.scatter([_yf(d) for d, _ in l], [r for _, r in l], s=24, color=RED,
+                   marker='D', label=f'loss ({len(l)})')
+        ax.axhline(0, color=GRAY, lw=1)
+        ax.set_ylabel(label)
+        ax.legend(loc='lower left', frameon=False, ncol=2)
+        ax.grid(alpha=0.25)
+    ax_call.set_xlabel('settlement date')
+    fig.suptitle('When the puts and the calls made money — put losses open '
+                 'the shaded stretches (assignment nights); call losses '
+                 'close them (called-away nights)')
+    return fig
+
+
 def main() -> None:
     print('SPY flagship ...', flush=True)
     store, dates, prices = _load_market('SPY', 'spy_option_dailies.csv')
@@ -202,6 +310,18 @@ def main() -> None:
     fig_ex4_nvda(nvda).savefig(f'{OUT}/ex4_nvda_coda.png',
                                dpi=SAVE_DPI, bbox_inches='tight')
     print(f'wrote {OUT}/ex4_nvda_coda.png')
+
+    print('QQQ wheel ...', flush=True)
+    wheel_run, w_dates, w_closes = _wheel_primary()
+    ov = overnight_summary(wheel_run['records'], wheel_run['record_sides'])
+    print('  puts :', _profile_note(ov['puts']))
+    print('  calls:', _profile_note(ov['calls']))
+    fig_ex5_wheel_profile(wheel_run).savefig(f'{OUT}/ex5_wheel_r_profile.png',
+                                             dpi=SAVE_DPI, bbox_inches='tight')
+    print(f'wrote {OUT}/ex5_wheel_r_profile.png')
+    fig_ex6_wheel_when(wheel_run, w_dates, w_closes).savefig(
+        f'{OUT}/ex6_wheel_when_paid.png', dpi=SAVE_DPI, bbox_inches='tight')
+    print(f'wrote {OUT}/ex6_wheel_when_paid.png')
 
 
 if __name__ == '__main__':
