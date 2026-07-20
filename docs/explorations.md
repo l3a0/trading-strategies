@@ -569,6 +569,15 @@ arm adds the true-hold `_noitm` pair. Four findings:
    single registration proposal, and still junior-judge only: the daily
    authority tops out at +1.19/+1.25, below 2 everywhere.
 
+![The flagship true-hold book and SPY buy-and-hold indexed to 100, 2010–2026, tracking almost identically to finals of 639 and 599, above a scatter of 180 per-cycle R multiples hugging zero with wins to +3.7R and losses to −3.5R, uncapped on both sides.](figures/ex1_spy_truehold_vs_spy.png)
+
+*The flagship cell (true hold, no deep-ITM) overlaid on SPY buy-and-hold —
+the two lines are one line for sixteen years, ending ×6.39 vs ×5.99: the
++$39.8K sliver. Below, its 180 cycles: a cloud hugging zero with a slight
+upward lean and no cap on either side (the hedge can push wins past +1R).
+Tidy endpoints, noisy journey — trade-order t +2.31, daily authority +1.19.
+Regenerate via `python -m search.make_exploration_figures`.*
+
 ## The wing-premium existence diagnostic — H-FLAT, the conditioning family closes (2026-07-20)
 
 **The idea, in plain terms first.** Selling a covered call is selling
@@ -728,6 +737,15 @@ market. (A fixed-share convention on a \~100× stock also balloons the
 overlay's dollar notional against the static $100K base — the R-multiples
 carry the honest per-premium story: −0.29R expectancy.)
 
+![NVDA book equity in millions, 2010–2026: it rides up to +$8M, collapses through zero in one cliff in June 2024, and continues near −$5M under the engine's fictional financing, with the account-death date annotated.](figures/ex4_nvda_coda.png)
+
+*NVDA's book equity: sixteen years of apparent riches, dead in one cliff.
+The book RIDES UP to \~+$8M on the base shares, then the −43.5R cycle
+(June 2024's AI melt-up) takes it through zero on 2024-06-10 — everything
+after the crossing is the engine's zero-interest, never-margin-called
+financing; the real book ends there. Regenerate via
+`python -m search.make_exploration_figures`.*
+
 **GLD: the best per-cycle book in the program — and the same old verdict
 shape.** +0.188R at 65.3% wins, trade-order t **+3.10** — the highest
 junior-judge score yet measured, above SPY's escalated cells — and the
@@ -735,6 +753,14 @@ daily authority reads **+0.43**: nothing. Third member of the
 tidy-endpoints/noisy-journey family, arriving with every usual asterisk
 (one ticker, spent data, outside any pre-committed grid — so no escalation
 machinery applies; this is a formalized chat run, not a §8 cell).
+
+![GLD book and buy-and-hold indexed to 100, tracking closely to finals of 303 and 283, above a scatter of 167 per-cycle R multiples hugging zero with a visible upward lean, wins to +3.8R and losses to −4.8R.](figures/ex3_gld_coda.png)
+
+*GLD's book vs buy-and-hold — the +$20.2K sliver, earned mostly in gold's
+flat 2013–2019 decade (a flat underlying is the insurance stand's paradise)
+and bleeding in the 2025–26 melt-up. Below, its 167 cycles: the steadiest
+upward lean in the program (trade-order t +3.10) that the daily authority
+still reads as nothing (+0.43).*
 
 **The trap for the future — and the moral of the whole arc.** This run is
 the empirical answer to "I don't care if it's a law as long as it
