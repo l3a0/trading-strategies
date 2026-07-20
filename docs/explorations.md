@@ -770,6 +770,155 @@ not a harvest; a junior-judge t is not a verdict; and GLD's +3.10 is the
 same shape as the +2.54 was. Any GLD follow-up arrives as a *new
 registration* with a committed sign, never as a revival of this entry.
 
+## The owner's 1-DTE QQQ wheel — EVERY CELL TRAILS HOLDING; THE LOSSES BECOME TIME (2026-07-20)
+
+**The idea (owner-specified; design frozen in
+[qqq_wheel_1dte_plan.md](qqq_wheel_1dte_plan.md), PR #149).** The **wheel**:
+sell an overnight put roughly 1% below the price (nearest −0.20 delta,
+expiring the next session); if QQQ finishes below the strike you're
+**assigned** — you buy 100 shares at the strike — and you switch to selling
+overnight calls above your **cost basis** until the shares are called away.
+The owner's three rules, tested verbatim: never sell a call struck below
+what the shares cost; only sell puts on an up day (the 3:55pm signal,
+measured strictly before the fill); and if nothing sellable sits within
+±0.05 of the 0.20-delta target, sell nothing that night. The verdict is
+apples to apples: the same $100K against a book holding exactly the 100
+shares one contract controls, idle cash at the same yield (0% primary —
+the owner's brokerage sweep). Pinned in `TestQqqWheel1dteExploration`
+(tests/test_wheel_1dte.py); exploratory, kill-or-justify, no idea-ledger
+rows.
+
+**The verdict — every configuration loses to just holding the shares.**
+
+| cell (2023 → 2026-06 unless noted) | daily NW t | gap vs holding | rotations | raw win rate |
+| --- | --- | --- | --- | --- |
+| **primary (the owner's spec)** | **−1.04** | **−$9.8K** | 37 | **100%** |
+| gate off | −1.33 | −$9.4K | 42 | 100% |
+| basis rule off | −1.84 | −$23.8K | 57 | 64.9% |
+| worst stop cell (−5%, ungated) | −2.86 | −$30.1K | 69 | 79.7% |
+| full span 2016 → 2026 (three selloffs) | −1.27 | −$14.1K | 48 | 100% |
+
+All **48 grid cells** are negative (best −0.74, worst −2.86); nothing
+approaches the pre-committed +2 escalation bar. The wheel made real money
+— +$34.3K on the primary cell — while the 100 shares it periodically
+declined to hold made +$44.1K.
+
+**The 100% win rate is the rule's arithmetic, not evidence.** The plan
+predicted this before the run: with the basis rule on, a *closed* rotation
+almost cannot end red — call-away at-or-above basis plus premiums is green
+by construction. All 37 primary rotations closed green ("assigned, held
+until called away at a profit, premium retained" — exactly the
+practitioner's experience). The losses didn't vanish; they changed shape
+into **time**. The worst primary rotation sat 77 trading days underwater.
+On the full span the wheel survived 2018, 2020, and 2022 with its 100%
+intact — by sitting through a **372-day** underwater stretch (485 days in
+the gate-off twin), selling nothing, a full QQQ position waiting to get
+back to even. The ablation shows the alternative: rule off realizes stock
+losses via call-away (win rate 64.9%) and loses *more* (−$23.8K), because
+at 1-DTE the unconstrained 0.20-delta call sits so close to the price
+that a drawdown's recovery keeps getting sold away near the bottom.
+
+**The junior/senior split, fourth appearance.** The per-overnight-trade
+ledger *likes* this strategy: 423 sales, 84.2% winners, expectancy +0.22R,
+trade-order t **+2.13**. The daily authority reads **−1.04**. Same
+tidy-endpoints/noisy-journey shape as the covered-call, GLD, and
+put-spread stories: counting trades equal-weights premium dollars;
+counting days prices what the money actually did — including all the
+nights the collateral sat out of the market.
+
+**The gate did almost nothing — and the state machine explains why.** It
+blocked 141 nights but cost only 28 put sales (304 → 276): a blocked
+night usually just delays the same sale to the next up day. Its t
+(−1.04) is marginally better than the ablation's (−1.33) — trading a
+losing proposition less often, not timing skill — and the naive
+close-over-close variant lands identically (−1.05), with the 3:55-vs-close
+disagreement rate at 3.0% (26 of 859 days) and zero fallback days. Prior
+8 held; the "\~42% fewer sales" arithmetic in prior 3 did not survive
+contact with the state machine.
+
+**Where the money actually went.** Premiums collected $23.3K; fees $275;
+assignment losses $7.9K on the way in, more than recovered by +$19.2K of
+holding-period share gains on the way out. Every bucket is positive-sum —
+and the book still trails, because on the \~580 nights the wheel sat in
+cash or carried only a 0.20-delta put, QQQ compounded for the comparator.
+The 4.5% money-market twin narrows the gap by only $2.8K (−$9.8K →
+−$6.9K): the comparator's own idle $73K earns the same rate, so the
+symmetric accounting nets most of the interest question out of the
+verdict, as designed.
+
+**One right-signed number, labeled carefully.** The §7 decomposition
+companion — the same legs replayed with a static overnight delta-hedge —
+splits the +$34.3K into **+$27.2K of hedged option P&L** (daily NW t
+**+2.40**) plus a $7.1K direction bill. Read plainly: the overnight
+premiums themselves measured positive after hedging out the market. Every
+asterisk applies: this is a friction-light diagnostic replay (the hedge
+trades \~20–80 shares nightly at no cost), it is not a grid cell and
+clears no pre-committed bar, and it is the same *shape* as the +2.54
+call-wing number whose registered confirmations have failed on every
+attempt (hedged CC −0.23/+0.18; put-spread −2.26/−2.51). It records here
+as an echo, not an edge.
+
+**Sizing had nothing to size.** The marble-bag resamples an all-green
+rotation bag: ruin probability 0, Kelly literally *unbounded* — the §9
+anticipation confirmed. When a sizing battery reports that betting more
+is always better, it is telling you the bag left the risk out: the risk
+lives in the underwater stretches and the open rotation, which the
+closed-rotation bag cannot contain.
+
+**The trade profile — what running this live should look like.** Tharp's
+monitoring discipline: know your system's R distribution *before* trading
+it, so live results can be checked against the profile instead of judged
+by feel. In the table, **expectancy** is the average trade in R and
+**σ(R)** is the standard deviation of the R-multiples — the typical
+scatter of a single trade around that average, the volatility half of
+Tharp's system-quality math. Here almost all of the σ comes from the loss
+tail, so the histogram below carries what σ alone understates. The
+wheel's profile, per side:
+
+| side | trades | win rate | expectancy | σ(R) | worst |
+| --- | --- | --- | --- | --- | --- |
+| puts | 276 | 88.0% | **+0.45R** | 1.90 | −11.5R |
+| calls | 147 | 76.9% | **−0.20R** | 2.87 | −15.8R |
+
+Two structural facts a live trader should expect, not fear. First, **the
+put side carries all the per-trade expectancy** — a wall of kept premiums
+at \~+1R, interrupted about once a month by a multi-R assignment print
+(33 losses in 41 months, never more than two in a month on this tape,
+worst −11.5R on a single overnight gap). Second, **the call side loses
+per trade by construction**: all 34 call "losses" land on called-away
+nights — the very nights a rotation delivers its profit. The ledger
+charges the shares' upside surrender to the call while the rotation books
+the win; a live wheel-runner seeing red call trades is watching the
+strategy *work*, and seeing none would mean the shares never leave.
+
+![Two log-scale histograms of per-overnight R multiples. Puts: 243 wins massed at about +1R, 33 losses spread thinly from −0.2R to −11.5R. Calls: 113 wins massed at +1R, 34 losses spread to −15.8R. Panel titles carry each side's n, win rate, expectancy, sigma, and worst R.](figures/ex5_wheel_r_profile.png)
+
+*The wheel's R distribution, puts (top) and calls (bottom), log counts.
+The shape to monitor against: a tall +1R wall (88% / 77% of trades) and a
+thin many-R loss tail. Live execution drifting from this — losses more
+often than \~monthly on the put side, or call losses that are NOT
+called-away nights — is off-profile. Regenerate via
+`python -m search.make_exploration_figures`.*
+
+![Three time panels, 2023 through mid-2026. Top: QQQ's climb from about 266 to 740 with orange shading over every share-holding stretch, including long blocks in 2024 and 2025. Middle: put R by settlement date — wins hug +1R continuously, losses scatter to −11.5R. Bottom: call R by settlement date — wins at +1R inside the shaded stretches, losses to −15.8R at their ends.](figures/ex6_wheel_when_paid.png)
+
+*When each side made money. Puts earn steadily whenever the wheel is in
+cash (the unshaded stretches) and lose on the nights that open a shaded
+stretch — assignments. Calls trade only inside the shaded stretches and
+their losses cluster at the stretch endings — called-away nights, the
+rotation's payday. The 2024–2025 tape spends long spans shaded: assigned
+into dips, waiting at the basis floor. Regenerate via
+`python -m search.make_exploration_figures`.*
+
+**The trap for the future.** The wheel, measured, is a slower and
+premium-decorated way to hold QQQ: its income is real, its win rate is a
+bookkeeping identity, and its cost is compounding time out of the market
+— none of which any dial (gate, stop, sizing, basis definition, fill,
+cash yield) flipped. The one live thread — the hedged 1-DTE premium echo
+at +2.40 — follows the standing rule: it arrives, if ever, as a *new
+registration* with a committed sign and a friction model, never as a
+revival of this entry.
+
 ## Related, recorded elsewhere
 
 - **Trend gate** (suspend selling during a 200-day uptrend) — a *registered*
