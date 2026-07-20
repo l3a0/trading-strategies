@@ -690,6 +690,60 @@ category or a freak. Both steps executed:
    **nothing**: no registration is licensed, the H-flat verdict stands,
    and the family stays closed. Pinned in `TestWingPremiumContrast`.
 
+## The backwards-sign tickers, actually sold — ONE BANKRUPTCY, ONE SLIVER (2026-07-20)
+
+**The idea.** The coda to the wing story, owner-directed. The wing
+diagnostic's table invites a bet: NVDA and GLD carry the *fattest* average
+wing premiums (+10.5 and +5.1 vol points) — so selling their wings should
+build the best books. Run the exact flagship configuration (delta-hedged,
+hold-to-expiry, no deep-ITM management — the SPY book that made +$39.8K)
+on both and find out. Pinned in `TestNvdaGldTrueHoldExploration`
+(tests/test_cc_r_experiment.py); exploratory, kill-or-justify, no
+idea-ledger rows.
+
+**The verdict — the prediction is demolished in opposite directions.**
+
+| | NVDA | GLD | SPY flagship |
+| --- | --- | --- | --- |
+| Wing premium (diagnostic) | +10.5 vol pts | +5.1 | +1.8 |
+| Net overlay, 16y on $100K | **−$6.5M** | **+$20.2K** | +$39.8K |
+| Final equity | **−$5.1M (dead)** | $302.8K | $638.7K |
+| Worst cycle | **−43.5R** | −4.8R | −3.5R |
+| Junior judge (trade-order t) | −1.02 | **+3.10** | +2.31 |
+| Senior judge (daily t) | −1.28 | +0.43 | +1.19 |
+
+**NVDA: the fattest premium bankrupted the seller.** Honesty first: the
+−$6.5M is a fantasy continuation — the engine's hedge financing charges no
+interest and never margin-calls, so the simulation sails through the point
+(max drawdown 185%) where the real account simply *dies*, years before the
+span ends. Why the diagnostic and the book don't contradict each other is
+the unit trap in the flesh: the diagnostic prices the wing against
+**upside-only** movement at one strike, while the hedged seller pays for
+**total** movement — down-wiggles and, above all, the overnight earnings
+gaps a once-a-day hedge cannot touch, on the gappiest large stock alive.
+Both true at once: NVDA melt-up insurance is overpriced *as insurance*,
+and selling it *hedged* is ruinous, because the hedge converts the seller
+into a short-total-variance position on the most variant stock in the
+market. (A fixed-share convention on a \~100× stock also balloons the
+overlay's dollar notional against the static $100K base — the R-multiples
+carry the honest per-premium story: −0.29R expectancy.)
+
+**GLD: the best per-cycle book in the program — and the same old verdict
+shape.** +0.188R at 65.3% wins, trade-order t **+3.10** — the highest
+junior-judge score yet measured, above SPY's escalated cells — and the
+daily authority reads **+0.43**: nothing. Third member of the
+tidy-endpoints/noisy-journey family, arriving with every usual asterisk
+(one ticker, spent data, outside any pre-committed grid — so no escalation
+machinery applies; this is a formalized chat run, not a §8 cell).
+
+**The trap for the future — and the moral of the whole arc.** This run is
+the empirical answer to "I don't care if it's a law as long as it
+generates alpha": we took the two most exciting backwards-sign tickers and
+sold their wings — one bankruptcy, one sliver. A calibration premium is
+not a harvest; a junior-judge t is not a verdict; and GLD's +3.10 is the
+same shape as the +2.54 was. Any GLD follow-up arrives as a *new
+registration* with a committed sign, never as a revival of this entry.
+
 ## Related, recorded elsewhere
 
 - **Trend gate** (suspend selling during a 200-day uptrend) — a *registered*
