@@ -268,12 +268,12 @@ def fig_ex6_wheel_when(run: dict[str, Any], dates: list[str],
 
     for ax, side, label in ((ax_put, 'put', 'put R'), (ax_call, 'call', 'call R')):
         ds, rs = _side_r(run, side)
-        w = [(d, r) for d, r in zip(ds, rs) if r >= 0]
-        l = [(d, r) for d, r in zip(ds, rs) if r < 0]
-        ax.scatter([_yf(d) for d, _ in w], [r for _, r in w], s=14, color=BLUE,
-                   label=f'win ({len(w)})')
-        ax.scatter([_yf(d) for d, _ in l], [r for _, r in l], s=24, color=RED,
-                   marker='D', label=f'loss ({len(l)})')
+        wins = [(d, r) for d, r in zip(ds, rs) if r >= 0]
+        losses = [(d, r) for d, r in zip(ds, rs) if r < 0]
+        ax.scatter([_yf(d) for d, _ in wins], [r for _, r in wins], s=14,
+                   color=BLUE, label=f'win ({len(wins)})')
+        ax.scatter([_yf(d) for d, _ in losses], [r for _, r in losses], s=24,
+                   color=RED, marker='D', label=f'loss ({len(losses)})')
         ax.axhline(0, color=GRAY, lw=1)
         ax.set_ylabel(label)
         ax.legend(loc='lower left', frameon=False, ncol=2)
