@@ -41,8 +41,10 @@ The owner's specification, tested exactly as given:
    down day (the owner-directed entry gate, §4).
 4. Idle cash earns **nothing** — the owner's brokerage (Schwab) sweeps
    cash at effectively zero, so the primary run credits 0% (§6).
-5. The verdict is the head-to-head against **buy-and-hold QQQ** on the
-   same $100K (§7).
+5. The verdict is the head-to-head against **holding the shares the
+   contracts control** — 100 shares per contract, same capital, same
+   cash yield on the rest (§6–§7). Apples to apples: one contract
+   against its hundred shares, nothing else different.
 
 Why 1-DTE and not the 0-DTE version originally asked about: a 0-DTE
 option is sold in the morning and dies at that afternoon's close, and
@@ -62,8 +64,8 @@ to four calendar days — a Friday sale carries the whole weekend, §5). An
 entry — here the premium collected, so keeping the whole premium is +1R
 and losses are open-ended. **Newey-West t** (NW t below) is a
 t-statistic (signal divided by noise) robust to overlapping/correlated
-returns; the **daily** NW t on the gap to buy-and-hold is this repo's
-senior judge and the only significance authority. **Assignment** is
+returns; the **daily** NW t on the gap to the share-holding comparator
+(§6) is this repo's senior judge and the only significance authority. **Assignment** is
 being made to honor the promise: buying at the put strike, or delivering
 shares at the call strike. **Cost basis** is what the shares cost you —
 here the strike you were assigned at (a premium-adjusted variant runs in
@@ -297,11 +299,14 @@ their outcomes are reported separately as a diagnostic.
 
 ## 6. Accounting (frozen)
 
-- **Fills at the bid.** Premiums at this tenor are small (roughly $0.50–
-  $1.50 per share) and the bid-ask spread is a real fraction of them;
-  selling at the bid is the conservative floor. A mid-price twin of the
-  primary cell is reported as a diagnostic so the spread's cost is a
-  visible dollar figure, not an assumption.
+- **Fills at the mid** (owner-directed, 2026-07-20: the owner
+  consistently gets mid fills on QQQ, and the convention should match
+  the account being modeled). Premiums at this tenor are small (roughly
+  $0.50–$1.50 per share) and the bid-ask spread is a real fraction of
+  them, so the fill convention materially moves the verdict — a
+  **bid-fill twin** of the primary cell is reported as the conservative
+  floor, and if the verdict's sign differs between mid and bid, the
+  edge is the spread, not the strategy.
 - **Fees**: $0.65 per contract sold (the owner's brokerage rate); $0 for
   assignment, exercise, and stock trades.
 - **Idle cash earns 0% in the primary arm.** The owner's brokerage sweep
@@ -314,15 +319,21 @@ their outcomes are reported separately as a diagnostic.
   decomposition put interest at +$51.8K of the book's +$55.7K apparent
   profit — \~93%; this pair makes the same decomposition explicit for
   the wheel.
-- **Dividends are omitted from both books.** The buy-and-hold comparator
-  runs on unadjusted prices, so it forfeits QQQ's \~0.6%/yr dividend
-  yield continuously, while the wheel forfeits it only during
+- **Dividends are omitted from both books.** The comparator runs on
+  unadjusted prices, so it forfeits QQQ's \~0.6%/yr dividend yield on
+  its 100 shares continuously, while the wheel forfeits it only during
   share-holding stretches. The omission therefore *flatters the wheel*
   in the head-to-head, by roughly the dividend yield times the share of
-  time buy-and-hold-only would have collected it — disclosed, not
-  repaired, and bounded in the report.
-- **Capital**: $100,000. Buy-and-hold: the same $100,000 fully into QQQ
-  at the arm's first close, fractional shares, no interest.
+  time only the comparator held stock — disclosed, not repaired, and
+  bounded in the report.
+- **Capital**: $100,000 in both books. The comparator is **apples to
+  apples per contract** (owner-directed, 2026-07-20): it holds exactly
+  the shares the wheel's contracts control — 100 shares per contract
+  notch, bought at the arm's first close — with the residual capital in
+  cash at the same cash yield the wheel's arm credits. Not a
+  fully-invested $100K index position: the two books hold the same
+  capital and the same maximum share exposure, so the daily gap
+  isolates what the option activity adds or subtracts.
 - **Window ends**: the last sale occurs on the last day whose settlement
   lands inside the arm; both books mark to the arm's final close, and
   shares still held at the end are marked, not force-sold.
@@ -333,9 +344,13 @@ their outcomes are reported separately as a diagnostic.
 
 **Senior judge — the only significance authority**: the daily Newey-West
 t (`newey_west_summary`) on the daily gap between the wheel book and the
-buy-and-hold book, per cell. Comparing against buy-and-hold prices both
-sides of the cash question at once: any interest the wheel earns and any
-QQQ return its idle cash forgoes both land in the same daily series.
+100-share comparator (§6), per cell. Both books hold the same capital
+and credit the same yield on idle cash, so the gap isolates what the
+option activity adds to or subtracts from simply owning the shares one
+contract controls. Direction differences remain part of the strategy
+and stay in the gap: a put night carries \~20 shares' worth of market
+exposure (0.20 delta × 100) against the comparator's 100, and a night
+in cash carries none.
 
 **Junior judges — descriptive, never gating** (the frozen hierarchy from
 the CC-R experiment):
@@ -347,9 +362,27 @@ the CC-R experiment):
   through a 0.7%-out-of-the-money strike against a \~$1 premium is a
   −10R to −20R print.
 - **Per-rotation ledger**: one cycle = CASH → assignment → holding →
-  back to CASH, attributed from the daily gap series by date interval
-  (the `attribute_cycles` frame), so the basis rule's premium-less
-  holding stretches live *inside* the cycle that caused them.
+  back to CASH, carrying **two P&L columns per row**. The **raw-dollar
+  column** is the practitioner's accounting — the assigning put's
+  premium (kept regardless), every call premium collected while
+  holding, the realized share P&L at exit, interest, minus fees — so
+  "assigned, held until called away at a profit, premium retained" is a
+  measured fact, summarized by the **rotation win rate**, the **rescue
+  share** (rotations whose assignment-day paper loss ended green), and
+  the **days-underwater distribution** (assignment to call-away). The
+  **gap column** attributes the same date interval from the daily
+  gap-to-comparator series (the `attribute_cycles` frame), so the
+  basis rule's premium-less holding stretches live *inside* the cycle
+  that caused them. The two columns answer different questions — raw:
+  did the rotation end green? gap: did those days beat just holding
+  the same 100 shares? — and can disagree; both pin. Stated in advance: with the basis
+  rule on, a *closed* rotation is green nearly by construction (the
+  rule refuses to close below basis), so a high raw win rate is the
+  rule's arithmetic, not evidence — the losses change shape instead,
+  into time underwater and into any **rotation still open at window
+  end**, which is reported open, never dropped. Raw rotation P&L plus
+  cash-period P&L must sum to the book's final-minus-initial equity
+  (the conservation check).
 - **Cash-plus-interest gap** and the descriptive dollar decomposition
   (premium collected, assignment losses, holding-period share P&L, fees,
   interest), reported per cell. The buckets partition: an assignment
@@ -393,7 +426,7 @@ Beyond the grid: the two secondary-arm runs (§5), the basis-definition
 variant (cost basis = assignment strike minus *all* premiums collected
 this rotation so far, the assigning put's included, recomputed as each
 premium arrives — a floor that ratchets down; primary cell only), the
-close-over-close gate variant (§3), and the mid-fill diagnostic (§6) —
+close-over-close gate variant (§3), and the bid-fill floor (§6) —
 each a single additional run, none crossed into the grid.
 
 Notes fixed in advance: with the basis rule **off**, the call is simply
@@ -402,8 +435,8 @@ stock losses via call-away; that is the point of the ablation. At 2
 contracts, `strike × 200` exceeds $100K once QQQ trades above \~$500, so
 the affordability clamp (§2) binds late in the window — the share of
 clamped days is reported. Double assignment at 2 contracts puts the book
-\~100% in stock, at which point the wheel *is* buy-and-hold until called
-away.
+fully in stock — 200 shares against the comparator's 200 — at which
+point the wheel *is* the comparator until called away.
 
 ---
 
@@ -436,12 +469,12 @@ book's real drawdowns.
 
 | # | Claim | Basis |
 | --- | --- | --- |
-| 1 | The primary cell trails buy-and-hold (daily NW t < 0) on 2023–2026. | A cash-secured −0.20Δ put is \~one-fifth as invested as buy-and-hold in a bull tape; the direction bill dominates. |
+| 1 | The primary cell trails the 100-share comparator (daily NW t < 0) on 2023–2026. | A put night carries \~20 shares of exposure against the comparator's 100 in a bull tape; the direction bill dominates. |
 | 2 | Put-sale win rate ≥ 75% while rotation expectancy is \~0 or negative. | −0.20Δ ≈ 80% expire-worthless by construction; the CC-R shape. |
 | 3 | The up-day gate does not improve the daily verdict; its main effect is \~42–43% fewer sales. | Five conditioning nulls; near-zero/negative daily autocorrelation; the cooldown scout's backwards sign. |
 | 4 | The basis rule's frozen stretches concentrate after assignments in drawdowns; the rule-off twin collects more premium but realizes stock losses; neither flips the verdict sign. | The CC-R exit lesson — exits manufacture cycles. |
 | 5 | Stock stops improve per-rotation R while the daily authority barely moves. | `TestSpyCcRExperiment`'s stop cells. |
-| 6 | The 4.5% arm beats the 0% arm by roughly the interest on average idle cash, and that interest exceeds the entire premium harvest. | The put-spread finding: interest was \~93% of apparent profit. |
+| 6 | The 4.5% arm lifts the wheel book by roughly the interest on average idle cash — more than the entire premium harvest — while the head-to-head gap barely moves, because the comparator credits the same yield on its own idle cash. | The put-spread finding: interest was \~93% of apparent profit; the symmetric comparator nets it out of the verdict. |
 | 7 | The decomposition companion shows overnight put premium alone \~0 or negative. | The registered put-side NULL (SPY −2.26 / IWM −2.51) — a cousin, not the same cell; stated as analogy. |
 | 8 | The 3:55-vs-close gate disagreement rate is low single-digit percent, and the gate verdict does not flip between definitions. | Knife-edge days are rare; if it flips, the gate's edge was the last five minutes (§3). |
 
@@ -456,8 +489,8 @@ This is a 48-cell search plus named variants; the batch is reported **in
 full** — every cell, wrong-signed and boring cells included, and any
 "best cell" is read knowing it won a 48-way selection. The pre-committed
 escalation bar, mirroring the CC-R and call-spread precedents: a cell
-interests us only if its daily Newey-West t against buy-and-hold exceeds
-**+2** on the primary arm. At or below the bar it records as closed.
+interests us only if its daily Newey-West t against the comparator
+exceeds **+2** on the primary arm. At or below the bar it records as closed.
 Above the bar it escalates to a human-signed registration proposal —
 nothing in this experiment promotes directly.
 
@@ -490,10 +523,11 @@ nothing in this experiment promotes directly.
   the affordability clamp; conservation — summed daily P&L equals final
   minus initial equity to the cent) plus a dataset-gated
   `TestQqqWheel1dteExploration` pinning the decisive numbers: the
-  primary cell's daily NW t, final equities (wheel vs. buy-and-hold),
-  rotation count and expectancy, the gate-on/off pair, the basis-rule
-  pair, the disagreement rate, the eligible-day calendar counts (§5),
-  and the sizing-battery outputs. The
+  primary cell's daily NW t, final equities (wheel vs. comparator),
+  rotation count and expectancy in both ledger columns (raw and gap,
+  §7) with the rescue share and days-underwater summary, the
+  gate-on/off pair, the basis-rule pair, the disagreement rate, the
+  eligible-day calendar counts (§5), and the sizing-battery outputs. The
   dataset gate requires both chain stores *and* the intraday archive;
   absent any of them the class skips (it cannot run in CI until the
   intraday file is published — a separate, human-gated decision).
