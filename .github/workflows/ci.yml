@@ -194,6 +194,7 @@ jobs:
           - {bucket: edge-search,   files: "tests/test_edge_search.py tests/test_validate_dailies.py tests/test_read_gate_wire.py tests/test_generative_grammar.py tests/test_generative_engine.py tests/test_generative_proposer.py tests/test_generative_search.py tests/test_backend.py tests/test_factor_backend.py tests/test_factor_grammar.py tests/test_factor_engine.py tests/test_factor_mechanism.py tests/test_factor_search.py tests/test_factor_proposer.py tests/test_factor_panel.py", args: "-n auto --dist loadscope"}
           - {bucket: trend-explore, files: "tests/test_trend_gate.py tests/test_explorations.py tests/test_trade_ledger.py tests/test_walk_forward_structure.py", args: ""}
           - {bucket: cc-r,          files: "tests/test_cc_r_experiment.py", args: ""}
+          - {bucket: wing,          files: "tests/test_wing_premium.py", args: ""}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

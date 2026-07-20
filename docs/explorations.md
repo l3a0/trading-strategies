@@ -569,6 +569,98 @@ arm adds the true-hold `_noitm` pair. Four findings:
    single registration proposal, and still junior-judge only: the daily
    authority tops out at +1.19/+1.25, below 2 everywhere.
 
+## The wing-premium existence diagnostic — H-FLAT, the conditioning family closes (2026-07-20)
+
+**The idea, in plain terms first.** Selling a covered call is selling
+melt-up insurance. The question here: does the *overpricing* of that
+insurance grow or shrink with the state of the market — predictably enough
+to time your selling? Three gate proposals all assumed yes, in different
+directions: sell when the insurance looks *rich* (betting spikes are
+overreactions), sell when it looks *cheap* (betting cheap means safe), or
+sell into *vol spikes*. The frozen design of
+[wing_premium_diagnostic_plan.md](wing_premium_diagnostic_plan.md) (#143)
+measures the one claim all three share — that the wing risk premium is
+**state-dependent** — before any of them can spend strategy sample.
+Per non-overlapping \~30-DTE cycle: what the 0.25Δ wing charged (IV backed
+out of quote midpoints, vendor deltas selecting strikes only) minus the
+realized upside semivolatility that followed, conditioned on the wing
+spread's own point-in-time percentile, judged by Spearman ρ against 1,000
+seeded circular shifts. Verdict rule, frozen: LIVE iff **both** QQQ and SPY
+reach placebo-p ≤ 0.05 with the same sign.
+
+**How it was tested.** `search/wing_premium.py`, \~150–170 cycles per ticker
+over \~15 years (QQQ 153, SPY 168; MSFT 159 and NVDA 154 as exploratory
+contrast), all §9 rails green (ATM-vs-vendor cross-checks 0.986–0.998,
+coverage ≥ 0.97, median delta-miss ≤ 0.02, zero demotions; truncated tail
+cycles dropped, never measured). The module survived an adversarial review
+before pinning (ten findings fixed, including a truncated-final-cycle trap,
+trading-day percentile windows, and a decoupling of the §9 reliability
+rails from the §5 verdict rule). Pinned in `TestWingPremiumDiagnostic`
+(tests/test_wing_premium.py).
+
+**The verdict — H-flat, with three findings inside the null.** (Two terms,
+glossed once: ρ is the Spearman rank correlation — a *trend score* between
+−1 and +1 asking "as the wing gets richer, does the subsequent premium
+rise or fall?" — and placebo-p is how often 1,000 shuffled arrangements of
+the same data produce a trend that strong by pure luck.)
+
+1. **On SPY, expensive insurance turned out to be expensive *for a reason*
+   — but only on SPY.** ρ = **−0.265**, placebo-p 0.001: the pricier the
+   wing looked on the day you would sell it, the *less* extra markup you
+   collected afterward — a pattern luck produces about once per thousand
+   shuffles, and robust across the §8 variants (0.20Δ/0.30Δ wings, the
+   504-day window; weaker on full realized vol). Translation: when the
+   market bids up melt-up insurance, it partly *knows something* — the fat
+   premium is fair payment for elevated risk, not an overreaction to sell
+   into. That refutes the rich-wing gate on its own terms. Why it is not a
+   verdict: the identical test on QQQ — a near-twin index — found nothing
+   (−0.105, p 0.389, no variant close), and the frozen two-ticker rule
+   exists because of a scar: the +2.54 was one ticker's impressive number
+   that wobbled 0.98–3.58 under entry-date jitter. A real law of markets
+   should not vanish when you cross the street from SPY to QQQ. This one
+   did.
+2. **Cheap insurance is not cheap — and you can see it by counting, no
+   statistics required.** On days when the wing sat in its cheapest fifth,
+   its own price implied \~24% odds of finishing above the strike. It
+   actually finished above **54% (QQQ) / 56% (SPY)** of the time — *double
+   the advertised rate*, on both verdict tickers. Selling the cheap wing is
+   selling hurricane coverage at sunny-day rates in hurricane season: the
+   low premium is the market underestimating how often a calm market
+   drifts through a nearby strike. That buries the cheap-wing gate by
+   itself — and it is the covered call's calm-bull death cell
+   (`bull_quiet`, the CC R-experiment entry above) seen from the
+   price-tag side.
+3. **The markup itself is real everywhere — but existence was never the
+   question.** On average the wing charges more than reality delivers:
+   QQQ +3.0 / SPY +1.8 vol points (MSFT +4.5; NVDA +10.5) — the +2.54
+   family re-observed from the calibration side, and the CC R-experiment
+   already measured what harvesting it nets after real frictions (a
+   sliver). The gates did not need the markup to exist; they needed it to
+   swell and shrink *predictably by state*, and that failed to replicate
+   across the index pair. The NVDA footnote runs **backwards** (+0.217,
+   p 0.001: richer wings meant *fatter* markups — the overreaction
+   signature, consistent with single-name speculative call-buying) — which
+   is precisely why an index verdict must never be carried over to single
+   stocks, and why NVDA stays labeled exploratory.
+
+**The decision-table row that fires** (plan §6): sell-when-rich is refuted
+where the data speaks clearly, sell-when-cheap is punished at double the
+advertised rate, and nothing holds across both index tickers — so the
+rich-wing, cheap-wing, and vol-spike gates are all **declined without
+spending strategy sample**, and the family closes. This is the fifth conditioning null in the covered-call
+program (trend gate, cooldown, IV-richness, the CC R-experiment's splits,
+and now the wing) and the cheapest: no overlay ever ran.
+
+**The trap for the future.** SPY's −0.265 will tempt: it is one ticker, on
+spent data, with its own +2.54-style jitter unsampled — a SPY-only wing
+gate proposal must arrive as a *new registration*, never as a revival of
+this entry. NVDA's +0.217 likewise: its store never went through
+`validate_dailies` (exploratory-only exposure, vendor IVs unused so the
+lattice era is harmless here, disclosed). And the premium-exists finding is
+vol-calibration on the 0.25Δ wing at \~30 DTE — not a tradeable-edge claim
+(the CC R-experiment already measured what harvesting it nets after real
+frictions: a sliver).
+
 ## Related, recorded elsewhere
 
 - **Trend gate** (suspend selling during a 200-day uptrend) — a *registered*
