@@ -70,6 +70,12 @@ MIN_CYCLE_RETURNS = 5               # data-gap guard; skipped cycles are counted
 N_SHIFTS = 1000
 VERDICT_TICKERS = ('QQQ', 'SPY')
 EXPLORATORY_TICKERS = ('MSFT', 'NVDA')
+# The 2026-07-20 owner-directed contrast extension (is NVDA's backwards sign
+# a category or a lone freak?): every remaining ETF store EXCEPT TLT — the
+# structure campaign's sealed vault stays sealed here for the same reason
+# the call-premium-holdout design declined to read it. Contrast rows carry
+# no verdict weight, like the exploratory pair.
+CONTRAST_TICKERS = ('GLD', 'XLE', 'EEM', 'IWM')
 
 # Canonical call chains + era backfills, live hygiene boundaries (plan §2).
 TICKER_STORES: dict[str, tuple[str, tuple[str, ...]]] = {
@@ -77,6 +83,10 @@ TICKER_STORES: dict[str, tuple[str, tuple[str, ...]]] = {
     'SPY': ('spy_option_dailies.csv', ()),
     'MSFT': ('msft_option_dailies.csv', ('msft_option_dailies_2008_2016.csv',)),
     'NVDA': ('nvda_option_dailies.csv', ()),
+    'GLD': ('gld_option_dailies.csv', ()),
+    'XLE': ('xle_option_dailies.csv', ()),
+    'EEM': ('eem_option_dailies.csv', ()),
+    'IWM': ('iwm_option_dailies.csv', ()),
 }
 
 
@@ -519,17 +529,23 @@ def run_ticker(ticker: str, *, wing_delta: float = WING_DELTA,
     return result
 
 
-def run_diagnostic(robustness: bool = True) -> dict[str, Any]:
-    """All four tickers at the primary setting, the §5 verdict, and the §8
-    non-verdict robustness grid on the verdict tickers."""
-    out: dict[str, Any] = {'tickers': {}, 'robustness': {}}
-    for t in (*VERDICT_TICKERS, *EXPLORATORY_TICKERS):
+def run_diagnostic(robustness: bool = True, contrast: bool = False) -> dict[str, Any]:
+    """All four plan tickers at the primary setting, the §5 verdict, and the
+    §8 non-verdict robustness grid on the verdict tickers. `contrast=True`
+    additionally runs the CONTRAST_TICKERS (primary setting only, no verdict
+    weight) into out['contrast']."""
+    out: dict[str, Any] = {'tickers': {}, 'robustness': {}, 'contrast': {}}
+    tickers = (*VERDICT_TICKERS, *EXPLORATORY_TICKERS)
+    if contrast:
+        tickers = (*tickers, *CONTRAST_TICKERS)
+    for t in tickers:
         canonical, extras = TICKER_STORES[t]
         store = load_chain_store(data_path(canonical),
                                  [data_path(e) for e in extras],
                                  start=CHAIN_CLEAN_START.get(t))
         print(f'[{t}] primary ...', flush=True)
-        out['tickers'][t] = run_ticker(t, store=store)
+        bucket = 'contrast' if t in CONTRAST_TICKERS else 'tickers'
+        out[bucket][t] = run_ticker(t, store=store)
         if robustness and t in VERDICT_TICKERS:
             rob: dict[str, Any] = {}
             for label, kw in (('wing20', {'wing_delta': 0.20}),
@@ -580,10 +596,10 @@ def main() -> None:
         if i + 1 >= len(sys.argv):
             sys.exit('--json needs a path argument')
         json_path = sys.argv[i + 1]
-    res = run_diagnostic()
+    res = run_diagnostic(contrast='--contrast' in sys.argv)
     print(f"\n{'ticker':<7}{'cycles':>7}{'cov':>7}{'rho':>8}{'p':>8}"
           f"{'meanP':>8}{'sdP':>7}{'xchk':>7}{'demoted':>8}")
-    for t, r in res['tickers'].items():
+    for t, r in {**res['tickers'], **res['contrast']}.items():
         print(f"{t:<7}{r['cycles']:>7}{r['coverage']:>7.2f}{r['rho']:>8.3f}"
               f"{r['placebo_p']:>8.3f}{r.get('mean_premium', 0):>8.3f}"
               f"{r.get('premium_sd', 0):>7.3f}{r.get('atm_cross_check', 0):>7.3f}"

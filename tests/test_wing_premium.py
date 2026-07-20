@@ -353,3 +353,71 @@ class TestWingPremiumDiagnostic:
     def test_premium_exists_on_average_everywhere(self, res) -> None:
         for t in ('QQQ', 'SPY', 'MSFT', 'NVDA'):
             assert res['tickers'][t]['mean_premium'] > 0
+
+
+@pytest.mark.skipif(not _HAVE_DATA,
+                    reason='needs the option-dailies stores (or .gz twins)')
+class TestWingPremiumContrast:
+    """The 2026-07-20 owner-directed contrast extension, pinned: after the
+    NVDA store validated CLEAN, the diagnostic ran on every remaining ETF
+    store EXCEPT TLT (the structure campaign's sealed vault stays sealed).
+    The question was whether NVDA's backwards (overreaction) sign is a lone
+    freak or a category. The answer is NEITHER, which is its own lesson:
+
+    - GLD joins NVDA as significantly POSITIVE (rho +0.261, placebo-p 0.001)
+      — and GLD is a gold ETF, not a speculative single name, so the
+      'single-name speculative flow' story dies alongside the 'lone freak'
+      story.
+    - XLE (-0.088, p .31), EEM (-0.084, p .35), IWM (-0.107, p .37) are all
+      flat, like QQQ and MSFT.
+    - Across eight tickers the sign of the state-dependence is UNSTABLE:
+      one strong negative (SPY), two strong positives (NVDA, GLD), five
+      flat. Any per-ticker narrative (informed here, overreacting there)
+      is a story told after the fact — the frozen H-flat verdict stands,
+      and the ladder's own terms (a coherent category or nothing) say:
+      nothing. No registration is licensed.
+
+    The cheap-wing breach miscalibration is milder off the big index pair
+    (Q1 realized 28-43% vs ~23% implied, against SPY/QQQ's ~2x).
+    Runtime note: four more store loads (~8-10 min cold in CI).
+    """
+
+    @pytest.fixture(scope='class')
+    def contrast(self) -> dict:
+        from common.paths import data_path
+        from realchains.real_cc_backtest import CHAIN_CLEAN_START, load_chain_store
+        from search.wing_premium import CONTRAST_TICKERS, TICKER_STORES, run_ticker
+        out = {}
+        for t in CONTRAST_TICKERS:
+            canonical, extras = TICKER_STORES[t]
+            store = load_chain_store(data_path(canonical),
+                                     [data_path(e) for e in extras],
+                                     start=CHAIN_CLEAN_START.get(t))
+            out[t] = run_ticker(t, store=store)
+            del store
+        return out
+
+    def test_tlt_stays_sealed(self) -> None:
+        from search.wing_premium import CONTRAST_TICKERS
+        assert 'TLT' not in CONTRAST_TICKERS
+
+    def test_gld_joins_nvda_positive(self, contrast) -> None:
+        g = contrast['GLD']
+        assert g['rho'] == pytest.approx(0.2608, abs=0.002)
+        assert g['placebo_p'] == pytest.approx(0.001, abs=0.003)
+        assert g['cycles'] == 155 and g['demoted'] is False
+
+    def test_the_rest_are_flat(self, contrast) -> None:
+        for t, (rho, p) in (('XLE', (-0.0878, 0.3077)),
+                            ('EEM', (-0.0835, 0.3487)),
+                            ('IWM', (-0.1069, 0.3676))):
+            r = contrast[t]
+            assert r['rho'] == pytest.approx(rho, abs=0.002), t
+            assert r['placebo_p'] == pytest.approx(p, abs=0.03), t
+            assert r['placebo_p'] > 0.05, t
+
+    def test_premium_and_rails_everywhere(self, contrast) -> None:
+        for t, r in contrast.items():
+            assert r['mean_premium'] > 0, t
+            assert r['atm_cross_check'] >= 0.9, t
+            assert r['coverage'] >= 0.99, t

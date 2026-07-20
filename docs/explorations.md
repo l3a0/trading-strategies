@@ -654,12 +654,41 @@ and now the wing) and the cheapest: no overlay ever ran.
 **The trap for the future.** SPY's −0.265 will tempt: it is one ticker, on
 spent data, with its own +2.54-style jitter unsampled — a SPY-only wing
 gate proposal must arrive as a *new registration*, never as a revival of
-this entry. NVDA's +0.217 likewise: its store never went through
-`validate_dailies` (exploratory-only exposure, vendor IVs unused so the
-lattice era is harmless here, disclosed). And the premium-exists finding is
+this entry. And the premium-exists finding is
 vol-calibration on the 0.25Δ wing at \~30 DTE — not a tradeable-edge claim
 (the CC R-experiment already measured what harvesting it nets after real
 frictions: a sliver).
+
+**Addendum (2026-07-20, owner-directed): the NVDA follow-up ladder — run,
+and it says stop.** The plain plan: before anyone gets excited about NVDA's
+backwards sign, (1) check its raw data, (2) see whether the pattern is a
+category or a freak. Both steps executed:
+
+1. **The NVDA store validated CLEAN** (`pipeline/validate_dailies.py`,
+   2026-07-20): 100% usable days, zero defective in-band rows, put-call-
+   parity delta cross-check 0.15% disagreement, price-vs-chain scale OK.
+   The earlier "unvalidated store" caveat is retired — the number is not a
+   data artifact.
+2. **The contrast sweep** (every remaining ETF store; **TLT deliberately
+   excluded** — the structure campaign's sealed vault stays sealed, the
+   same call the call-premium-holdout design made) answers the category
+   question with a twist. GLD joins NVDA as significantly *positive*
+   (ρ +0.261, placebo-p 0.001) — and GLD is a **gold ETF**, not a
+   speculative single name, so the "single-name speculative flow" story
+   dies in the same breath as the "lone freak" story. The rest are flat
+   like QQQ and MSFT: XLE −0.088 (p .31), EEM −0.084 (p .35), IWM −0.107
+   (p .37). The cheap-wing breach miscalibration is also milder off the
+   big index pair (Q1 realized 28–43% vs \~23% implied, against SPY/QQQ's
+   \~2×).
+
+   The honest synthesis: across eight tickers the state-dependence has an
+   **unstable sign** — one strong negative (SPY), two strong positives
+   (NVDA, GLD), five flat. With eight looks and three post-hoc narratives
+   available ("informed here, overreacting there, nothing elsewhere"),
+   this is what *no usable law* looks like, told per-ticker. The ladder's
+   own pre-stated terms — a coherent category or nothing — return
+   **nothing**: no registration is licensed, the H-flat verdict stands,
+   and the family stays closed. Pinned in `TestWingPremiumContrast`.
 
 ## Related, recorded elsewhere
 
