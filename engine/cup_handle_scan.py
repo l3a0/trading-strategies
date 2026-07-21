@@ -80,6 +80,19 @@ WORKSPACE = 'sp500_intraday_1min'
 RESOLVED_CLIFFS = {
     ('AAPL', '2000-09-29'):
         'real event: the Sept-2000 profit-warning crash, ~-52% in one session',
+    ('AIG', '2008-09-15'):
+        'real event: Lehman Monday, ~-60% in the bailout week (owner-signed '
+        '2026-07-21)',
+}
+
+# §2 hand-resolutions, owner-signed 2026-07-21: START CLIPS for tickers
+# whose archive stitches a PREDECESSOR company's history under the current
+# symbol (the QQQQ-rename poison). Rows before the clip are dropped before
+# anything else runs.
+TICKER_START_CLIPS = {
+    # pre-2019 rows are Bemis (~$56) wearing the AMCR symbol; the current
+    # Amcor plc began NYSE trading 2019-06-11 (~$11)
+    'AMCR': '2019-06-11',
 }
 
 
@@ -486,12 +499,19 @@ def scan_ticker(ticker: str, splits: dict[str, list[tuple[str, float]]],
     if not len(d['dates']):
         return None, None, []
     adj = split_adjust(d, splits.get(ticker, []))
+    clip = TICKER_START_CLIPS.get(ticker)
+    if clip is not None:
+        keep = adj['dates'] >= clip
+        adj = {k: v[keep] for k, v in adj.items()}
+        if not len(adj['dates']):
+            return None, None, []
     flags = cliff_flags(adj['close'], adj['dates'], splits.get(ticker, []))
     # §2: excluded until resolved by hand — an owner-signed RESOLVED_CLIFFS
     # entry clears its date; only UNRESOLVED flags exclude
     unresolved = [f for f in flags if (ticker, f) not in RESOLVED_CLIFFS]
     cov = coverage_diagnostic(ticker, adj, unresolved)
     cov['resolved_cliffs'] = [f for f in flags if (ticker, f) in RESOLVED_CLIFFS]
+    cov['start_clip'] = clip
     detections = ([] if unresolved
                   else detect_cup_handle(adj['close'], adj['volume']))
     return adj, cov, detections
