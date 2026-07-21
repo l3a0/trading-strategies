@@ -62,3 +62,4 @@ xle_eem_fetch.log
 batch_fetch.log
 # S&P 500 1-min archive workspace (personal backups; list + state + csvs)
 data/sp500_intraday_1min/
+*_intraday_1min_daily_cache.csv
