@@ -310,6 +310,29 @@ class TestAggregation:
         assert cov['cliff_flags'] == []
         assert cov['resolved_cliffs'] == ['2024-01-03']
 
+    def test_start_clip_drops_predecessor_era(self, monkeypatch):
+        # the AMCR shape: pre-clip rows are a predecessor company's prices
+        # (~$56) wearing the ticker; the real entity starts at ~$11, so the
+        # seam looks like an unexplained one-day cliff until the clip
+        import engine.cup_handle_scan as chs
+        dates = np.array(['2019-06-07', '2019-06-10', '2019-06-11',
+                          '2019-06-12'])
+        px = np.array([56.0, 57.0, 11.0, 11.2])
+        d = {'dates': dates, 'open': px, 'high': px, 'low': px,
+             'close': px, 'volume': np.ones(4)}
+        monkeypatch.setattr(chs, 'archive_path', lambda t: '/synthetic')
+        monkeypatch.setattr(chs, 'aggregate_daily', lambda p, cache_dir=None: d)
+        # without the clip: the seam is an unresolved cliff -> excluded
+        adj, cov, dets = chs.scan_ticker('YYY', {})
+        assert cov['cliff_flags'] == ['2019-06-11'] and dets == []
+        assert cov['start_clip'] is None
+        # owner-signed start clip: predecessor rows dropped, no cliff, scan
+        # proceeds, and the clip is recorded in the coverage row
+        monkeypatch.setitem(chs.TICKER_START_CLIPS, 'YYY', '2019-06-11')
+        adj, cov, dets = chs.scan_ticker('YYY', {})
+        assert cov['cliff_flags'] == [] and cov['start_clip'] == '2019-06-11'
+        assert adj['dates'][0] == '2019-06-11' and len(adj['dates']) == 2
+
     def test_partial_archive_refused(self, tmp_path, monkeypatch):
         import engine.cup_handle_scan as chs
         ws = tmp_path / 'sp500_intraday_1min'
