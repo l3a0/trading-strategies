@@ -60,3 +60,5 @@ fetch_progress.log
 gld_tlt_fetch.log
 xle_eem_fetch.log
 batch_fetch.log
+# S&P 500 1-min archive workspace (personal backups; list + state + csvs)
+data/sp500_intraday_1min/
