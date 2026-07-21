@@ -207,6 +207,17 @@ TICKER_START_CLIPS = {
     # date) is where the tape's new-company era begins and matches both
     # references to the cent (owner-signed 2026-07-21)
     'IR': '2020-02-24',
+    # the JCI tape holds OLD Johnson Controls Inc's prices while the
+    # snapshot holds TYCO's splits — applying one company's actions to
+    # the other's prices is what fabricated the 2007/2012 cliffs. Tyco
+    # was the LEGAL acquirer (renamed Johnson Controls International plc,
+    # merger effective 2016-09-02, first trading day under JCI
+    # 2016-09-06), and the issuer's own FY2016 10-K states its
+    # pre-merger share prices are Tyco's — the convention both
+    # references follow. Old JCI is NOT the continuous per-share series:
+    # each share became 0.8357 new shares PLUS $5.73 cash, which a split
+    # table cannot express (owner-signed 2026-07-21)
+    'JCI': '2016-09-06',
 }
 
 # §2 hand-resolutions, owner-signed 2026-07-21: DROP WINDOWS — spans
