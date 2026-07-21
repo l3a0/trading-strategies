@@ -239,6 +239,33 @@ TICKER_START_CLIPS = {
     # cannot express. The 0.405 row is left in place, inert, as GEN's
     # mis-applied splits were (owner-signed 2026-07-21)
     'LDOS': '2013-09-30',
+    # a THREE-part splice. 2007-05-07..2014-12-19 is LIN TV Corp / LIN
+    # Media (a local-TV broadcaster, itself back-stitched: it traded as
+    # TVL until 2013-07-30, then as LIN), acquired by Media General
+    # 2014-12-19 at $25.97 cash — the tape's last bar is $25.45, trading
+    # just under the election. Its equity curve settles the identity
+    # beyond doubt: $16.01 (2007) -> $1.11 (2009-04-01, the GFC ad
+    # recession) -> $28.30 (2014); nothing in the Praxair/Linde lineage
+    # goes to a dollar in 2009. The clip also removes the 2007-06-01
+    # vendor bad print ($50.05 on 2.82M shares against ~$19.50 on ~300K).
+    #
+    # From 2014-12-22 the vendor back-stitches PRAXAIR (as traded under
+    # PX) into the vacated symbol, and Linde plc took LIN on 2018-10-31.
+    # The VACANCY date is the right boundary here — unlike JCI and IR —
+    # because Praxair -> Linde plc is a CLEAN 1:1 continuation: one Linde
+    # plc share per Praxair share, no cash and no election, so the seam
+    # needs no factor (+0.24% across it). The issuer agrees: Praxair was
+    # the ASC 805 ACCOUNTING ACQUIRER, so Linde plc's own 10-K reports
+    # pre-combination periods as Praxair's. Contrast JCI (0.8952 shares
+    # PLUS cash) and IR (a different business arriving under the symbol),
+    # which is why those clip at the current-issuer date instead.
+    #
+    # Caveats: 2014-12-22 is a SPLICE SEAM, not a corporate event; and
+    # the 2014-12-22..2018-10-30 span is Praxair under PX, so work
+    # needing literal-ticker fidelity (e.g. joining option chains keyed
+    # on LIN) should use 2018-10-31, Linde plc's first real session
+    # (owner-signed 2026-07-21)
+    'LIN': '2014-12-22',
 }
 
 # §2 hand-resolutions, owner-signed 2026-07-21: DROP WINDOWS — spans
