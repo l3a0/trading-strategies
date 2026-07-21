@@ -1,0 +1,644 @@
+"""The cup-and-handle scan — the frozen docs/cup_handle_scan_plan.md build.
+
+O'Neil's flagship pattern, detected by frozen mechanical rules across the
+S&P 500 minute archive and judged at the calendar-day-cluster level
+against stratified matched-count random-entry nulls.
+
+Layer map (every §ref is the plan doc):
+
+- §2 data: ``aggregate_daily`` (regular-session daily bars from minute
+  rows, 09:30–16:00 inclusive, duplicate timestamps last-wins),
+  ``split_adjust`` (the committed ``data/sp500_splits_2026-07.csv``
+  snapshot, strictly-after products, volume scaled inversely, the
+  [0.5, 2.0] cliff guard), ``coverage_diagnostic``.
+- §3 detector: ``detect_cup_handle`` — the frozen iteration (every
+  session past behavioral warm-up, chronological; handle lengths tried
+  ascending 5..25; the FIRST passing window is THE detection; a
+  rim-band failure rejects the window, never retries a second-best
+  left rim; next candidate after a detection is t+25).
+- §5 evaluation: ``build_trades`` (per-ticker flat-only, H lockout,
+  end-of-span skip), ``build_clusters`` (same-entry-date pooling,
+  equal-weight member returns), ``cluster_null_p`` (per-stratum
+  matched-count draws with the frozen stream derivation
+  ``f'{CUP_SEED}:{variant}|H{H}|{stratum}'``), the survival read.
+
+The archive is personal and gitignored, so the result pins are
+DATASET-GATED (skip in CI); the synthetic battery always runs. Nothing
+here computes a return before the §4 validity gate has run — the
+``__main__`` report prints detection counts and coverage FIRST and the
+evaluation only behind ``--evaluate`` (the §10 step-4 switch).
+
+Run:  python -m engine.cup_handle_scan [--tickers A,B,...] [--evaluate] [--json]
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import gzip
+import hashlib
+import json
+import os
+from typing import Any, Sequence
+
+import numpy as np
+
+from common.paths import data_path
+
+CUP_SEED = 20260720
+B_RESAMPLES = 10_000
+HORIZONS = (5, 10, 15, 20, 60, 120)
+HEADLINE_HORIZONS = (20, 60)
+SURVIVAL_P = 0.01
+MIN_CLUSTERS = 100
+HANDLE_MIN, HANDLE_MAX = 5, 25
+CUP_MIN, CUP_MAX = 35, 325
+UPTREND_LOOKBACK = 90
+UPTREND_MIN = 1.3
+DEPTH_MIN, DEPTH_MAX = 0.12, 0.33
+RIM_BAND = (0.85, 1.05)
+HANDLE_DEPTH_MAX = 0.15
+ROUNDNESS_MIN = 0.15
+INTERIOR_TOL = 1.02
+VOL_SURGE = 1.5                 # O'Neil via the committed Tharp notes, Loc 5559
+VOL_AVG_WINDOW = 50
+DEDUP_SKIP = 25
+CLIFF_BAND = (0.5, 2.0)
+LATE_START_FLAG = '2010-01-01'
+ERAS = (('1999-01-01', '2009-12-31'), ('2010-01-01', '2019-12-31'),
+        ('2020-01-01', '2026-12-31'))
+SPLITS_PATH = 'sp500_splits_2026-07.csv'
+TICKERS_PATH = 'sp500_tickers_2026-07.txt'
+WORKSPACE = 'sp500_intraday_1min'
+
+
+# ------------------------------------------------------------------ §2 data
+
+def universe() -> list[str]:
+    with open(data_path(TICKERS_PATH)) as f:
+        return [ln.strip() for ln in f if ln.strip()]
+
+
+def archive_path(ticker: str) -> str | None:
+    """A COMPLETE archive only. A workspace csv without its fetcher
+    completion marker (``.months.done``) is a partial, in-flight, or
+    abandoned download and must never be scanned as history — the
+    silent-gap failure §2 exists to prevent. The nine data-root archives
+    predate the marker and are complete by construction."""
+    stem = ticker.replace('.', '-').lower()
+    ws_gz = data_path(f'{WORKSPACE}/{stem}_intraday_1min.csv.gz')
+    ws_csv = data_path(f'{WORKSPACE}/{stem}_intraday_1min.csv')
+    done = ws_csv + '.months.done'
+    if os.path.exists(ws_gz):
+        return ws_gz
+    if os.path.exists(ws_csv) and os.path.exists(done):
+        return ws_csv
+    for root in (data_path(f'{stem}_intraday_1min.csv.gz'),
+                 data_path(f'{stem}_intraday_1min.csv')):
+        if os.path.exists(root):
+            return root
+    return None
+
+
+def failed_tickers() -> set[str]:
+    """§2: tickers the fetch gave up on — hard-excluded and listed."""
+    p = data_path(f'{WORKSPACE}/failed_tickers.txt')
+    if not os.path.exists(p):
+        return set()
+    with open(p) as f:
+        return {ln.split()[0] for ln in f if ln.strip()}
+
+
+def aggregate_daily(path: str, cache_dir: str | None = None) -> dict[str, np.ndarray]:
+    """§2: regular-session daily bars from the minute archive. Bars with
+    timestamps 09:30:00–16:00:00 inclusive; minute rows sorted, exact-
+    duplicate timestamps collapsed to the LAST row; a session with zero
+    regular bars contributes no daily bar.
+
+    The §2 cache: the aggregate is written beside the archive (keyed to
+    the source's size+mtime) and read back on later invocations, so the
+    \~25 GB gz parse happens once, not per run."""
+    if cache_dir is None and os.path.dirname(path):
+        cache_dir = os.path.dirname(path)
+    stat = os.stat(path)
+    key = f'{stat.st_size}:{int(stat.st_mtime)}'
+    cache = (os.path.join(cache_dir, os.path.basename(path).split('.')[0]
+                          + '_daily_cache.csv') if cache_dir else None)
+    if cache and os.path.exists(cache):
+        with open(cache) as f:
+            rows = list(csv.reader(f))
+        if rows and rows[0] == ['#key', key]:
+            cols = list(zip(*rows[2:])) if len(rows) > 2 else [[]] * 6
+            return {'dates': np.array(cols[0]),
+                    'open': np.array(cols[1], dtype=float),
+                    'high': np.array(cols[2], dtype=float),
+                    'low': np.array(cols[3], dtype=float),
+                    'close': np.array(cols[4], dtype=float),
+                    'volume': np.array(cols[5], dtype=float)}
+    per_day: dict[str, dict[str, Any]] = {}
+    opener = gzip.open if path.endswith('.gz') else open
+    with opener(path, 'rt') as f:
+        for row in csv.DictReader(f):
+            ts = row['timestamp']
+            t = ts[11:19]
+            if not ('09:30:00' <= t <= '16:00:00'):
+                continue
+            d = ts[:10]
+            slot = per_day.setdefault(d, {})
+            slot[t] = row                    # duplicate timestamp: last wins
+    dates, o, h, low, c, v = [], [], [], [], [], []
+    for d in sorted(per_day):
+        bars = [per_day[d][t] for t in sorted(per_day[d])]
+        dates.append(d)
+        o.append(float(bars[0]['open']))
+        h.append(max(float(b['high']) for b in bars))
+        low.append(min(float(b['low']) for b in bars))
+        c.append(float(bars[-1]['close']))
+        v.append(sum(float(b['volume']) for b in bars))
+    out = {'dates': np.array(dates), 'open': np.array(o), 'high': np.array(h),
+           'low': np.array(low), 'close': np.array(c), 'volume': np.array(v)}
+    if cache:
+        with open(cache, 'w', newline='') as f:
+            w = csv.writer(f)
+            w.writerow(['#key', key])
+            w.writerow(['date', 'open', 'high', 'low', 'close', 'volume'])
+            for i in range(len(dates)):
+                w.writerow([dates[i], o[i], h[i], low[i], c[i], v[i]])
+    return out
+
+
+def load_splits(path: str | None = None) -> dict[str, list[tuple[str, float]]]:
+    out: dict[str, list[tuple[str, float]]] = {}
+    with open(path or data_path(SPLITS_PATH)) as f:
+        for row in csv.DictReader(f):
+            out.setdefault(row['ticker'], []).append(
+                (row['ex_date'], float(row['ratio'])))
+    return out
+
+
+def split_adjust(d: dict[str, np.ndarray], splits: Sequence[tuple[str, float]],
+                 ) -> dict[str, np.ndarray]:
+    """§2: each as-traded price divided by the product of ratios of splits
+    dated STRICTLY AFTER that day; volume multiplied by the same factor."""
+    factor = np.ones(len(d['dates']))
+    for ex_date, ratio in splits:
+        before = d['dates'] < ex_date
+        factor[before] *= ratio
+    out = dict(d)
+    for k in ('open', 'high', 'low', 'close'):
+        out[k] = d[k] / factor
+    out['volume'] = d['volume'] * factor
+    return out
+
+
+def cliff_flags(adjusted_close: np.ndarray, dates: np.ndarray,
+                splits: Sequence[tuple[str, float]]) -> list[str]:
+    """§2 cliff guard, run on ADJUSTED closes. A correctly-committed split
+    leaves NO cliff after adjustment, so there is no split-day exemption:
+    an out-of-band ratio remaining ON a split day means the committed
+    ratio failed to explain the move — exactly what must be flagged.
+    (``splits`` stays in the signature as the audit trail of what was
+    already applied.)"""
+    del splits                    # already applied upstream; no exemption
+    flags = []
+    for i in range(1, len(adjusted_close)):
+        r = adjusted_close[i] / adjusted_close[i - 1]
+        if not (CLIFF_BAND[0] <= r <= CLIFF_BAND[1]):
+            flags.append(str(dates[i]))
+    return flags
+
+
+def coverage_diagnostic(ticker: str, d: dict[str, np.ndarray],
+                        flags: list[str],
+                        calendar: set[str] | None = None) -> dict[str, Any]:
+    """§2: first/last session, session count vs. the trading calendar over
+    the ticker's own span (the mid-span-hole detector the rename lesson
+    demands — ``calendar`` is the union of all scanned tickers' sessions,
+    attached by run_scan), the cliff flags, and the late-start flag."""
+    first = str(d['dates'][0]) if len(d['dates']) else None
+    last = str(d['dates'][-1]) if len(d['dates']) else None
+    expected = missing = None
+    if calendar is not None and first is not None:
+        expected = sum(1 for day in calendar if first <= day <= last)
+        missing = expected - int(len(d['dates']))
+    return {
+        'ticker': ticker, 'first': first, 'last': last,
+        'sessions': int(len(d['dates'])),
+        'expected_sessions': expected,
+        'missing_sessions': missing,
+        'late_start': bool(first and first > LATE_START_FLAG),
+        'cliff_flags': flags,
+    }
+
+
+# -------------------------------------------------------------- §3 detector
+
+def _ols_slope(y: np.ndarray) -> float:
+    x = np.arange(len(y), dtype=float)
+    x -= x.mean()
+    return float(np.dot(x, y - y.mean()) / np.dot(x, x))
+
+
+def _earliest_argmax(a: np.ndarray) -> int:
+    return int(np.argmax(a))     # numpy argmax returns the FIRST maximum
+
+
+def _earliest_argmin(a: np.ndarray) -> int:
+    return int(np.argmin(a))
+
+
+def _try_window(c: np.ndarray, v: np.ndarray, t: int, length: int,
+                vol_surge: float = VOL_SURGE) -> dict[str, Any] | None:
+    """Rules 1–6 for one (t, handle-length) candidate. Returns the recorded
+    anatomy or None. All indices are session positions in the ticker's own
+    series; any reference before index 0 rejects (behavioral warm-up)."""
+    h0 = t - length
+    if h0 < 0:
+        return None
+    w_close = c[h0:t]
+    # rule 1 (geometry): handle high = highest close, earliest tie, index in
+    # the first third (zero-based i with 3i < len)
+    i = _earliest_argmax(w_close)
+    if 3 * i >= length:
+        return None
+    r = h0 + i
+    handle_high = c[r]
+    if _ols_slope(w_close) > 0:
+        return None
+    if np.min(w_close) < (1.0 - HANDLE_DEPTH_MAX) * handle_high:
+        return None
+    # rule 2 (cup)
+    lo_edge, hi_edge = r - CUP_MAX, r - CUP_MIN
+    if lo_edge < 0:
+        return None
+    left = lo_edge + _earliest_argmax(c[lo_edge:hi_edge + 1])
+    if not (RIM_BAND[0] * c[left] <= c[r] <= RIM_BAND[1] * c[left]):
+        return None       # rim-band failure rejects the window; no 2nd-best left rim
+    # left <= r - CUP_MIN always, so (left, r) is never degenerate
+    b = left + 1 + _earliest_argmin(c[left + 1:r])
+    rim_max = max(c[left], c[r])
+    depth = (rim_max - c[b]) / rim_max
+    if not (DEPTH_MIN <= depth <= DEPTH_MAX):
+        return None
+    pos = (b - left) / (r - left)
+    if not (0.2 < pos < 0.8):
+        return None
+    if b + 1 < r and np.max(c[b + 1:r]) > INTERIOR_TOL * c[r]:
+        return None
+    # rule 3 (roundness, primary)
+    threshold = c[b] + 0.25 * (rim_max - c[b])
+    frac = float(np.mean(c[left:r + 1] <= threshold))
+    if frac < ROUNDNESS_MIN:
+        return None
+    # rule 4 (handle in the upper half)
+    if np.min(w_close) < c[b] + 0.5 * (rim_max - c[b]):
+        return None
+    # rule 5 (prior uptrend)
+    if left - UPTREND_LOOKBACK < 0:
+        return None
+    if c[left] < UPTREND_MIN * np.min(c[left - UPTREND_LOOKBACK:left]):
+        return None
+    # rule 6 (trigger)
+    if t - VOL_AVG_WINDOW < 0:
+        return None
+    if not (c[t] > handle_high):
+        return None
+    if v[t] < vol_surge * np.mean(v[t - VOL_AVG_WINDOW:t]):
+        return None
+    # rule 1's volume clause (needs the cup): handle volume below cup volume
+    if np.mean(v[h0:t]) >= np.mean(v[left:r + 1]):
+        return None
+    return {'t': t, 'h0': h0, 'r': r, 'l': left, 'b': b,
+            'depth': round(depth, 4), 'roundness': round(frac, 4)}
+
+
+def detect_cup_handle(c: np.ndarray, v: np.ndarray,
+                      *, use_volume_trigger: bool = True) -> list[dict[str, Any]]:
+    """§3, the frozen iteration: t chronological; handle lengths ascending
+    5..25; the FIRST passing window is THE detection; after a detection the
+    next candidate is t + 25. ``use_volume_trigger=False`` is the §5
+    ablation (rule 6's volume clause skipped; everything else identical)."""
+    surge = VOL_SURGE if use_volume_trigger else 0.0
+    out: list[dict[str, Any]] = []
+    t = DETECT_FLOOR                # identical to the null's eligibility floor
+    n = len(c)
+    while t < n:
+        hit = None
+        for length in range(HANDLE_MIN, HANDLE_MAX + 1):
+            hit = _try_window(c, v, t, length, vol_surge=surge)
+            if hit is not None:
+                break
+        if hit is not None:
+            out.append(hit)
+            t += DEDUP_SKIP
+        else:
+            t += 1
+    return out
+
+
+# ------------------------------------------------------------ §5 evaluation
+
+def build_trades(detections: Sequence[int], horizon: int, n_days: int) -> list[int]:
+    """Per-ticker flat-only book (the harness convention): H-session
+    lockout, re-entry at the exit close, end-of-span skip."""
+    entries: list[int] = []
+    next_ok = -1
+    for t in detections:
+        if t >= next_ok and t + horizon < n_days:
+            entries.append(int(t))
+            next_ok = t + horizon
+    return entries
+
+
+def stratum_of(date: str, horizon: int) -> str:
+    y, m = date[:4], int(date[5:7])
+    if horizon <= 20:
+        return f'{y}-{m:02d}'
+    if horizon == 60:
+        return f'{y}Q{(m - 1) // 3 + 1}'
+    return f'{y}H{1 if m <= 6 else 2}'
+
+
+def build_clusters(trades: dict[str, list[int]],
+                   data: dict[str, dict[str, np.ndarray]],
+                   horizon: int) -> list[dict[str, Any]]:
+    """§5: all traded entries sharing one calendar date form one
+    cluster-trade; return = equal-weight mean of member simple returns."""
+    by_date: dict[str, list[tuple[str, float]]] = {}
+    for ticker, entries in trades.items():
+        c = data[ticker]['close']
+        dates = data[ticker]['dates']
+        for t in entries:
+            ret = float(c[t + horizon] / c[t] - 1.0)
+            by_date.setdefault(str(dates[t]), []).append((ticker, ret))
+    return [{'date': d, 'members': [m for m, _ in mem],
+             'ret': float(np.mean([r for _, r in mem])),
+             'stratum': stratum_of(d, horizon)}
+            for d, mem in sorted(by_date.items())]
+
+
+# The hard floor a detection's own guards imply: the cup window needs
+# r >= CUP_MAX and the handle needs t >= r + HANDLE_MIN, so no detection
+# can occur before session 330. The detector STARTS its iteration here and
+# the null draws only from here — the two domains are identical by
+# construction (the plan's behavioral warm-up rule governs; its "near 440"
+# aside over-counted by adding the uptrend lookback, which bounds l, not t).
+DETECT_FLOOR = CUP_MAX + HANDLE_MIN
+
+
+def cluster_null_p(clusters: list[dict[str, Any]],
+                   data: dict[str, dict[str, np.ndarray]], horizon: int,
+                   variant: str = 'primary', b: int = B_RESAMPLES,
+                   ) -> dict[str, Any]:
+    """§5's matched-count cluster null. Per stratum with k clusters, each
+    resample draws k distinct sessions from the union calendar of that
+    stratum; drawn days (in draw order) pair with the stratum's real
+    clusters sorted by (member count desc, date asc); each member's
+    H-session return is taken from the drawn day in ITS OWN session
+    indexing, dropped (and counted) if ineligible there."""
+    if not clusters:
+        return {'n_clusters': 0}
+    date_index = {t: {str(d): i for i, d in enumerate(v['dates'])}
+                  for t, v in data.items()}
+    strata: dict[str, list[dict[str, Any]]] = {}
+    for cl in clusters:
+        strata.setdefault(cl['stratum'], []).append(cl)
+    all_days: dict[str, set[str]] = {}
+    for t, v in data.items():
+        for d in v['dates']:
+            all_days.setdefault(stratum_of(str(d), horizon), set()).add(str(d))
+
+    obs_rate = float(np.mean([c['ret'] > 0 for c in clusters]))
+    obs_mean = float(np.mean([c['ret'] for c in clusters]))
+    n_cl = len(clusters)
+    # per-resample accumulators: wins, return sum, and the count of
+    # SURVIVING (non-empty) null clusters — a fully-diluted null cluster is
+    # renormalized away, never scored as a loss (the anti-conservative bias
+    # the review caught); the empty count is reported beside the dilution
+    win_acc = np.zeros(b)
+    ret_acc = np.zeros(b)
+    live_acc = np.zeros(b)
+    diluted = 0
+    empty_clusters = 0
+    for stratum, cls in strata.items():
+        days = sorted(all_days[stratum])
+        rng = np.random.default_rng(int(hashlib.sha256(
+            f'{CUP_SEED}:{variant}|H{horizon}|{stratum}'.encode()
+        ).hexdigest()[:12], 16))
+        ordered = sorted(cls, key=lambda c: (-len(c['members']), c['date']))
+        k = len(ordered)
+        for i in range(b):
+            picks = rng.permutation(len(days))[:k]
+            for cl, pi in zip(ordered, picks):
+                d = days[pi]
+                rets = []
+                for m in cl['members']:
+                    idx = date_index[m].get(d)
+                    if (idx is None or idx < DETECT_FLOOR
+                            or idx + horizon >= len(data[m]['close'])):
+                        diluted += 1
+                        continue
+                    cm = data[m]['close']
+                    rets.append(float(cm[idx + horizon] / cm[idx] - 1.0))
+                if rets:
+                    r = float(np.mean(rets))
+                    win_acc[i] += r > 0
+                    ret_acc[i] += r
+                    live_acc[i] += 1
+                else:
+                    empty_clusters += 1
+    live = np.maximum(live_acc, 1.0)
+    null_rate = win_acc / live
+    null_mean = ret_acc / live
+    p = (1 + int(np.sum(null_rate >= obs_rate))) / (1 + b)
+    return {
+        'n_clusters': n_cl, 'win_rate': round(obs_rate, 4),
+        'mean_ret': round(obs_mean, 5),
+        'null_rate_mean': round(float(np.mean(null_rate)), 4),
+        'mean_ret_pctile': round(float(np.mean(null_mean < obs_mean)), 4),
+        'p': round(p, 5),
+        'dilution_per_resample': round(diluted / b, 2),
+        'empty_null_clusters_per_resample': round(empty_clusters / b, 3),
+        'underpowered': n_cl < MIN_CLUSTERS,
+    }
+
+
+# ------------------------------------------------------------------- driver
+
+def scan_ticker(ticker: str, splits: dict[str, list[tuple[str, float]]],
+                ) -> tuple[dict[str, np.ndarray] | None, dict[str, Any] | None,
+                           list[dict[str, Any]]]:
+    path = archive_path(ticker)
+    if path is None:
+        return None, None, []
+    d = aggregate_daily(path)
+    if not len(d['dates']):
+        return None, None, []
+    adj = split_adjust(d, splits.get(ticker, []))
+    flags = cliff_flags(adj['close'], adj['dates'], splits.get(ticker, []))
+    cov = coverage_diagnostic(ticker, adj, flags)
+    # a cliff-flagged ticker is excluded until resolved by hand (§2): no
+    # detections, and it never enters the pooled data either
+    detections = [] if flags else detect_cup_handle(adj['close'], adj['volume'])
+    return adj, cov, detections
+
+
+def quadratic_roundness(c: np.ndarray, left: int, r: int) -> dict[str, Any]:
+    """§3 rule 3's labeled variant (reported, never gating): a quadratic fit
+    to the cup's normalized closes; R² = the fit's explained-variance share;
+    vertex position as a fraction of the cup span."""
+    y = c[left:r + 1]
+    y = (y - y.min()) / (y.max() - y.min() if y.max() > y.min() else 1.0)
+    x = np.linspace(0.0, 1.0, len(y))
+    coef = np.polyfit(x, y, 2)
+    fit = np.polyval(coef, x)
+    ss_res = float(np.sum((y - fit) ** 2))
+    ss_tot = float(np.sum((y - np.mean(y)) ** 2))
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+    vertex = float(-coef[1] / (2 * coef[0])) if coef[0] != 0 else float('nan')
+    return {'r2': round(r2, 4),
+            'vertex': round(vertex, 4),
+            'passes': bool(r2 >= 0.70 and 1 / 3 <= vertex <= 2 / 3)}
+
+
+def _era_of(date: str) -> int:
+    for j, (lo, hi) in enumerate(ERAS):
+        if lo <= date <= hi:
+            return j
+    return -1
+
+
+def run_scan(tickers: Sequence[str], evaluate: bool = False) -> dict[str, Any]:
+    splits = load_splits()
+    failed = failed_tickers()
+    data: dict[str, dict[str, np.ndarray]] = {}
+    coverage: list[dict[str, Any]] = []
+    detections: dict[str, list[dict[str, Any]]] = {}
+    missing: list[str] = []
+    excluded: dict[str, str] = {}
+    for t in tickers:
+        if t in failed:
+            excluded[t] = 'failed_fetch'
+            continue
+        adj, cov, dets = scan_ticker(t, splits)
+        if adj is None:
+            missing.append(t)
+            continue
+        if cov['cliff_flags']:
+            excluded[t] = f"cliff:{cov['cliff_flags'][:3]}"
+        data[t] = adj
+        coverage.append(cov)
+        detections[t] = dets
+    # the union trading calendar (all scanned tickers) backs the §2
+    # sessions-vs-calendar comparison
+    calendar: set[str] = set()
+    for v in data.values():
+        calendar.update(str(d) for d in v['dates'])
+    for cov in coverage:
+        t = cov['ticker']
+        first, last = cov['first'], cov['last']
+        expected = sum(1 for day in calendar if first <= day <= last)
+        cov['expected_sessions'] = expected
+        cov['missing_sessions'] = expected - cov['sessions']
+    # the frozen §4 statistic: total detections / sum of per-ticker span in
+    # decades (calendar span, not session count)
+    def _span_decades(cov: dict[str, Any]) -> float:
+        y0, y1 = int(cov['first'][:4]), int(cov['last'][:4])
+        m0, m1 = int(cov['first'][5:7]), int(cov['last'][5:7])
+        return ((y1 - y0) * 12 + (m1 - m0)) / 120.0
+    decades = sum(_span_decades(c) for c in coverage
+                  if c['ticker'] not in excluded)
+    total = sum(len(v) for t, v in detections.items() if t not in excluded)
+    out: dict[str, Any] = {
+        'tickers_scanned': len(data), 'missing': missing,
+        'excluded': excluded,
+        'coverage': coverage,
+        'total_detections': total,
+        'rate_per_ticker_decade': round(total / decades, 3) if decades else None,
+        'detections': {t: [d['t'] for d in v] for t, v in detections.items()},
+        'quadratic_variant': {
+            t: [quadratic_roundness(data[t]['close'], d['l'], d['r'])['passes']
+                for d in v]
+            for t, v in detections.items() if v},
+    }
+    if evaluate:
+        pooled_data = {t: v for t, v in data.items() if t not in excluded}
+        out['evaluation'] = {}
+        for hz in HORIZONS:
+            trades = {t: build_trades([d['t'] for d in detections[t]], hz,
+                                      len(pooled_data[t]['close']))
+                      for t in pooled_data}
+            clusters = build_clusters(trades, pooled_data, hz)
+            e = cluster_null_p(clusters, pooled_data, hz)
+            # §5 reported diagnostics: pooled per-trade win rate, member
+            # counts, per-ticker and per-era splits, survivorship bracket
+            rets = []
+            for t, entries in trades.items():
+                cc = pooled_data[t]['close']
+                rets += [float(cc[i + hz] / cc[i] - 1.0) for i in entries]
+            e['n_trades'] = len(rets)
+            e['per_trade_win_rate'] = (round(float(np.mean(
+                [r > 0 for r in rets])), 4) if rets else None)
+            e['members_per_cluster'] = (round(float(np.mean(
+                [len(cl['members']) for cl in clusters])), 2)
+                if clusters else None)
+            e['per_era_clusters'] = {
+                j: sum(1 for cl in clusters if _era_of(cl['date']) == j)
+                for j in range(len(ERAS))}
+            e['per_ticker_trades'] = {t: len(v) for t, v in trades.items() if v}
+            # the survivorship bracket: unconditional P(close[i+H] > close[i])
+            wins = tot = 0
+            for t, v in pooled_data.items():
+                cc = v['close']
+                seg = cc[DETECT_FLOOR:len(cc) - hz]
+                if len(seg):
+                    fwd = cc[DETECT_FLOOR + hz:]
+                    wins += int(np.sum(fwd > seg))
+                    tot += len(seg)
+            e['base_rate_bracket'] = round(wins / tot, 4) if tot else None
+            out['evaluation'][f'H{hz}'] = e
+        surv = all(
+            not out['evaluation'][f'H{hz}'].get('underpowered', True)
+            and out['evaluation'][f'H{hz}']['p'] <= SURVIVAL_P
+            for hz in HEADLINE_HORIZONS)
+        out['survives'] = bool(surv)
+        # the §5 ablation: the volume trigger removed, its own null streams
+        abl_det = {t: [d['t'] for d in detect_cup_handle(
+            pooled_data[t]['close'], pooled_data[t]['volume'],
+            use_volume_trigger=False)] for t in pooled_data}
+        out['ablation_no_volume'] = {}
+        for hz in HEADLINE_HORIZONS:
+            trades = {t: build_trades(abl_det[t], hz,
+                                      len(pooled_data[t]['close']))
+                      for t in pooled_data}
+            clusters = build_clusters(trades, pooled_data, hz)
+            out['ablation_no_volume'][f'H{hz}'] = cluster_null_p(
+                clusters, pooled_data, hz, variant='no_volume')
+    return out
+
+
+if __name__ == '__main__':
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--tickers', default=None,
+                    help='comma-separated subset (default: the committed universe)')
+    ap.add_argument('--evaluate', action='store_true',
+                    help='the §10 step-4 switch: compute returns and verdicts')
+    ap.add_argument('--json', action='store_true')
+    a = ap.parse_args()
+    tks = a.tickers.split(',') if a.tickers else universe()
+    res = run_scan(tks, evaluate=a.evaluate)
+    if a.json:
+        print(json.dumps(res, default=str))
+    else:
+        print(f"scanned {res['tickers_scanned']} tickers "
+              f"({len(res['missing'])} missing archives)")
+        print(f"detections: {res['total_detections']} "
+              f"(rate {res['rate_per_ticker_decade']}/ticker-decade)")
+        for c in res['coverage']:
+            if c['late_start'] or c['cliff_flags']:
+                print(f"  FLAG {c['ticker']}: first={c['first']} "
+                      f"cliffs={c['cliff_flags'][:3]}")
+        if 'evaluation' in res:
+            for hz, e in res['evaluation'].items():
+                print(hz, e)
+            print('survives:', res['survives'])
