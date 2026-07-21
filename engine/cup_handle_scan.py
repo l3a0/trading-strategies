@@ -105,6 +105,50 @@ TICKER_START_CLIPS = {
     # symbol at the 2019-02-14 open and the vendor tape carries Axon
     # Enterprise from that day (owner-signed 2026-07-21)
     'AXON': '2019-02-14',
+    # pre-2026 rows are the BlackRock New York Municipal Income Trust
+    # (~$10 closed-end fund, merged away 2026-02); BNY Mellon moved its
+    # stock from BK to BNY effective 2026-05-21 (owner-signed 2026-07-21)
+    'BNY': '2026-05-21',
+    # pre-2022-07 rows are the ORIGINAL Coherent Inc (acquired by II-VI
+    # at $266/share deal value, last day 2022-06-30); the tape carries
+    # the surviving II-VI/Coherent Corp from the close date — also
+    # neutralizes the snapshot's 2011-06-27 split, which is II-VI's,
+    # not old Coherent's (owner-signed 2026-07-21)
+    'COHR': '2022-07-01',
+    # pre-gap rows are Converted Organics (fertilizer penny stock, gone
+    # dark 2013); Coinbase direct-listed on the vacated symbol
+    # 2021-04-14 (owner-signed 2026-07-21)
+    'COIN': '2021-04-14',
+    # pre-gap rows are C2C CrowdFunding (OTC shell, registration
+    # revoked 2015); CrowdStrike IPO'd 2019-06-12, first close $58.00
+    # matching the tape (owner-signed 2026-07-21)
+    'CRWD': '2019-06-12',
+    # pre-gap rows are old Dell Inc (private 2013-10-29) plus two
+    # when-issued days distorted by the snapshot's DVMT-lineage 1.806
+    # factor; regular-way Dell Technologies trading began 2018-12-28
+    # (owner-signed 2026-07-21)
+    'DELL': '2018-12-28',
+    # pre-2013 rows are EnergySolutions (taken private at $4.15/share,
+    # last day 2013-05-24); the tape carries Northeast Utilities /
+    # Eversource from the vacancy (owner-signed 2026-07-21)
+    'ES': '2013-05-28',
+}
+
+# §2 hand-resolutions, owner-signed 2026-07-21: DROP WINDOWS — spans
+# (inclusive) where the vendor minute tape is corrupt inside an
+# otherwise clean history. Both rulings were verified to join
+# seamlessly after the drop (ECL $159.13 -> $159.16; ELV $67.71 ->
+# $68.90). Distinct from RESOLVED_CLIFFS (a real move, kept) and
+# TICKER_START_CLIPS (a predecessor era, cut from the front).
+TICKER_DROP_WINDOWS = {
+    # 2019-02-05 is Ecopetrol's (EC — one character off) tape filed
+    # under ECL: the corrupt $18.92 close matches EC to the cent while
+    # Ecolab really traded ~$159 that day
+    'ECL': [('2019-02-05', '2019-02-05')],
+    # the vendor left 3.5 months at pre-split scale after WellPoint's
+    # real 2005-06-01 2:1 split — its 10-K price table shows $58-77
+    # that summer, never ~$135
+    'ELV': [('2005-06-01', '2005-09-21')],
 }
 
 
@@ -120,15 +164,22 @@ def archive_path(ticker: str) -> str | None:
     completion marker (``.months.done``) is a partial, in-flight, or
     abandoned download and must never be scanned as history — the
     silent-gap failure §2 exists to prevent. The nine data-root archives
-    predate the marker and are complete by construction."""
+    predate the marker and are complete by construction.
+
+    The batch script gzips each finished ticker IN PLACE (``gzip -9``
+    keeps the csv until the gz is complete, then unlinks it), so while
+    compression runs both files exist and the gz is TRUNCATED. The csv
+    is therefore preferred whenever its marker vouches for it, and the
+    workspace gz is trusted only with the marker too — the marker file
+    is a sibling the gzip never touches."""
     stem = ticker.replace('.', '-').lower()
     ws_gz = data_path(f'{WORKSPACE}/{stem}_intraday_1min.csv.gz')
     ws_csv = data_path(f'{WORKSPACE}/{stem}_intraday_1min.csv')
     done = ws_csv + '.months.done'
-    if os.path.exists(ws_gz):
-        return ws_gz
     if os.path.exists(ws_csv) and os.path.exists(done):
         return ws_csv
+    if os.path.exists(ws_gz) and os.path.exists(done):
+        return ws_gz
     for root in (data_path(f'{stem}_intraday_1min.csv.gz'),
                  data_path(f'{stem}_intraday_1min.csv')):
         if os.path.exists(root):
@@ -517,6 +568,10 @@ def scan_ticker(ticker: str, splits: dict[str, list[tuple[str, float]]],
         adj = {k: v[keep] for k, v in adj.items()}
         if not len(adj['dates']):
             return None, None, []
+    dropped = TICKER_DROP_WINDOWS.get(ticker, [])
+    for w0, w1 in dropped:
+        keep = (adj['dates'] < w0) | (adj['dates'] > w1)
+        adj = {k: v[keep] for k, v in adj.items()}
     flags = cliff_flags(adj['close'], adj['dates'], splits.get(ticker, []))
     # §2: excluded until resolved by hand — an owner-signed RESOLVED_CLIFFS
     # entry clears its date; only UNRESOLVED flags exclude
@@ -524,6 +579,7 @@ def scan_ticker(ticker: str, splits: dict[str, list[tuple[str, float]]],
     cov = coverage_diagnostic(ticker, adj, unresolved)
     cov['resolved_cliffs'] = [f for f in flags if (ticker, f) in RESOLVED_CLIFFS]
     cov['start_clip'] = clip
+    cov['drop_windows'] = dropped
     detections = ([] if unresolved
                   else detect_cup_handle(adj['close'], adj['volume']))
     return adj, cov, detections
@@ -562,11 +618,18 @@ def run_scan(tickers: Sequence[str], evaluate: bool = False) -> dict[str, Any]:
     detections: dict[str, list[dict[str, Any]]] = {}
     missing: list[str] = []
     excluded: dict[str, str] = {}
+    skipped_in_flight: list[str] = []
     for t in tickers:
         if t in failed:
             excluded[t] = 'failed_fetch'
             continue
-        adj, cov, dets = scan_ticker(t, splits)
+        try:
+            adj, cov, dets = scan_ticker(t, splits)
+        except (EOFError, FileNotFoundError, OSError):
+            # the archive moved under us (the batch's rolling gzip):
+            # skip this pass, the next increment picks it up complete
+            skipped_in_flight.append(t)
+            continue
         if adj is None:
             missing.append(t)
             continue
@@ -597,6 +660,7 @@ def run_scan(tickers: Sequence[str], evaluate: bool = False) -> dict[str, Any]:
     total = sum(len(v) for t, v in detections.items() if t not in excluded)
     out: dict[str, Any] = {
         'tickers_scanned': len(data), 'missing': missing,
+        'skipped_in_flight': skipped_in_flight,
         'excluded': excluded,
         'coverage': coverage,
         'total_detections': total,

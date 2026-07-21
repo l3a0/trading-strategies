@@ -333,6 +333,31 @@ class TestAggregation:
         assert cov['cliff_flags'] == [] and cov['start_clip'] == '2019-06-11'
         assert adj['dates'][0] == '2019-06-11' and len(adj['dates']) == 2
 
+    def test_drop_window_removes_corrupt_patch(self, monkeypatch):
+        # the ECL/ELV shape: a mid-history patch at the wrong scale (a
+        # different security's day, or a mis-adjusted span) cliffs on BOTH
+        # edges; dropping the window (inclusive) leaves a seamless join
+        import engine.cup_handle_scan as chs
+        dates = np.array(['2019-02-01', '2019-02-04', '2019-02-05',
+                          '2019-02-06', '2019-02-07'])
+        px = np.array([159.0, 159.13, 18.92, 159.16, 160.0])
+        d = {'dates': dates, 'open': px, 'high': px, 'low': px,
+             'close': px, 'volume': np.ones(5)}
+        monkeypatch.setattr(chs, 'archive_path', lambda t: '/synthetic')
+        monkeypatch.setattr(chs, 'aggregate_daily', lambda p, cache_dir=None: d)
+        # without the ruling: both edges of the patch flag -> excluded
+        adj, cov, dets = chs.scan_ticker('WWW', {})
+        assert cov['cliff_flags'] == ['2019-02-05', '2019-02-06'] and dets == []
+        assert cov['drop_windows'] == []
+        # owner-signed drop: the patch vanishes, the join is seamless,
+        # and the ruling is recorded in the coverage row
+        monkeypatch.setitem(chs.TICKER_DROP_WINDOWS, 'WWW',
+                            [('2019-02-05', '2019-02-05')])
+        adj, cov, dets = chs.scan_ticker('WWW', {})
+        assert cov['cliff_flags'] == []
+        assert cov['drop_windows'] == [('2019-02-05', '2019-02-05')]
+        assert '2019-02-05' not in adj['dates'] and len(adj['dates']) == 4
+
     def test_partial_archive_refused(self, tmp_path, monkeypatch):
         import engine.cup_handle_scan as chs
         ws = tmp_path / 'sp500_intraday_1min'
@@ -342,6 +367,38 @@ class TestAggregation:
         assert chs.archive_path('ZZZ') is None
         (ws / 'zzz_intraday_1min.csv.months.done').write_text('complete\n')
         assert chs.archive_path('ZZZ') is not None
+
+    def test_gzip_race_prefers_intact_csv(self, tmp_path, monkeypatch):
+        # the batch gzips in place: mid-compression BOTH files exist and
+        # the gz is truncated — the marker-vouched csv must win; once the
+        # csv is unlinked the (now complete) gz is trusted via the marker
+        import engine.cup_handle_scan as chs
+        ws = tmp_path / 'sp500_intraday_1min'
+        ws.mkdir()
+        monkeypatch.setattr(chs, 'data_path', lambda p: str(tmp_path / p))
+        csv_f = ws / 'yyy_intraday_1min.csv'
+        csv_f.write_text('timestamp\n')
+        (ws / 'yyy_intraday_1min.csv.months.done').write_text('complete\n')
+        (ws / 'yyy_intraday_1min.csv.gz').write_bytes(b'\x1f\x8b partial')
+        assert chs.archive_path('YYY') == str(csv_f)   # csv wins mid-gzip
+        csv_f.unlink()
+        assert chs.archive_path('YYY').endswith('.csv.gz')  # gz after
+        (ws / 'yyy_intraday_1min.csv.months.done').unlink()
+        assert chs.archive_path('YYY') is None  # gz alone: unvouched
+
+    def test_run_scan_skips_ticker_moving_underfoot(self, monkeypatch):
+        # a read that still catches the archive mid-move must not kill the
+        # whole pass — the ticker is skipped and reported for next time
+        import engine.cup_handle_scan as chs
+        monkeypatch.setattr(chs, 'failed_tickers', lambda: set())
+        monkeypatch.setattr(chs, 'load_splits', lambda: {})
+
+        def boom(ticker, splits):
+            raise EOFError('compressed file ended early')
+        monkeypatch.setattr(chs, 'scan_ticker', boom)
+        res = chs.run_scan(['RACE'])
+        assert res['skipped_in_flight'] == ['RACE']
+        assert res['tickers_scanned'] == 0
 
 
 # --------------------------------------------------------------- §5 helpers
