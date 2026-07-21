@@ -21,7 +21,11 @@
 set -u
 PY=./.venv/bin/python; [ -x "$PY" ] || PY=python3
 DIR=data/sp500_intraday_1min
-TICKERS=data/sp500_tickers_2026-07.txt   # the committed frozen universe
+# the committed frozen universe; override to fetch another committed list
+# (e.g. TICKERS=data/nasdaq100_tickers_2026-07.txt for the Nasdaq-100 —
+# already-archived tickers are skipped, so a list that overlaps an earlier
+# run fetches only its net-new names)
+TICKERS=${TICKERS:-data/sp500_tickers_2026-07.txt}
 START=2000-01
 END=2026-07
 WORKER_INDEX=${WORKER_INDEX:-0}
