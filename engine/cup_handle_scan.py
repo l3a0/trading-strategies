@@ -200,6 +200,13 @@ TICKER_START_CLIPS = {
     # clip discards the era they touch, so they are left in place, inert
     # (owner-signed 2026-07-21)
     'GEN': '2021-03-26',
+    # pre-2020 rows are old Ingersoll-Rand plc (~$145, now Trane
+    # Technologies / ticker TT); the ticker passed to the new Ingersoll
+    # Rand Inc (the Gardner Denver lineage, ~$36) at the 2020-02-29
+    # Reverse Morris Trust merger. 2020-02-24 (the distribution record
+    # date) is where the tape's new-company era begins and matches both
+    # references to the cent (owner-signed 2026-07-21)
+    'IR': '2020-02-24',
 }
 
 # §2 hand-resolutions, owner-signed 2026-07-21: DROP WINDOWS — spans
@@ -470,16 +477,19 @@ def crosscheck_series(our_dates: np.ndarray, our_closes: np.ndarray,
 
 
 # Tickers whose YFINANCE history carries a phantom back-adjustment that
-# its own event feed cannot un-adjust (verified against SEC 10-K cover
-# prices to the penny, 2026-07-21): BLDR — a Dec-2009 rights-offering
-# factor (x0.841) baked into every earlier "raw" close with no recorded
-# event; CCI — a x0.970 factor before 2002-05-29, no corporate action
-# exists there. For these, the battery uses Alpha Vantage's TIME_SERIES_
-# DAILY as the reference instead (as-traded, matched SEC prices exactly
-# in the same verification). Same-vendor caveat acknowledged: AV daily
-# vs AV minutes is a self-consistency check, but the AV daily series
-# for BOTH names was externally anchored to SEC filings first.
-CROSSCHECK_AV_REFERENCE = {'BLDR', 'CCI'}
+# its own event feed cannot un-adjust (verified against a primary source
+# to the penny, 2026-07-21): BLDR — a Dec-2009 rights-offering factor
+# (x0.841) baked into every earlier "raw" close with no recorded event;
+# CCI — a x0.970 factor before 2002-05-29, no corporate action exists
+# there; HWM — a constant x0.767 before 2020-04-01 (the Arconic Corp
+# spinoff, 1 new share per 4), our as-traded $18.92 Arconic close on
+# 2016-11-01 externally anchored to a contemporaneous Forbes/Spin-Off
+# Research note. For these, the battery uses Alpha Vantage's
+# TIME_SERIES_DAILY as the reference instead (as-traded). Same-vendor
+# caveat acknowledged: AV daily vs AV minutes is a self-consistency
+# check, but each name's as-traded price was externally anchored to a
+# primary source first.
+CROSSCHECK_AV_REFERENCE = {'BLDR', 'CCI', 'HWM'}
 
 
 def fetch_reference(ticker: str) -> dict[str, Any] | None:
