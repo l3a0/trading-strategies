@@ -218,6 +218,16 @@ TICKER_START_CLIPS = {
     # each share became 0.8357 new shares PLUS $5.73 cash, which a split
     # table cannot express (owner-signed 2026-07-21)
     'JCI': '2016-09-06',
+    # 2018-07-09 is a DIFFERENT INSTRUMENT, not merely an awkward bar:
+    # Dr Pepper Snapple's $103.75/share special cash dividend was large
+    # enough that NYSE ran DUE-BILL trading, so a share bought that day
+    # carried the stock PLUS a detachable right to the cash. Holders lost
+    # nothing ($123.68 cum = $19.93 stock + $103.75 cash; it traded to
+    # $22.19), but the -82% print would be a guaranteed false crash for
+    # any detector — and would poison trailing vol/drawdown features for
+    # a whole lookback window. The archive holds exactly ONE pre-event
+    # session, so the clip costs a single bar (owner-signed 2026-07-21)
+    'KDP': '2018-07-10',
 }
 
 # §2 hand-resolutions, owner-signed 2026-07-21: DROP WINDOWS — spans
@@ -236,6 +246,12 @@ TICKER_DROP_WINDOWS = {
     # $46.38 and $50.50 — a -55%-and-back round trip that never traded
     # (the Ecolab disease; owner-signed 2026-07-21)
     'FAST': [('2000-04-07', '2000-04-07')],
+    # the same disease on the same date as FAST: our minute close is
+    # $20.44 while BOTH independent daily references say $37.94, with
+    # neighbours at $39.62 and $37.19. Found by the one-bar-V sweep
+    # (a day far below both neighbours that fully recovers — real
+    # crashes do not round-trip) (owner-signed 2026-07-21)
+    'EXPD': [('2000-04-07', '2000-04-07')],
 }
 
 
