@@ -86,6 +86,10 @@ RESOLVED_CLIFFS = {
     ('APA', '2020-03-09'):
         'real event: the COVID/OPEC oil-price-war Black Monday, ~-55% — '
         "Apache's worst single day (owner-signed 2026-07-21)",
+    ('GL', '2024-04-11'):
+        'real event: the Fuzzy Panda short-report crash, ~-53% close-to-'
+        'close (~-63% intraday) — Globe Life, no split (owner-signed '
+        '2026-07-21)',
 }
 
 # §2 hand-resolutions, owner-signed 2026-07-21: START CLIPS for tickers
@@ -173,6 +177,21 @@ TICKER_START_CLIPS = {
     # the real Fox Corporation B from 2019-03-19 (its first regular-way
     # session under FOX, and where the vendor's own daily series starts)
     'FOX': '2019-03-19',
+    # FOXA is the class-A twin of FOX — same splice; Nasdaq's own notice
+    # (#dtn2019-05) calls it a "symbol reuse" and rules pre-2019 history
+    # belongs to the old 21st Century Fox / News Corp lineage; Fox
+    # Corporation class A assumed FOXA on 2019-03-19 (owner-signed
+    # 2026-07-21)
+    'FOXA': '2019-03-19',
+    # the GEN tape splices THREE unrelated issuers: Reliant/GenOn (a
+    # power utility, 2001-2012), Genesis HealthCare (nursing homes,
+    # 2015-2021), then the real Gen Digital (Norton/Symantec, ~$21)
+    # from 2021-03-26 — the 49x overnight jump is the switch. The
+    # snapshot's three 2:1 GEN splits are Symantec's, mis-applied to the
+    # utility tape (they fabricated the pre-2005 split-day cliffs); the
+    # clip discards the era they touch, so they are left in place, inert
+    # (owner-signed 2026-07-21)
+    'GEN': '2021-03-26',
 }
 
 # §2 hand-resolutions, owner-signed 2026-07-21: DROP WINDOWS — spans
