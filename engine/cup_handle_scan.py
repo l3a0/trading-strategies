@@ -71,6 +71,17 @@ SPLITS_PATH = 'sp500_splits_2026-07.csv'
 TICKERS_PATH = 'sp500_tickers_2026-07.txt'
 WORKSPACE = 'sp500_intraday_1min'
 
+# §2 hand-resolutions, owner-signed 2026-07-21: cliff flags confirmed as
+# REAL market events — the flagged date is exempt from exclusion and the
+# ticker scans normally. (Data errors are fixed at the source instead:
+# NVDA's 2001 split was re-dated in the committed snapshot to 2001-09-17,
+# the post-9/11 reopen where the halving actually shows in as-traded
+# prices — the recorded 09-10 ex-date fell inside the four-day closure.)
+RESOLVED_CLIFFS = {
+    ('AAPL', '2000-09-29'):
+        'real event: the Sept-2000 profit-warning crash, ~-52% in one session',
+}
+
 
 # ------------------------------------------------------------------ §2 data
 
@@ -476,10 +487,13 @@ def scan_ticker(ticker: str, splits: dict[str, list[tuple[str, float]]],
         return None, None, []
     adj = split_adjust(d, splits.get(ticker, []))
     flags = cliff_flags(adj['close'], adj['dates'], splits.get(ticker, []))
-    cov = coverage_diagnostic(ticker, adj, flags)
-    # a cliff-flagged ticker is excluded until resolved by hand (§2): no
-    # detections, and it never enters the pooled data either
-    detections = [] if flags else detect_cup_handle(adj['close'], adj['volume'])
+    # §2: excluded until resolved by hand — an owner-signed RESOLVED_CLIFFS
+    # entry clears its date; only UNRESOLVED flags exclude
+    unresolved = [f for f in flags if (ticker, f) not in RESOLVED_CLIFFS]
+    cov = coverage_diagnostic(ticker, adj, unresolved)
+    cov['resolved_cliffs'] = [f for f in flags if (ticker, f) in RESOLVED_CLIFFS]
+    detections = ([] if unresolved
+                  else detect_cup_handle(adj['close'], adj['volume']))
     return adj, cov, detections
 
 
