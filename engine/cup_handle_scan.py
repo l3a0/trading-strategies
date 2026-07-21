@@ -90,6 +90,14 @@ RESOLVED_CLIFFS = {
         'real event: the Fuzzy Panda short-report crash, ~-53% close-to-'
         'close (~-63% intraday) — Globe Life, no split (owner-signed '
         '2026-07-21)',
+    ('HIG', '2008-10-30'):
+        'real event: -51.6% the day after a big Q3-2008 loss + '
+        'capital-raise/downgrade fears — The Hartford in the crisis; '
+        'triple-confirmed on price (owner-signed 2026-07-21)',
+    ('HIG', '2008-12-05'):
+        'real event: ~+102% (stock doubled) after a Dec-4 8-K raised the '
+        'profit forecast + reaffirmed capital, on a broad market rally — '
+        'The Hartford; triple-confirmed on price (owner-signed 2026-07-21)',
 }
 
 # §2 hand-resolutions, owner-signed 2026-07-21: START CLIPS for tickers
