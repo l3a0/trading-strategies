@@ -290,6 +290,26 @@ class TestAggregation:
         assert cliff_flags(raw['close'], dates,
                            [('2024-01-03', 1.5)]) == ['2024-01-03']
 
+    def test_resolved_cliff_scans_unresolved_excludes(self, monkeypatch):
+        import engine.cup_handle_scan as chs
+        dates = np.array(['2024-01-02', '2024-01-03', '2024-01-04'])
+        d = {'dates': dates,
+             'open': np.array([100.0, 300.0, 300.0]),
+             'high': np.array([100.0, 300.0, 300.0]),
+             'low': np.array([100.0, 300.0, 300.0]),
+             'close': np.array([100.0, 300.0, 300.0]),
+             'volume': np.array([1.0, 1.0, 1.0])}
+        monkeypatch.setattr(chs, 'archive_path', lambda t: '/synthetic')
+        monkeypatch.setattr(chs, 'aggregate_daily', lambda p, cache_dir=None: d)
+        # unresolved cliff -> no detections attempted (excluded)
+        adj, cov, dets = chs.scan_ticker('XXX', {})
+        assert cov['cliff_flags'] == ['2024-01-03'] and dets == []
+        # owner-signed resolution -> the flag clears and the scan proceeds
+        monkeypatch.setitem(chs.RESOLVED_CLIFFS, ('XXX', '2024-01-03'), 'test')
+        adj, cov, dets = chs.scan_ticker('XXX', {})
+        assert cov['cliff_flags'] == []
+        assert cov['resolved_cliffs'] == ['2024-01-03']
+
     def test_partial_archive_refused(self, tmp_path, monkeypatch):
         import engine.cup_handle_scan as chs
         ws = tmp_path / 'sp500_intraday_1min'
