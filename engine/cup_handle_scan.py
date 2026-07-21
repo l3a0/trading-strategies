@@ -83,6 +83,9 @@ RESOLVED_CLIFFS = {
     ('AIG', '2008-09-15'):
         'real event: Lehman Monday, ~-60% in the bailout week (owner-signed '
         '2026-07-21)',
+    ('APA', '2020-03-09'):
+        'real event: the COVID/OPEC oil-price-war Black Monday, ~-55% — '
+        "Apache's worst single day (owner-signed 2026-07-21)",
 }
 
 # §2 hand-resolutions, owner-signed 2026-07-21: START CLIPS for tickers
@@ -93,6 +96,15 @@ TICKER_START_CLIPS = {
     # pre-2019 rows are Bemis (~$56) wearing the AMCR symbol; the current
     # Amcor plc began NYSE trading 2019-06-11 (~$11)
     'AMCR': '2019-06-11',
+    # pre-gap rows are American Apparel (bankrupt 2015-10-05, last session
+    # 2015-10-02 at ~$0.11); AppLovin IPO'd on the vacated symbol
+    # 2021-04-15 (owner-signed 2026-07-21)
+    'APP': '2021-04-15',
+    # pre-2019 rows are Axovant Sciences (biotech; its trial-failure
+    # crashes are real but the wrong company's); Axovant vacated the
+    # symbol at the 2019-02-14 open and the vendor tape carries Axon
+    # Enterprise from that day (owner-signed 2026-07-21)
+    'AXON': '2019-02-14',
 }
 
 
