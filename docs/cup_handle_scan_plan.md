@@ -386,13 +386,25 @@ pattern with pins.
   (following the harness's conventions; the pooled cluster null is new
   code), and a print-only report. Deterministic; the only seed is
   `CUP_SEED`.
+  - **Location note (2026-07-21, not a rule change).** The §2 data
+    layer named above — aggregation and its cache, split adjustment,
+    the coverage diagnostic, the cliff guard, the owner-signed hygiene
+    rulings and the reference cross-check — now lives in
+    `pipeline/minute_archive.py`, consumed here via `load_clean_daily`.
+    The rules are unchanged and the move was verified byte-identical on
+    the then-complete 271-ticker archive; it happened because those
+    answers are facts about the vendor tape rather than about this
+    hypothesis, and a second study must not end up with a second,
+    divergent set of them. `engine/cup_handle_scan.py` keeps §3 and §5.
 - **Committed data in the build PR**: `data/sp500_tickers_2026-07.txt`
   (the frozen universe) and `data/sp500_splits_2026-07.csv` (the split
   snapshot with as-of date).
 - **Tests**: `tests/test_cup_handle_scan.py` — the §4 synthetic battery
   always-run; a dataset-gated pin class (requires the local archive;
   skips in CI) pinning the coverage summary, detection counts, the
-  cluster verdicts, and the ablations.
+  cluster verdicts, and the ablations. The data-layer half (aggregation,
+  split adjustment, the rulings, the cross-check) moved with its code to
+  `tests/test_minute_archive.py`; both run in CI.
 - **Figures**: the §4 eyeball figure via
   `search/make_exploration_figures.py` (regenerable, committed PNG,
   clipped at the breakout day).
