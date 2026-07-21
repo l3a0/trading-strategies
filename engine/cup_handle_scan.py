@@ -86,6 +86,10 @@ RESOLVED_CLIFFS = {
     ('APA', '2020-03-09'):
         'real event: the COVID/OPEC oil-price-war Black Monday, ~-55% — '
         "Apache's worst single day (owner-signed 2026-07-21)",
+    ('GL', '2024-04-11'):
+        'real event: the Fuzzy Panda short-report crash, ~-53% close-to-'
+        'close (~-63% intraday) — Globe Life, no split (owner-signed '
+        '2026-07-21)',
 }
 
 # §2 hand-resolutions, owner-signed 2026-07-21: START CLIPS for tickers
@@ -105,6 +109,107 @@ TICKER_START_CLIPS = {
     # symbol at the 2019-02-14 open and the vendor tape carries Axon
     # Enterprise from that day (owner-signed 2026-07-21)
     'AXON': '2019-02-14',
+    # pre-2026 rows are the BlackRock New York Municipal Income Trust
+    # (~$10 closed-end fund, merged away 2026-02); BNY Mellon moved its
+    # stock from BK to BNY effective 2026-05-21 (owner-signed 2026-07-21)
+    'BNY': '2026-05-21',
+    # pre-2022-07 rows are the ORIGINAL Coherent Inc (acquired by II-VI
+    # at $266/share deal value, last day 2022-06-30); the tape carries
+    # the surviving II-VI/Coherent Corp from the close date — also
+    # neutralizes the snapshot's 2011-06-27 split, which is II-VI's,
+    # not old Coherent's (owner-signed 2026-07-21)
+    'COHR': '2022-07-01',
+    # pre-gap rows are Converted Organics (fertilizer penny stock, gone
+    # dark 2013); Coinbase direct-listed on the vacated symbol
+    # 2021-04-14 (owner-signed 2026-07-21)
+    'COIN': '2021-04-14',
+    # pre-gap rows are C2C CrowdFunding (OTC shell, registration
+    # revoked 2015); CrowdStrike IPO'd 2019-06-12, first close $58.00
+    # matching the tape (owner-signed 2026-07-21)
+    'CRWD': '2019-06-12',
+    # pre-gap rows are old Dell Inc (private 2013-10-29) plus two
+    # when-issued days distorted by the snapshot's DVMT-lineage 1.806
+    # factor; regular-way Dell Technologies trading began 2018-12-28
+    # (owner-signed 2026-07-21)
+    'DELL': '2018-12-28',
+    # pre-2013 rows are EnergySolutions (taken private at $4.15/share,
+    # last day 2013-05-24); the tape carries Northeast Utilities /
+    # Eversource from the vacancy (owner-signed 2026-07-21)
+    'ES': '2013-05-28',
+    # the vendor's pre-2011 ELV tape is FICTION: 2000-2005 matches no
+    # real security in the Anthem/WellPoint lineage (SEC 10-K price
+    # tables prove it), 2006-2010 is a smooth-but-wrong blend (1,077
+    # sessions >2% off the reference, up to 49%); the tape matches the
+    # real company exactly from 2010-12-17 onward — supersedes the
+    # earlier 2005 drop-window ruling (owner-signed 2026-07-21)
+    'ELV': '2010-12-17',
+    # ---- the reference-cross-check catch (owner-signed 2026-07-21) ----
+    # these seven surfaced only because the day-by-day reference check
+    # sees smooth wrong-company eras the cliff guard is blind to.
+    # pre-2013 rows are Michael Baker Corp (engineering, taken private
+    # at $40.50, last day 2013-10-11); the tape back-stitches the Baker
+    # Hughes lineage from the vacancy (and only actually has rows from
+    # 2017-07, when the merged BHGE listed)
+    'BKR': '2013-10-14',
+    # pre-2016 rows are the OLD Chubb Corp, absorbed by ACE after the
+    # 2016-01-14 close; the tape carries ACE-renamed-Chubb Limited from
+    # 2016-01-15 (NYSE Form 25-NSE pins the boundary)
+    'CB': '2016-01-15',
+    # pre-2024 rows are Physicians Realty Trust (real, merged into
+    # Healthpeak at 0.674/share); Healthpeak assumed DOC at the
+    # 2024-03-04 open (the tape correctly has no rows on the 03-01
+    # PEAK-final day)
+    'DOC': '2024-03-04',
+    # pre-2012 rows are the OLD Constellation Energy Group (merged into
+    # Exelon 2012-03-12); the NEW Constellation spun off from Exelon
+    # and began regular Nasdaq trading 2022-02-02 — the clip also drops
+    # ten thin when-issued prints (2022-01-19..02-01) that traded under
+    # the temporary CEGVV symbol
+    'CEG': '2022-02-02',
+    # pre-2006 rows are a nearly-untraded NASDAQ ADR line (ticker
+    # CRHCY, stale quotes, at least one fabricated print); CRH's US
+    # line moved to NYSE as CRH on 2006-03-31 (8-A12B); the modern era
+    # then clears the cross-check with only scattered noise
+    'CRH': '2006-03-31',
+    # the FOX tape is FOUR issuers spliced: old News Corp B (misfiled —
+    # it traded as NWS), two weeks of new-News-Corp-B when-issued
+    # prints from the 2013 split, 21st Century Fox B (2013-2019), then
+    # the real Fox Corporation B from 2019-03-19 (its first regular-way
+    # session under FOX, and where the vendor's own daily series starts)
+    'FOX': '2019-03-19',
+    # FOXA is the class-A twin of FOX — same splice; Nasdaq's own notice
+    # (#dtn2019-05) calls it a "symbol reuse" and rules pre-2019 history
+    # belongs to the old 21st Century Fox / News Corp lineage; Fox
+    # Corporation class A assumed FOXA on 2019-03-19 (owner-signed
+    # 2026-07-21)
+    'FOXA': '2019-03-19',
+    # the GEN tape splices THREE unrelated issuers: Reliant/GenOn (a
+    # power utility, 2001-2012), Genesis HealthCare (nursing homes,
+    # 2015-2021), then the real Gen Digital (Norton/Symantec, ~$21)
+    # from 2021-03-26 — the 49x overnight jump is the switch. The
+    # snapshot's three 2:1 GEN splits are Symantec's, mis-applied to the
+    # utility tape (they fabricated the pre-2005 split-day cliffs); the
+    # clip discards the era they touch, so they are left in place, inert
+    # (owner-signed 2026-07-21)
+    'GEN': '2021-03-26',
+}
+
+# §2 hand-resolutions, owner-signed 2026-07-21: DROP WINDOWS — spans
+# (inclusive) where the vendor minute tape is corrupt inside an
+# otherwise clean history. Both rulings were verified to join
+# seamlessly after the drop (ECL $159.13 -> $159.16; ELV $67.71 ->
+# $68.90). Distinct from RESOLVED_CLIFFS (a real move, kept) and
+# TICKER_START_CLIPS (a predecessor era, cut from the front).
+TICKER_DROP_WINDOWS = {
+    # 2019-02-05 is Ecopetrol's (EC — one character off) tape filed
+    # under ECL: the corrupt $18.92 close matches EC to the cent while
+    # Ecolab really traded ~$159 that day
+    'ECL': [('2019-02-05', '2019-02-05')],
+    # 2000-04-07 is a corrupt vendor day: the minute tape closed $20.81
+    # but Alpha Vantage's daily series shows $48.31, bracketed by
+    # $46.38 and $50.50 — a -55%-and-back round trip that never traded
+    # (the Ecolab disease; owner-signed 2026-07-21)
+    'FAST': [('2000-04-07', '2000-04-07')],
 }
 
 
@@ -120,15 +225,22 @@ def archive_path(ticker: str) -> str | None:
     completion marker (``.months.done``) is a partial, in-flight, or
     abandoned download and must never be scanned as history — the
     silent-gap failure §2 exists to prevent. The nine data-root archives
-    predate the marker and are complete by construction."""
+    predate the marker and are complete by construction.
+
+    The batch script gzips each finished ticker IN PLACE (``gzip -9``
+    keeps the csv until the gz is complete, then unlinks it), so while
+    compression runs both files exist and the gz is TRUNCATED. The csv
+    is therefore preferred whenever its marker vouches for it, and the
+    workspace gz is trusted only with the marker too — the marker file
+    is a sibling the gzip never touches."""
     stem = ticker.replace('.', '-').lower()
     ws_gz = data_path(f'{WORKSPACE}/{stem}_intraday_1min.csv.gz')
     ws_csv = data_path(f'{WORKSPACE}/{stem}_intraday_1min.csv')
     done = ws_csv + '.months.done'
-    if os.path.exists(ws_gz):
-        return ws_gz
     if os.path.exists(ws_csv) and os.path.exists(done):
         return ws_csv
+    if os.path.exists(ws_gz) and os.path.exists(done):
+        return ws_gz
     for root in (data_path(f'{stem}_intraday_1min.csv.gz'),
                  data_path(f'{stem}_intraday_1min.csv')):
         if os.path.exists(root):
@@ -265,6 +377,186 @@ def coverage_diagnostic(ticker: str, d: dict[str, np.ndarray],
         'late_start': bool(first and first > LATE_START_FLAG),
         'cliff_flags': flags,
     }
+
+
+# ----------------------------------------------- §2 reference cross-check
+#
+# The ELV lesson (owner-signed 2026-07-21): a vendor era can be smooth,
+# range-plausible, and entirely FAKE — ELV's 2006-2010 tape ran up to 49%
+# off the real company with no single-day jump, so the cliff guard is
+# blind to it by construction. The only defense is comparing against an
+# independent daily reference. This battery is REPORTING ONLY: it needs
+# the network, so it never gates run_scan (which stays deterministic) —
+# a flagged ticker goes to triage and exclusion happens through the
+# owner-signed tables above, like every other ruling.
+
+CROSSCHECK_TOL = 0.02      # per-day |ours/ref - 1| beyond this = mismatch
+CROSSCHECK_SEVERE = 0.05   # ... beyond this = severe (scale-level, not noise)
+# Flag thresholds, calibrated on the first full sweep (2026-07-21, 184
+# tickers): benign noise — our close is the last minute-bar trade at or
+# before 16:00, the reference's is the official auction close, and on
+# wild days (2008-09, 2020-03) they differ >2% for up to 5 straight
+# sessions; the noisiest honest name (BX) logged 270 scattered days but
+# never past ~3% and never a run over 4. Every structural fake era ran
+# 28..2,672 consecutive days at scale-level offsets. So: a LONG RUN
+# flags regardless of size (the CCI shape, a sustained ~3% era), and
+# the total-days backstop counts only SEVERE days so honest-but-noisy
+# names never flag on accumulated jitter.
+CROSSCHECK_MAX_RUN = 10    # flag at this many consecutive mismatch days
+CROSSCHECK_MAX_SEVERE = 20  # ... or this many severe days overall
+
+
+def unsplit_reference(closes: np.ndarray, dates: np.ndarray,
+                      split_events: list[tuple[str, float]]) -> np.ndarray:
+    """Reconstruct the reference's AS-TRADED closes. yfinance
+    split-adjusts its Close column even with auto_adjust=False (the XLE
+    lesson), so multiply each close back up by the product of the
+    REFERENCE'S OWN split factors dated strictly after the row. Using
+    the reference's own events keeps the comparison
+    convention-independent — our owner-signed snapshot never enters, so
+    a snapshot ruling (the EXPE removal) cannot mask a real mismatch."""
+    out = np.asarray(closes, dtype=float).copy()
+    for sdate, factor in split_events:
+        if factor:
+            out[dates < sdate] *= factor
+    return out
+
+
+def crosscheck_series(our_dates: np.ndarray, our_closes: np.ndarray,
+                      ref_dates: np.ndarray, ref_closes: np.ndarray,
+                      ref_splits: list[tuple[str, float]],
+                      tol: float = CROSSCHECK_TOL) -> dict[str, Any]:
+    """Pure comparison core (network-free, tested synthetically). Days
+    the reference lacks are counted ``unreferenced`` — they neither
+    match nor mismatch, and they do not reset a mismatch run (a
+    reference hole must not split one bad era into two short runs)."""
+    ref_as_traded = unsplit_reference(ref_closes, ref_dates, ref_splits)
+    ref_map = dict(zip(ref_dates.tolist(), ref_as_traded.tolist()))
+    mismatches: list[str] = []
+    matched = unreferenced = severe = run = max_run = 0
+    for x, c in zip(our_dates.tolist(), our_closes.tolist()):
+        r = ref_map.get(x)
+        if r is None or r <= 0:
+            unreferenced += 1
+            continue
+        off = abs(c / r - 1)
+        if off > tol:
+            mismatches.append(x)
+            severe += off > CROSSCHECK_SEVERE
+            run += 1
+            max_run = max(max_run, run)
+        else:
+            matched += 1
+            run = 0
+    return {
+        'compared': matched + len(mismatches),
+        'mismatch_days': len(mismatches),
+        'severe_days': severe,
+        'mismatch_first': mismatches[0] if mismatches else None,
+        'mismatch_last': mismatches[-1] if mismatches else None,
+        'max_run': max_run,
+        'unreferenced_days': unreferenced,
+        'flagged': (max_run >= CROSSCHECK_MAX_RUN
+                    or severe >= CROSSCHECK_MAX_SEVERE),
+    }
+
+
+# Tickers whose YFINANCE history carries a phantom back-adjustment that
+# its own event feed cannot un-adjust (verified against SEC 10-K cover
+# prices to the penny, 2026-07-21): BLDR — a Dec-2009 rights-offering
+# factor (x0.841) baked into every earlier "raw" close with no recorded
+# event; CCI — a x0.970 factor before 2002-05-29, no corporate action
+# exists there. For these, the battery uses Alpha Vantage's TIME_SERIES_
+# DAILY as the reference instead (as-traded, matched SEC prices exactly
+# in the same verification). Same-vendor caveat acknowledged: AV daily
+# vs AV minutes is a self-consistency check, but the AV daily series
+# for BOTH names was externally anchored to SEC filings first.
+CROSSCHECK_AV_REFERENCE = {'BLDR', 'CCI'}
+
+
+def fetch_reference(ticker: str) -> dict[str, Any] | None:
+    """Daily closes + split events from yfinance (network)."""
+    import yfinance as yf
+    h = yf.Ticker(ticker.replace('.', '-')).history(period='max',
+                                                    auto_adjust=False)
+    if h is None or not len(h):
+        return None
+    return {
+        'dates': np.array([x.strftime('%Y-%m-%d') for x in h.index]),
+        'closes': h['Close'].to_numpy(dtype=float),
+        'splits': [(x.strftime('%Y-%m-%d'), float(s))
+                   for x, s in h['Stock Splits'].items() if s],
+    }
+
+
+def fetch_reference_av(ticker: str) -> dict[str, Any] | None:
+    """As-traded daily closes from Alpha Vantage (network; needs
+    ALPHAVANTAGE_API_KEY in the environment). No split reconstruction —
+    the series is as-traded already, so ``splits`` is empty."""
+    key = os.environ.get('ALPHAVANTAGE_API_KEY')
+    if not key:
+        return None
+    import urllib.request
+    url = ('https://www.alphavantage.co/query?function=TIME_SERIES_DAILY'
+           f'&symbol={ticker.replace(".", "-")}&outputsize=full'
+           f'&datatype=csv&apikey={key}')
+    with urllib.request.urlopen(url, timeout=60) as resp:
+        text = resp.read().decode()
+    rows = [ln.split(',') for ln in text.strip().splitlines()[1:]
+            if ln.count(',') >= 4]
+    if not rows:
+        return None
+    rows.sort(key=lambda r: r[0])
+    return {
+        'dates': np.array([r[0] for r in rows]),
+        'closes': np.array([float(r[4]) for r in rows]),
+        'splits': [],
+    }
+
+
+def crosscheck_ticker(ticker: str) -> dict[str, Any] | None:
+    """Cross-check one archive against the reference, AFTER the
+    owner-signed clips/drops (ruled-out eras must not re-flag; what we
+    scan is what gets checked)."""
+    path = archive_path(ticker)
+    if path is None:
+        return None
+    d = aggregate_daily(path)
+    if not len(d['dates']):
+        return None
+    clip = TICKER_START_CLIPS.get(ticker)
+    if clip is not None:
+        keep = d['dates'] >= clip
+        d = {k: v[keep] for k, v in d.items()}
+    for w0, w1 in TICKER_DROP_WINDOWS.get(ticker, []):
+        keep = (d['dates'] < w0) | (d['dates'] > w1)
+        d = {k: v[keep] for k, v in d.items()}
+    if not len(d['dates']):
+        return None
+    fetch = (fetch_reference_av if ticker in CROSSCHECK_AV_REFERENCE
+             else fetch_reference)
+    ref = fetch(ticker)
+    if ref is None:
+        return {'ticker': ticker, 'flagged': None, 'note': 'no reference data'}
+    out = crosscheck_series(d['dates'], d['close'],
+                            ref['dates'], ref['closes'], ref['splits'])
+    out['ticker'] = ticker
+    return out
+
+
+def run_crosscheck(tickers: Sequence[str]) -> list[dict[str, Any]]:
+    failed = failed_tickers()
+    rows: list[dict[str, Any]] = []
+    for t in tickers:
+        if t in failed:
+            continue
+        try:
+            r = crosscheck_ticker(t)
+        except (EOFError, FileNotFoundError, OSError):
+            continue  # archive mid-move (rolling gzip); next pass gets it
+        if r is not None:
+            rows.append(r)
+    return rows
 
 
 # -------------------------------------------------------------- §3 detector
@@ -517,6 +809,10 @@ def scan_ticker(ticker: str, splits: dict[str, list[tuple[str, float]]],
         adj = {k: v[keep] for k, v in adj.items()}
         if not len(adj['dates']):
             return None, None, []
+    dropped = TICKER_DROP_WINDOWS.get(ticker, [])
+    for w0, w1 in dropped:
+        keep = (adj['dates'] < w0) | (adj['dates'] > w1)
+        adj = {k: v[keep] for k, v in adj.items()}
     flags = cliff_flags(adj['close'], adj['dates'], splits.get(ticker, []))
     # §2: excluded until resolved by hand — an owner-signed RESOLVED_CLIFFS
     # entry clears its date; only UNRESOLVED flags exclude
@@ -524,6 +820,7 @@ def scan_ticker(ticker: str, splits: dict[str, list[tuple[str, float]]],
     cov = coverage_diagnostic(ticker, adj, unresolved)
     cov['resolved_cliffs'] = [f for f in flags if (ticker, f) in RESOLVED_CLIFFS]
     cov['start_clip'] = clip
+    cov['drop_windows'] = dropped
     detections = ([] if unresolved
                   else detect_cup_handle(adj['close'], adj['volume']))
     return adj, cov, detections
@@ -562,11 +859,18 @@ def run_scan(tickers: Sequence[str], evaluate: bool = False) -> dict[str, Any]:
     detections: dict[str, list[dict[str, Any]]] = {}
     missing: list[str] = []
     excluded: dict[str, str] = {}
+    skipped_in_flight: list[str] = []
     for t in tickers:
         if t in failed:
             excluded[t] = 'failed_fetch'
             continue
-        adj, cov, dets = scan_ticker(t, splits)
+        try:
+            adj, cov, dets = scan_ticker(t, splits)
+        except (EOFError, FileNotFoundError, OSError):
+            # the archive moved under us (the batch's rolling gzip):
+            # skip this pass, the next increment picks it up complete
+            skipped_in_flight.append(t)
+            continue
         if adj is None:
             missing.append(t)
             continue
@@ -597,6 +901,7 @@ def run_scan(tickers: Sequence[str], evaluate: bool = False) -> dict[str, Any]:
     total = sum(len(v) for t, v in detections.items() if t not in excluded)
     out: dict[str, Any] = {
         'tickers_scanned': len(data), 'missing': missing,
+        'skipped_in_flight': skipped_in_flight,
         'excluded': excluded,
         'coverage': coverage,
         'total_detections': total,
@@ -669,9 +974,33 @@ if __name__ == '__main__':
                     help='comma-separated subset (default: the committed universe)')
     ap.add_argument('--evaluate', action='store_true',
                     help='the §10 step-4 switch: compute returns and verdicts')
+    ap.add_argument('--crosscheck', action='store_true',
+                    help='reference cross-check battery (network, reporting '
+                         'only — run_scan itself never touches the network)')
     ap.add_argument('--json', action='store_true')
     a = ap.parse_args()
     tks = a.tickers.split(',') if a.tickers else universe()
+    if a.crosscheck:
+        rows = run_crosscheck(tks)
+        flagged = [r for r in rows if r.get('flagged')]
+        noref = [r['ticker'] for r in rows if r.get('flagged') is None]
+        if a.json:
+            print(json.dumps({'rows': rows}, default=str))
+        else:
+            print(f"crosschecked {len(rows)} tickers: {len(flagged)} flagged, "
+                  f"{len(noref)} without reference data {noref}")
+            for r in flagged:
+                print(f"  FLAG {r['ticker']}: {r['mismatch_days']} mismatch "
+                      f"days ({r['mismatch_first']}..{r['mismatch_last']}, "
+                      f"max run {r['max_run']}), "
+                      f"{r['unreferenced_days']} unreferenced")
+            big_unref = [(r['ticker'], r['unreferenced_days']) for r in rows
+                         if r.get('flagged') is False
+                         and r['unreferenced_days'] > 25]
+            if big_unref:
+                print('  large unreferenced spans (predecessor-era smell):',
+                      big_unref)
+        raise SystemExit(0)
     res = run_scan(tks, evaluate=a.evaluate)
     if a.json:
         print(json.dumps(res, default=str))
