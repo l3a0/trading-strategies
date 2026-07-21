@@ -215,6 +215,30 @@ TICKER_START_CLIPS = {
     # a whole lookback window. The archive holds exactly ONE pre-event
     # session, so the clip costs a single bar (owner-signed 2026-07-21)
     'KDP': '2018-07-10',
+    # pre-2013-09-30 rows are old SAIC, Inc. (NYSE: SAI), which on
+    # 2013-09-27 spun off ~30% of its value as a NEW SAIC (1 share per 7
+    # held) and then did a 1-for-4 reverse split before the 2013-09-30
+    # open, renaming itself Leidos. 2013-09-16..09-27 are LDOS
+    # EX-DISTRIBUTION when-issued prints (1.5k-36k shares/day against
+    # 2-4.6M regular-way) running alongside regular-way SAI — the clip
+    # subsumes them, so no drop-window is needed.
+    #
+    # The pre-separation era is NOT rescuable by repairing the snapshot's
+    # 0.405 factor. That factor is a vendor composite (a plain 1-for-4 is
+    # 0.25) and it is WRONG: the combined multiplier read off the 10
+    # sessions where both lines traded is 2.871, not the 2.469 that 0.405
+    # implies, which is what inflates the join to +20% (it would be
+    # +3.1% correctly). The right value ~0.348 appears in NO committed
+    # reference, so deriving it would be inventing a cleaning rule that
+    # pins numbers; and even a perfect factor yields a SYNTHETIC series
+    # — 4 x (P_SAI - P_newSAIC/7) never traded, and the spin fraction is
+    # observable only for those 10 days, so carrying it back to 2007
+    # manufactures exactly the smooth-but-fake era the ELV ruling exists
+    # to catch. This is the JCI case verbatim: each share became 0.25
+    # LDOS shares PLUS 1/7 of another company, which a split table
+    # cannot express. The 0.405 row is left in place, inert, as GEN's
+    # mis-applied splits were (owner-signed 2026-07-21)
+    'LDOS': '2013-09-30',
 }
 
 # §2 hand-resolutions, owner-signed 2026-07-21: DROP WINDOWS — spans
