@@ -478,6 +478,12 @@ class TestReferenceCrosscheck:
         r = chs.crosscheck_ticker('VVV')
         assert r['flagged'] is False and r['compared'] == 16
 
+    def test_av_reference_membership(self):
+        # the names whose yfinance history carries an un-undoable phantom
+        # back-adjustment (owner-signed) must route to the AV reference
+        import engine.cup_handle_scan as chs
+        assert {'BLDR', 'CCI', 'HWM'} <= chs.CROSSCHECK_AV_REFERENCE
+
     def test_av_reference_tickers_use_av_fetch(self, monkeypatch):
         # BLDR/CCI-class names (yfinance carries a phantom adjustment its
         # own event feed can't undo) must be checked against the Alpha
