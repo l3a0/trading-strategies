@@ -487,15 +487,23 @@ TICKER_DROP_WINDOWS = {
 # losses a holder genuinely took, and they belong in a return series.
 #
 # ---------------------------------------------------------------------
-# WHAT THIS TABLE DOES NOT COVER, stated loudly because it is the real
-# exposure: the cliff guard only flags day-over-day ratios outside
-# [0.5, 2.0], so it can only have surfaced detachments large enough to
-# roughly HALVE the price. A 20-30% spin-off sails straight through, looks
-# exactly like an ordinary bad week, and nothing in this repo can see it —
-# we have no dividend or distribution feed. So this table is a floor on
-# known contamination, NOT a guarantee of clean returns. Ordinary
-# quarterly dividends (~0.5%) are noise at these horizons; the untracked
-# middle is not.
+# COVERAGE (2026-07-22, much wider than at first): this hand-signed table
+# holds the three detachments the CLIFF GUARD surfaced. The guard only
+# flags ratios outside [0.5, 2.0], so on its own it can only ever find
+# events that roughly halve the price — a 20-30% spin-off sails straight
+# through and looks like an ordinary bad week.
+#
+# The 118 rows in ``data/value_detachments_2026-07.csv`` close most of
+# that gap from the other direction: they are the rows EVICTED from the
+# split snapshot when the adjust-only-share-count-changes convention was
+# adopted, and 93 of them are exactly the invisible middle the guard
+# cannot see. ``return_break_indices`` reads BOTH sources.
+#
+# Still not covered: a detachment that is in neither table because no
+# vendor ever reported an adjustment factor for it and it was too small to
+# trip the guard. We have no dividend or distribution feed, so that
+# residue is unbounded — this remains a floor on known contamination, not
+# a guarantee of clean returns.
 #
 # Sourced from the owner-signed rulings; each date is the EX/detachment
 # session, i.e. the first session quoted without the distributed value.
@@ -512,6 +520,36 @@ RETURN_BREAKS: dict[str, tuple[str, ...]] = {
 }
 
 
+DETACHMENTS_PATH = 'value_detachments_2026-07.csv'
+_DETACHMENTS: dict[str, tuple[str, ...]] | None = None
+
+
+def load_detachments() -> dict[str, tuple[str, ...]]:
+    """The value detachments evicted from the split snapshot.
+
+    These were being applied as SPLITS, which rescaled every price before
+    them. Abbott is the clearest case: its real 2012-12-31 close was
+    $65.47, and the AbbVie factor (2.0842) was rendering it $31.41 —
+    every pre-2013 Abbott price in the archive was half the tape.
+
+    Under the adjust-only-share-count-changes convention they stop
+    adjusting anything, which puts the real step back on the tape and
+    makes each date a return break instead. Cached; the file is a
+    committed snapshot like the split table.
+    """
+    global _DETACHMENTS
+    if _DETACHMENTS is None:
+        out: dict[str, list[str]] = {}
+        try:
+            with open(data_path(DETACHMENTS_PATH)) as f:
+                for row in csv.DictReader(f):
+                    out.setdefault(row['ticker'], []).append(row['ex_date'])
+        except FileNotFoundError:
+            pass
+        _DETACHMENTS = {k: tuple(sorted(v)) for k, v in out.items()}
+    return _DETACHMENTS
+
+
 def return_break_indices(ticker: str, dates: np.ndarray) -> np.ndarray:
     """Session indices of ``ticker``'s return breaks within ``dates``.
 
@@ -519,8 +557,13 @@ def return_break_indices(ticker: str, dates: np.ndarray) -> np.ndarray:
     i.e. any window ``(t, t + H]`` with ``t < j <= t + H``. Dates absent
     from the series (clipped away, or before the span) simply do not
     appear; a ticker with no breaks returns an empty array.
+
+    Reads BOTH sources: the hand-signed ``RETURN_BREAKS`` (what the cliff
+    guard surfaced) and the committed detachment snapshot (what the split
+    reclassification surfaced, including the sub-guard middle).
     """
-    wanted = RETURN_BREAKS.get(ticker)
+    wanted = set(RETURN_BREAKS.get(ticker, ()))
+    wanted.update(load_detachments().get(ticker, ()))
     if not wanted:
         return np.empty(0, dtype=int)
     pos = {str(d): i for i, d in enumerate(dates)}
@@ -532,6 +575,47 @@ def return_break_indices(ticker: str, dates: np.ndarray) -> np.ndarray:
 def universe() -> list[str]:
     with open(data_path(TICKERS_PATH)) as f:
         return [ln.strip() for ln in f if ln.strip()]
+
+
+# Every committed universe snapshot, in fetch order. Used ONLY to name the
+# archives hygiene should sweep — NOT to widen any study's population.
+UNIVERSE_SNAPSHOTS = (
+    TICKERS_PATH,
+    'nasdaq100_tickers_2026-07.txt',
+    'sp400_tickers_2026-07.txt',
+)
+
+
+def archived_tickers() -> list[str]:
+    """Every ticker we hold a COMPLETE archive for, across all committed
+    universe snapshots.
+
+    WHY THIS IS NOT ``universe()``: hygiene and study population are
+    different questions that were accidentally sharing one answer. The
+    cup-and-handle design freezes its universe at the S&P 500 snapshot
+    (plan §2), so ``universe()`` must keep returning exactly that. But
+    data hygiene has to cover every archive on disk regardless of which
+    study wants it — and while the S&P 400 was landing, the sweep kept
+    re-checking the same 501 S&P 500 names and reporting clean, with
+    newly-fetched mid-caps never examined. The sweep was not failing; it
+    was succeeding on the wrong set, which is worse.
+
+    Completeness is ``archive_path``'s definition (the fetcher's
+    ``.months.done`` marker, or a data-root archive), so an in-flight
+    download is never swept. Order follows the snapshots, deduped, so a
+    ticker in two indexes appears once.
+    """
+    seen: dict[str, None] = {}
+    for snap in UNIVERSE_SNAPSHOTS:
+        try:
+            with open(data_path(snap)) as f:
+                for ln in f:
+                    t = ln.strip()
+                    if t and t not in seen and archive_path(t) is not None:
+                        seen[t] = None
+        except FileNotFoundError:
+            continue
+    return list(seen)
 
 
 def archive_path(ticker: str) -> str | None:
@@ -922,12 +1006,22 @@ if __name__ == '__main__':
     ap = argparse.ArgumentParser()
     ap.add_argument('--tickers', default=None,
                     help='comma-separated subset (default: the committed universe)')
+    ap.add_argument('--all-archives', action='store_true',
+                    help='sweep EVERY complete archive across all committed '
+                         'universe snapshots, not just the S&P 500 list. '
+                         'This is the hygiene sweep; it does NOT widen any '
+                         "study's frozen population")
     ap.add_argument('--crosscheck', action='store_true',
                     help='reference cross-check battery (network; reporting '
                          'only — load_clean_daily never touches the network)')
     ap.add_argument('--json', action='store_true')
     a = ap.parse_args()
-    tks = a.tickers.split(',') if a.tickers else universe()
+    if a.tickers:
+        tks = a.tickers.split(',')
+    elif a.all_archives:
+        tks = archived_tickers()
+    else:
+        tks = universe()
     if a.crosscheck:
         rows = run_crosscheck(tks)
         flagged = [r for r in rows if r.get('flagged')]

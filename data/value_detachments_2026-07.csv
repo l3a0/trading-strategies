@@ -1,0 +1,117 @@
+ticker,ex_date,ratio,event,basis,as_of
+A,2014-11-03,1.398,value detachment (unresearched),ratio-rule,2026-07-20
+ABT,2004-05-03,1.0688328345446771,"Abbott spun off Hospira, Inc",researched:high,2026-07-20
+ABT,2013-01-02,2.084201750729471,value detachment (unresearched),ratio-rule,2026-07-20
+ADP,2007-04-02,1.1070519207350824,value detachment (unresearched),ratio-rule,2026-07-20
+ADP,2014-10-01,1.139,value detachment (unresearched),ratio-rule,2026-07-20
+APD,2016-10-03,1.081,"Air Products spun off its Electronic Materials Division as Versum Materials, Inc",researched:high,2026-07-20
+APTV,2017-12-05,1.193,value detachment (unresearched),ratio-rule,2026-07-20
+AXP,1994-05-31,1.13314447592068,value detachment (unresearched),ratio-rule,2026-07-20
+AXP,2005-10-03,1.1424654404204273,value detachment (unresearched),ratio-rule,2026-07-20
+BAX,1992-12-01,1.1010426874249915,value detachment (unresearched),ratio-rule,2026-07-20
+BAX,2015-07-01,1.841,value detachment (unresearched),ratio-rule,2026-07-20
+BDX,2022-04-01,1.025,"Becton, Dickinson completed the spin-off of Embecta Corp",researched:high,2026-07-20
+BDX,2026-02-10,1.272,value detachment (unresearched),ratio-rule,2026-07-20
+BMY,2001-08-07,1.0506662800214757,"Bristol-Myers Squibb spun off its orthopaedics business as Zimmer Holdings: on August 6, 2001 BMS distributed all Zimmer shares to BMS stockholders as a dividen",researched:high,2026-07-20
+BNY,2007-07-02,0.9434,value detachment (unresearched),ratio-rule,2026-07-20
+C,1995-10-03,1.0040160642570282,Ticker C's pre-1998 history is Travelers Group Inc,researched:high,2026-07-20
+CMCSA,2026-01-05,1.067,"Comcast completed the pro-rata spin-off of Versant Media Group (NBCU cable networks; Nasdaq: VSNT), distributing 1 Versant share per 25 Comcast shares to holder",researched:high,2026-07-20
+CNP,2002-10-01,1.1862396204033214,value detachment (unresearched),ratio-rule,2026-07-20
+COP,2012-05-01,1.311791,value detachment (unresearched),ratio-rule,2026-07-20
+DD,2019-04-02,1.487,value detachment (unresearched),ratio-rule,2026-07-20
+DD,2019-06-03,0.4725,value detachment (unresearched),ratio-rule,2026-07-20
+DD,2025-11-03,2.39,value detachment (unresearched),ratio-rule,2026-07-20
+DELL,2018-12-28,1.806,value detachment (unresearched),ratio-rule,2026-07-20
+DELL,2021-11-02,1.973,value detachment (unresearched),ratio-rule,2026-07-20
+DHI,2001-03-07,1.11,value detachment (unresearched),ratio-rule,2026-07-20
+DHR,2016-07-05,1.319,value detachment (unresearched),ratio-rule,2026-07-20
+DHR,2023-10-02,1.128,value detachment (unresearched),ratio-rule,2026-07-20
+DIS,2007-06-13,1.0136847440446022,Disney spun off its ABC Radio business (ABC Radio Holdings) pro rata — approximately 0,researched:high,2026-07-20
+DOC,2016-11-01,1.098,"Spin-off of Quality Care Properties (QCP) by HCP, Inc",researched:high,2026-07-20
+DOV,2014-03-03,1.205,value detachment (unresearched),ratio-rule,2026-07-20
+DOV,2018-05-09,1.238,value detachment (unresearched),ratio-rule,2026-07-20
+DRI,2015-11-10,1.1186933661483387,value detachment (unresearched),ratio-rule,2026-07-20
+DTE,2021-07-01,1.175,value detachment (unresearched),ratio-rule,2026-07-20
+DUK,2007-01-03,1.7208742040956806,value detachment (unresearched),ratio-rule,2026-07-20
+EBAY,2015-07-20,2.376,value detachment (unresearched),ratio-rule,2026-07-20
+ECHO,2019-09-11,1.234,value detachment (unresearched),ratio-rule,2026-07-20
+EQT,2018-11-13,1.837,value detachment (unresearched),ratio-rule,2026-07-20
+ETN,2001-01-02,1.1524720525527257,value detachment (unresearched),ratio-rule,2026-07-20
+EXC,2022-02-02,1.402,value detachment (unresearched),ratio-rule,2026-07-20
+F,1998-04-08,1.505797319680771,value detachment (unresearched),ratio-rule,2026-07-20
+F,2000-06-29,1.0409076714895389,Spin-off of Visteon Corporation by Ford Motor Company: Ford distributed its entire 130 million-share interest in Visteon as a tax-free dividend on 2000-06-28 (r,researched:high,2026-07-20
+F,2000-08-03,1.748175,value detachment (unresearched),ratio-rule,2026-07-20
+FDX,2026-06-01,1.241,value detachment (unresearched),ratio-rule,2026-07-20
+FLEX,2024-01-03,1.327,value detachment (unresearched),ratio-rule,2026-07-20
+FTV,2020-10-09,1.195,value detachment (unresearched),ratio-rule,2026-07-20
+FTV,2025-06-30,1.327,value detachment (unresearched),ratio-rule,2026-07-20
+GE,2019-02-26,1.04,Spin-off of GE Transportation (Transportation Systems Holdings Inc,researched:high,2026-07-20
+GE,2023-01-04,1.281,value detachment (unresearched),ratio-rule,2026-07-20
+GE,2024-04-02,1.253,value detachment (unresearched),ratio-rule,2026-07-20
+GIS,1995-05-30,1.2099213551119177,value detachment (unresearched),ratio-rule,2026-07-20
+GOOG,2014-03-27,2.002,value detachment (unresearched),ratio-rule,2026-07-20
+GOOGL,2014-04-03,1.998,value detachment (unresearched),ratio-rule,2026-07-20
+HAL,1996-01-24,1.0493069327709048,"Halliburton spun off its insurance subsidiary as Highlands Insurance Group, Inc",researched:high,2026-07-20
+HLT,2017-01-04,0.4873294346978557,value detachment (unresearched),ratio-rule,2026-07-20
+HON,2016-10-03,1.0053282396702523,Honeywell spun off its Resins & Chemicals business as AdvanSix Inc,researched:high,2026-07-20
+HON,2018-10-01,1.011,Honeywell spun off its Transportation Systems (turbocharger) business as Garrett Motion Inc,researched:high,2026-07-20
+HON,2018-10-29,1.032,"Honeywell spun off its Homes and Global Distribution business as Resideo Technologies, Inc",researched:high,2026-07-20
+HON,2025-10-30,1.061,Honeywell spun off its Advanced Materials business as Solstice Advanced Materials Inc,researched:high,2026-07-20
+HON,2026-06-29,0.9535,value detachment (unresearched),ratio-rule,2026-07-20
+HPE,2017-04-03,1.3348,value detachment (unresearched),ratio-rule,2026-07-20
+HPE,2017-09-01,1.289,value detachment (unresearched),ratio-rule,2026-07-20
+HPQ,2015-11-02,2.202,value detachment (unresearched),ratio-rule,2026-07-20
+HSIC,2019-02-08,1.275,value detachment (unresearched),ratio-rule,2026-07-20
+HST,1996-01-02,1.122334455667789,value detachment (unresearched),ratio-rule,2026-07-20
+IBM,2021-11-04,1.046,"IBM's spin-off of Kyndryl Holdings: one Kyndryl share distributed for every five IBM shares, distribution effective 2021-11-03, Kyndryl regular-way trading and ",researched:high,2026-07-20
+IP,2014-07-02,1.014,"Spin-off of the xpedx distribution business and its simultaneous Reverse-Morris-Trust merger with Unisource Worldwide to form Veritiv Corporation (NYSE: VRTV), ",researched:high,2026-07-20
+IP,2021-10-01,1.056,"Spin-off of the global printing papers business as Sylvamo Corporation (NYSE: SLVM), effective 12:01 a",researched:high,2026-07-20
+J,2024-09-30,1.197,value detachment (unresearched),ratio-rule,2026-07-20
+J,2025-05-16,1.01,"Jacobs Solutions paid a special dividend of 7,299,065 shares of Amentum Holdings, Inc",researched:high,2026-07-20
+JCI,2012-10-01,2.011667672500503,value detachment (unresearched),ratio-rule,2026-07-20
+JCI,2016-09-06,0.955,value detachment (unresearched),ratio-rule,2026-07-20
+KEY,1994-03-02,1.205,value detachment (unresearched),ratio-rule,2026-07-20
+KMB,2014-11-03,1.043,"Kimberly-Clark spun off its health care business as Halyard Health, Inc",researched:high,2026-07-20
+LDOS,2013-09-30,0.405,value detachment (unresearched),ratio-rule,2026-07-20
+LEN,2025-01-21,1.033,"Record/ex date for Lennar's taxable spin-off of Millrose Properties, Inc",researched:high,2026-07-20
+LH,2023-07-03,1.164,value detachment (unresearched),ratio-rule,2026-07-20
+LHX,2009-05-11,1.058425063505504,"LHX's price history is Harris Corporation's (same SEC registrant, CIK 0000202058, renamed L3Harris Technologies in 2019)",researched:high,2026-07-20
+LMT,1995-03-16,1.63,value detachment (unresearched),ratio-rule,2026-07-20
+MAR,2011-11-22,1.061,"Spin-off of Marriott Vacations Worldwide Corporation (NYSE: VAC) — 1 VAC share for every 10 MAR Class A shares; record 2011-11-10, distribution date 2011-11-21,",researched:high,2026-07-20
+MAS,2015-07-01,1.138,value detachment (unresearched),ratio-rule,2026-07-20
+MET,2017-08-07,1.122,value detachment (unresearched),ratio-rule,2026-07-20
+MMM,2024-04-01,1.196,value detachment (unresearched),ratio-rule,2026-07-20
+MRK,2021-06-03,1.048,Spin-off of Organon & Co,researched:high,2026-07-20
+MSI,2004-12-03,1.1173184357541899,value detachment (unresearched),ratio-rule,2026-07-20
+MSI,2011-01-04,0.24737167594310452,value detachment (unresearched),ratio-rule,2026-07-20
+NI,2015-07-02,2.545,value detachment (unresearched),ratio-rule,2026-07-20
+NOC,2011-03-31,1.1068068622025458,value detachment (unresearched),ratio-rule,2026-07-20
+O,2021-11-15,1.032,Spin-off of Orion Office REIT Inc,researched:high,2026-07-20
+OKE,2014-02-03,1.1422,value detachment (unresearched),ratio-rule,2026-07-20
+OXY,2014-12-01,1.042,"Occidental completed the spin-off of California Resources Corporation (NYSE: CRC), distributing ~80",researched:high,2026-07-20
+OXY,2016-02-25,1.0017028949213662,"Occidental distributed its retained 71,500,000 CRC shares (~18",researched:high,2026-07-20
+PFE,2020-11-17,1.054,"Pfizer spun off its Upjohn business, which combined with Mylan to form Viatris Inc",researched:high,2026-07-20
+PNR,2018-05-01,1.489,value detachment (unresearched),ratio-rule,2026-07-20
+PPL,2015-06-02,1.0736525660296328,"PPL spun off PPL Energy Supply via Talen Energy Holdings, which immediately combined with Riverstone's RJS Power to form the separately listed Talen Energy Corp",researched:high,2026-07-20
+RF,2004-07-01,1.2346,value detachment (unresearched),ratio-rule,2026-07-20
+ROL,1984-07-02,2.198,value detachment (unresearched),ratio-rule,2026-07-20
+RTX,2020-04-03,1.589,value detachment (unresearched),ratio-rule,2026-07-20
+SO,2001-04-03,1.636929120969062,value detachment (unresearched),ratio-rule,2026-07-20
+SPG,2014-05-29,1.063,Spin-off of Washington Prime Group Inc,researched:high,2026-07-20
+SPGI,2026-07-01,1.057,Spin-off of Mobility Global Inc,researched:high,2026-07-20
+T,2022-04-11,1.324,value detachment (unresearched),ratio-rule,2026-07-20
+TT,2013-12-02,1.252,value detachment (unresearched),ratio-rule,2026-07-20
+TT,2020-03-02,1.289,value detachment (unresearched),ratio-rule,2026-07-20
+UNP,1996-10-16,1.48720999405116,value detachment (unresearched),ratio-rule,2026-07-20
+VLO,2013-05-02,1.094,"Spin-off of CST Brands, Inc",researched:high,2026-07-20
+VTR,2015-08-18,0.8757,value detachment (unresearched),ratio-rule,2026-07-20
+VZ,2006-11-20,1.038055099964706,Spin-off of Idearc Inc,researched:high,2026-07-20
+VZ,2008-04-01,1.0046515366145252,Spin-off of Northern New England Spinco Inc,researched:high,2026-07-20
+VZ,2010-07-02,1.0662242546825904,Spin-off of New Communications Holdings Inc,researched:high,2026-07-20
+WBD,2014-08-07,1.957,value detachment (unresearched),ratio-rule,2026-07-20
+WDC,2025-02-24,1.323,value detachment (unresearched),ratio-rule,2026-07-20
+WMB,2001-04-24,1.0893246187363834,"Spin-off of Williams Communications Group, Inc",researched:high,2026-07-20
+WMB,2012-01-03,1.2266928361138372,value detachment (unresearched),ratio-rule,2026-07-20
+WTW,2016-01-05,0.3775,value detachment (unresearched),ratio-rule,2026-07-20
+YUM,2016-11-01,1.391,value detachment (unresearched),ratio-rule,2026-07-20
+ZBH,2022-03-01,1.03,Spin-off of ZimVie Inc,researched:high,2026-07-20
