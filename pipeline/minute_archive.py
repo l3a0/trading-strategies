@@ -101,6 +101,52 @@ RESOLVED_CLIFFS = {
         '[0.5, 2.0] guard and never flags — verified as the only other '
         '>20% one-day drop in MO\'s 6,675 sessions, so the guard catches '
         'one of the two by construction (owner-signed 2026-07-21)',
+    # ---- the 2020-03-09 oil cohort (owner-signed 2026-07-22) ----
+    # OPEC-Russia talks collapsed 2020-03-06, Saudi launched a price war
+    # over the weekend, WTI fell ~25% Monday and the S&P tripped a
+    # circuit breaker. SEVEN energy names moved together in a gradient
+    # ordered by leverage/oil sensitivity — APA -54.8, OXY -53.5,
+    # TRGP -52.8, FANG -44.6, HAL -37.6, DVN -37.5, EOG -32.0 — of which
+    # only the first three cross the 50% guard. A vendor error does not
+    # arrange itself by balance-sheet risk across seven symbols.
+    ('OXY', '2020-03-09'):
+        'real event: -53.5% on the COVID/OPEC oil Black Monday; unanimous '
+        'across our tape and both references (owner-signed 2026-07-22)',
+    ('TRGP', '2020-03-09'):
+        'real event: -52.8% on the same Black Monday, third of the cohort; '
+        'only 7 mismatch days in 3,927 sessions (owner-signed 2026-07-22)',
+    ('PCG', '2019-01-14'):
+        'real event: -52.3% the day PG&E announced it would file Chapter 11 '
+        'over Camp Fire wildfire liabilities (its CEO resigned the same '
+        'day); fell a further 18% next session (owner-signed 2026-07-22)',
+    ('PWR', '2002-07-02'):
+        'real event: -68% on Quanta Services PR 02-24, issued AFTER the '
+        '2002-07-01 close and traded on the 07-02 pre-open call: FY02 EPS '
+        'guidance cut to $0.45-0.55 from $1.12-1.20, its two largest '
+        'customers in bankruptcy suspending all network work. The FY02 '
+        '10-K Item 5 table (Q3 high 10.19 / low 1.75) brackets both '
+        'closes; no split/spin-off/dividend (owner-signed 2026-07-22)',
+    ('REGN', '2003-03-31'):
+        'real event: -56.6% on the AXOKINE Phase III obesity results — '
+        'endpoints hit but tiny (6.2 lb vs 2.6 placebo) and ~70% of '
+        'patients developed antibodies; the CEO called the magnitude '
+        '"small". Adjustment factor is exactly 1.0: REGN has never split '
+        'and pays no dividend (owner-signed 2026-07-22)',
+    ('ROK', '2001-07-02'):
+        'real event: -61% as ROCKWELL COLLINS was distributed 1-for-1 and '
+        'the parent renamed itself Rockwell Automation. Holders whole: the '
+        'official basis allocation implies ~$22.55 of Collins value per '
+        'share against the $23.38 observed drop (2.2% residual). CONTINUOUS '
+        'registrant — CIK 0001024478 unbroken, EDGAR former-names Rockwell '
+        'International -> Rockwell Automation, Collins booked as a '
+        'discontinued operation with prior periods restated: the '
+        'parent-continues signature that separates this from the JCI/IR '
+        'clips (owner-signed 2026-07-22)',
+    ('STT', '2009-01-20'):
+        'real event: -59% as Q4 results exposed unrealized losses in its '
+        'investment portfolio and conduits, on the day the whole sector '
+        'repriced — BAC -29, JPM -22, C -20, HBAN -16 the same session, '
+        'all independently confirmed real (owner-signed 2026-07-22)',
 }
 
 # §2 hand-resolutions, owner-signed 2026-07-21: START CLIPS for tickers
@@ -282,6 +328,34 @@ TICKER_START_CLIPS = {
     # on LIN) should use 2018-10-31, Linde plc's first real session
     # (owner-signed 2026-07-21)
     'LIN': '2014-12-22',
+    # the 2013 News Corp separation, seen from the publishing side. Both
+    # classes carry the OLD combined News Corporation (~$32.7) through
+    # 2013-06-28 — trading with due bills — and the NEW publishing-only
+    # News Corp (~$14.8) from 2013-07-01, which RETAINED these symbols
+    # while the old entity became 21st Century Fox and moved to FOXA.
+    # Timeline already pinned by the FOX/FOXA rulings (Nasdaq symbology
+    # notice + SEC filings); from 2013-07-01 the tape matches the
+    # reference to the cent. Costs 8 sessions each — the archive only
+    # starts 2013-06-19 (owner-signed 2026-07-22)
+    'NWSA': '2013-07-01',
+    'NWS': '2013-07-01',
+    # PTC's tape is CORRUPT for a decade: 2,712 of 6,675 sessions (41%)
+    # disagree with the reference, and 2005/2008/2010 are wrong on EVERY
+    # session. Ratios swing 0.12x..5.8x, so it is not one mis-scaled
+    # factor — the era is simply unreliable. It stops cleanly: 1 stray in
+    # 2011, 3 in 2012, then all 3,432 sessions after 2012-11-23 match.
+    # The cliff guard saw only 46 of the 2,712 bad days, because the
+    # corruption alternates between scales and only the transitions jump
+    # >50% — the clearest case for the reference cross-check in the
+    # archive (owner-signed 2026-07-22)
+    'PTC': '2012-11-26',
+    # TFC the same disease, different boundary: 2004-2010 wrong on EVERY
+    # session (alternating to ~0.28x), 2011 partial, then 2012-2023
+    # PERFECTLY clean. NOTE the boundary is NOT the last mismatch — a
+    # lone 2.6%-off day in 2024-08 is benign noise, and clipping there
+    # (the PTC recipe) would have discarded 12 good years. The structural
+    # corruption ends 2011-09-29 (owner-signed 2026-07-22)
+    'TFC': '2011-09-30',
 }
 
 # §2 hand-resolutions, owner-signed 2026-07-21: DROP WINDOWS — spans
@@ -306,6 +380,15 @@ TICKER_DROP_WINDOWS = {
     # (a day far below both neighbours that fully recovers — real
     # crashes do not round-trip) (owner-signed 2026-07-21)
     'EXPD': [('2000-04-07', '2000-04-07')],
+    # two corrupt days in the week AT&T's merger with SBC closed: ours
+    # reads $46.85 and $64.92 when the stock was ~$25 (both references
+    # agree). NOT a company switch — the tape matches before and after,
+    # so the SBC lineage is continuous. The guard caught only the EXIT:
+    # entering the spike was a 1.92x move, just under the 2.0 ceiling,
+    # so it passed silently. Of T's 10 mismatch days these two are 87%
+    # and 159% off; the other eight are 2-5% noise. Dropping them joins
+    # $18.44 -> $18.60, a 0.9% step (owner-signed 2026-07-22)
+    'T': [('2005-11-28', '2005-11-29')],
 }
 
 
