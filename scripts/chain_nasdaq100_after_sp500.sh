@@ -20,8 +20,16 @@ DIR=data/sp500_intraday_1min
 LIST=data/nasdaq100_tickers_2026-07.txt
 WORKERS=${WORKERS:-3}
 
+# NOT `pgrep -f fetch_sp500_intraday`: that matches any command line
+# MENTIONING the script, including the session's monitor loop, which
+# deadlocked this stage on 2026-07-22 — the S&P workers exited at 12:28 and
+# this script kept waiting on the watcher. stage_alive compares argv[0]/
+# argv[1] instead of scanning the whole line; see scripts/stage_alive.sh
+# for the two narrower patterns that were tried first and why both leaked.
+. "$(dirname "$0")/stage_alive.sh"
+
 echo "== waiting for the S&P 500 fetch workers to exit ($(date))"
-while pgrep -f fetch_sp500_intraday >/dev/null; do sleep 300; done
+while stage_alive 'scripts/fetch_sp500_intraday.sh'; do sleep 300; done
 echo "== S&P fetch done ($(date)); starting Nasdaq-100 net-new fetch"
 
 for i in $(seq 0 $((WORKERS - 1))); do

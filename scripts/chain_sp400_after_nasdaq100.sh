@@ -15,14 +15,14 @@
 # parent. Waiting on the union of both patterns closes that race without
 # editing the already-running Nasdaq script.
 #
-# WHY THE PATTERNS CARRY 'scripts/' AND '.sh': a bare `pgrep -f
-# fetch_sp500_intraday` also matches any OTHER process whose command line
-# merely CONTAINS that string — including the session's own monitor loop,
-# whose script text greps for exactly these names. That self-match made
-# the first version of this waiter block forever on a process that is not
-# a fetch. Anchoring on the invocation path 'scripts/<name>.sh' matches
-# only real script invocations (verified: 3 fetch workers + 1 chain, and
-# NOT the monitor).
+# WHY stage_alive AND NOT pgrep: `pgrep -f` matches the WHOLE command line,
+# so a bare `fetch_sp500_intraday` fires on any process that merely
+# MENTIONS the name — including a monitor loop whose own text greps for
+# these names. That self-match deadlocked this queue on 2026-07-22: the S&P
+# workers exited at 12:28 and the Nasdaq stage waited on the watcher.
+# stage_alive compares argv[0]/argv[1] rather than scanning the line, which
+# closes the class; scripts/stage_alive.sh records the two narrower
+# substring patterns that were tried first and exactly how each leaked.
 #
 # The S&P 400 is 100% NET NEW: S&P's indices are mutually exclusive (500 +
 # 400 + 600 = the Composite 1500), verified — zero overlap against both
@@ -38,8 +38,10 @@ DIR=data/sp500_intraday_1min
 LIST=data/sp400_tickers_2026-07.txt
 WORKERS=${WORKERS:-3}
 
+. "$(dirname "$0")/stage_alive.sh"
+
 echo "== waiting for the S&P 500 + Nasdaq-100 stages to finish ($(date))"
-while pgrep -f 'scripts/fetch_sp500_intraday.sh|scripts/chain_nasdaq100_after_sp500.sh' >/dev/null; do
+while stage_alive 'scripts/fetch_sp500_intraday.sh|scripts/chain_nasdaq100_after_sp500.sh'; do
   sleep 300
 done
 echo "== prior stages done ($(date)); starting the S&P 400 mid-cap fetch"
