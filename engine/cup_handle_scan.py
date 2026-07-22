@@ -49,6 +49,7 @@ from pipeline.minute_archive import (  # noqa: F401 — re-exported for callers
     CROSSCHECK_AV_REFERENCE,
     LATE_START_FLAG,
     RESOLVED_CLIFFS,
+    RETURN_BREAKS,
     TICKER_DROP_WINDOWS,
     TICKER_START_CLIPS,
     aggregate_daily,
@@ -62,6 +63,7 @@ from pipeline.minute_archive import (  # noqa: F401 — re-exported for callers
     fetch_reference_av,
     load_clean_daily,
     load_splits,
+    return_break_indices,
     run_crosscheck,
     split_adjust,
     universe,
@@ -218,22 +220,65 @@ def stratum_of(date: str, horizon: int) -> str:
     return f'{y}H{1 if m <= 6 else 2}'
 
 
+_NO_BREAKS = np.empty(0, dtype=int)
+
+
+def _break_map(data: dict[str, dict[str, np.ndarray]],
+               ) -> dict[str, np.ndarray]:
+    """Per-ticker return-break session indices (see ``RETURN_BREAKS``)."""
+    return {t: return_break_indices(t, v['dates']) for t, v in data.items()}
+
+
+def spans_return_break(breaks: np.ndarray, t: int, horizon: int) -> bool:
+    """Does the return window ``(t, t + horizon]`` cross a value
+    detachment? Entry ON a break day is FINE — the detachment is already
+    in ``close[t]``, so the forward return is honest. Only a break strictly
+    after the entry and at or before the exit corrupts the measurement."""
+    if not len(breaks):
+        return False
+    return bool(np.any((breaks > t) & (breaks <= t + horizon)))
+
+
 def build_clusters(trades: dict[str, list[int]],
                    data: dict[str, dict[str, np.ndarray]],
-                   horizon: int) -> list[dict[str, Any]]:
+                   horizon: int) -> tuple[list[dict[str, Any]], int]:
     """§5: all traded entries sharing one calendar date form one
-    cluster-trade; return = equal-weight mean of member simple returns."""
+    cluster-trade; return = equal-weight mean of member simple returns.
+
+    Entries whose window spans a RETURN BREAK are dropped and counted, not
+    scored — a spin-off or purge dividend inside the window would book a
+    60-70% "loss" against a holder who was made whole. The identical test
+    runs inside ``cluster_null_p``, so the real book and its null share one
+    eligibility rule; applying it to only one side would bias the
+    comparison in whichever direction the breaks happen to fall.
+
+    The drop happens HERE rather than at detection time on purpose: the
+    breakout itself is a real, correctly-detected price event. It is only
+    the forward RETURN that is unmeasurable. (One consequence, disclosed:
+    the flat-only lockout in ``build_trades`` has already been spent by a
+    dropped entry, so a later entry inside that window stays suppressed.
+    That is conservative and left alone rather than re-deriving the book.)
+
+    Returns ``(clusters, n_dropped)``.
+    """
+    breaks = _break_map(data)
     by_date: dict[str, list[tuple[str, float]]] = {}
+    dropped = 0
     for ticker, entries in trades.items():
         c = data[ticker]['close']
         dates = data[ticker]['dates']
+        bk = breaks.get(ticker, np.empty(0, dtype=int))
         for t in entries:
+            if spans_return_break(bk, t, horizon):
+                dropped += 1
+                continue
             ret = float(c[t + horizon] / c[t] - 1.0)
             by_date.setdefault(str(dates[t]), []).append((ticker, ret))
-    return [{'date': d, 'members': [m for m, _ in mem],
-             'ret': float(np.mean([r for _, r in mem])),
-             'stratum': stratum_of(d, horizon)}
-            for d, mem in sorted(by_date.items())]
+    clusters = [{'date': d, 'members': [m for m, _ in mem],
+                 'ret': float(np.mean([r for _, r in mem])),
+                 'stratum': stratum_of(d, horizon)}
+                for d, mem in sorted(by_date.items())]
+    return clusters, dropped
 
 
 # The hard floor a detection's own guards imply: the cup window needs
@@ -259,6 +304,7 @@ def cluster_null_p(clusters: list[dict[str, Any]],
         return {'n_clusters': 0}
     date_index = {t: {str(d): i for i, d in enumerate(v['dates'])}
                   for t, v in data.items()}
+    breaks = _break_map(data)
     strata: dict[str, list[dict[str, Any]]] = {}
     for cl in clusters:
         strata.setdefault(cl['stratum'], []).append(cl)
@@ -293,8 +339,13 @@ def cluster_null_p(clusters: list[dict[str, Any]],
                 rets = []
                 for m in cl['members']:
                     idx = date_index[m].get(d)
+                    # Same three eligibility tests the real book faces,
+                    # plus the return-break test — the null must be judged
+                    # under identical rules or the comparison is biased.
                     if (idx is None or idx < DETECT_FLOOR
-                            or idx + horizon >= len(data[m]['close'])):
+                            or idx + horizon >= len(data[m]['close'])
+                            or spans_return_break(
+                                breaks.get(m, _NO_BREAKS), idx, horizon)):
                         diluted += 1
                         continue
                     cm = data[m]['close']
@@ -431,14 +482,19 @@ def run_scan(tickers: Sequence[str], evaluate: bool = False) -> dict[str, Any]:
             trades = {t: build_trades([d['t'] for d in detections[t]], hz,
                                       len(pooled_data[t]['close']))
                       for t in pooled_data}
-            clusters = build_clusters(trades, pooled_data, hz)
+            clusters, n_broken = build_clusters(trades, pooled_data, hz)
             e = cluster_null_p(clusters, pooled_data, hz)
             # §5 reported diagnostics: pooled per-trade win rate, member
             # counts, per-ticker and per-era splits, survivorship bracket
+            breaks = _break_map(pooled_data)
             rets = []
             for t, entries in trades.items():
                 cc = pooled_data[t]['close']
-                rets += [float(cc[i + hz] / cc[i] - 1.0) for i in entries]
+                bk = breaks.get(t, _NO_BREAKS)
+                rets += [float(cc[i + hz] / cc[i] - 1.0) for i in entries
+                         if not spans_return_break(bk, i, hz)]
+            # every return-bearing number on this surface honours the guard
+            e['return_break_trades_dropped'] = n_broken
             e['n_trades'] = len(rets)
             e['per_trade_win_rate'] = (round(float(np.mean(
                 [r > 0 for r in rets])), 4) if rets else None)
@@ -456,8 +512,18 @@ def run_scan(tickers: Sequence[str], evaluate: bool = False) -> dict[str, Any]:
                 seg = cc[DETECT_FLOOR:len(cc) - hz]
                 if len(seg):
                     fwd = cc[DETECT_FLOOR + hz:]
-                    wins += int(np.sum(fwd > seg))
-                    tot += len(seg)
+                    ok = fwd > seg
+                    # the bracket measures returns too, so it takes the
+                    # same guard: an entry i is contaminated when a break
+                    # j satisfies i < j <= i + hz, i.e. i in [j-hz, j-1]
+                    keep = np.ones(len(seg), dtype=bool)
+                    for j in breaks.get(t, _NO_BREAKS):
+                        lo = max(0, j - hz - DETECT_FLOOR)
+                        hi = min(len(seg), j - DETECT_FLOOR)
+                        if hi > lo:
+                            keep[lo:hi] = False
+                    wins += int(np.sum(ok & keep))
+                    tot += int(np.sum(keep))
             e['base_rate_bracket'] = round(wins / tot, 4) if tot else None
             out['evaluation'][f'H{hz}'] = e
         surv = all(
@@ -474,9 +540,11 @@ def run_scan(tickers: Sequence[str], evaluate: bool = False) -> dict[str, Any]:
             trades = {t: build_trades(abl_det[t], hz,
                                       len(pooled_data[t]['close']))
                       for t in pooled_data}
-            clusters = build_clusters(trades, pooled_data, hz)
-            out['ablation_no_volume'][f'H{hz}'] = cluster_null_p(
-                clusters, pooled_data, hz, variant='no_volume')
+            clusters, n_broken = build_clusters(trades, pooled_data, hz)
+            abl = cluster_null_p(clusters, pooled_data, hz,
+                                 variant='no_volume')
+            abl['return_break_trades_dropped'] = n_broken
+            out['ablation_no_volume'][f'H{hz}'] = abl
     return out
 
 
