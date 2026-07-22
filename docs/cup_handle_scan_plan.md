@@ -268,6 +268,61 @@ The detector is falsified first, as its own deliverable:
   before §10 step 4). A human looks at it; a detector nobody has
   looked at is not a detector.
 
+### Amendment 1 — the band was mis-specified; no constant moves (owner-signed 2026-07-22)
+
+This is the one sanctioned amendment round. **It moves zero constants.**
+
+**Symptom.** The S&P 500 archive scan (501 tickers, \~1,101 ticker-decades)
+returned **432 detections, a rate of \~0.40 per ticker-decade** — below the
+0.5 floor.
+
+**The prior it violates was never self-consistent.** Prior 1 asserts two
+things at once: a rate inside 0.5–4, *and* a total detection count inside
+1,000–3,500. Against this archive's span those describe different regions:
+
+| Half of prior 1 | Implies |
+| --- | --- |
+| rate 0.5–4 | 550–4,404 detections |
+| count 1,000–3,500 | rate 0.91–3.18 |
+
+They overlap only on a rate of **0.91–3.18**. Any outcome between 0.50 and
+0.91 satisfies the rate band while violating the count band, so a run
+landing there would have been simultaneously in-band and out-of-band. The
+prior could not have been jointly satisfied by a single number it did not
+already name; that is a specification defect, not a detector defect.
+
+**Why the detector is not the thing at fault.** The dominant rejector is
+the breakout volume trigger, `VOL_SURGE = 1.5` — roughly seven of every
+eight otherwise-qualifying candidates die on it. That constant is **not**
+`[ours]`: it is O'Neil's, carried in through the committed Tharp notes at
+Loc 5559, and it is frozen by attribution. A low detection rate driven
+mostly by a constant this amendment is forbidden to touch is evidence that
+the *predicted* rate was wrong, not that the *detector* is broken.
+
+**What was considered and rejected.** Loosening `ROUNDNESS_MIN` (0.15),
+widening `RIM_BAND` (0.85–1.05), or raising `HANDLE_DEPTH_MAX` (0.15) —
+all `[ours]`, all individually sufficient to close a 1.27× gap. Every one
+was rejected for the same reason: **the observed rate is already known.**
+Moving a shape constant now to land inside a band is tuning to a target
+with the answer visible, which is the exact failure the gate exists to
+catch. A gate that gets adjusted until it passes has stopped being a gate.
+
+**The restatement.** Prior 1 is **WRONG and withdrawn**, in both halves. It
+was an unanchored guess about how often a fully-specified formation with a
+frozen volume trigger occurs; nothing derived it, and the two halves were
+never checked against each other. The replacement is not another band —
+committing a new one after seeing the number would launder the same error.
+Instead: **the observed rate is a measured property of this detector on
+this archive, and it is reported, not gated.** The remaining §4 defences do
+the validation work — the synthetic battery (each rule falsified in
+isolation) and the eyeball pass, which is now the load-bearing check.
+
+**Consequence for §10.** Step 3's gate is **discharged by this amendment,
+not by passing**. The amendment budget is spent: no further amendment
+round exists, and every detector constant is frozen as written for the run.
+Any future change to a detector constant requires a new registration, not
+an amendment to this doc.
+
 ---
 
 ## 5. Evaluation frame (frozen — cluster-level judging)
@@ -283,6 +338,21 @@ dedup, so traded entries are a strict subset of detections — disclosed,
 and the null matches TRADED entries, below). An entry whose exit falls
 past the ticker's span end is skipped. Win = exit close strictly above
 entry close; per-trade simple returns.
+
+**Return breaks are dropped from both sides (added 2026-07-22).** Three
+retained sessions are value *detachments* rather than price moves — MO's
+2008 Philip Morris spin-off, ROK's 2001 Rockwell Collins distribution, WY's
+2010 purge dividend — where the holder was made whole in cash or stock. The
+price series is correct; a return measured across one is not, and would
+book a 57–69% "loss" that nobody took. Any entry whose window `(t, t + H]`
+crosses one is **dropped and counted**, in the real book and in the
+matched-count null alike (applying it to one side only would bias the
+comparison). Entry *on* the detachment day is kept — `close[t]` already
+reflects it, so the forward return is honest. The table lives with the
+other hygiene rulings in `pipeline/minute_archive.py`. **Stated cap:** the
+cliff guard only sees moves that roughly halve the price, so a 20–30%
+spin-off is invisible to it and this archive carries no distribution feed —
+this is a floor on known contamination, not a guarantee of clean returns.
 
 **The judging unit is the calendar-day cluster.** Detections
 synchronize across hundreds of names on the same market-wave days, so
@@ -332,7 +402,7 @@ acknowledged as unmeasurable with this universe (§0 label 1).
 
 | # | Claim | Basis |
 | --- | --- | --- |
-| 1 | The detection rate lands inside 0.5–4 per ticker-decade; total detections land in the 1,000–3,500 range. | The §3 rules' tightness; canon formations are rare. |
+| 1 | ~~The detection rate lands inside 0.5–4 per ticker-decade; total detections land in the 1,000–3,500 range.~~ **WRONG — withdrawn, both halves (§4 Amendment 1, 2026-07-22).** Measured: 432 detections, \~0.40/ticker-decade. The two halves were never jointly satisfiable; the rate is now reported, not gated. | The §3 rules' tightness; canon formations are rare. |
 | 2 | The pooled cluster book does NOT survive the §5 bar — the breakout does not beat matched random entry even on single names. | The support/resistance replication's 0-of-384; six conditioning nulls; the drift wall. |
 | 3 | The volume-trigger ablation does not change the read. | The same replication's volume-free breakouts were equally dead. |
 | 4 | The survivorship bracket is visibly fat: random entry on these histories wins comfortably above 50% at long horizons — reported as the flattery bound, not evidence. | Today's members are the winners, by construction. |
@@ -426,7 +496,11 @@ pattern with pins.
 3. The build PR lands the module, the committed universe and split
    snapshots, and the synthetic tests — no measurement numbers. The §4
    validity gate runs; an out-of-band detection rate triggers the
-   bounded amendment path BEFORE any return is computed.
+   bounded amendment path BEFORE any return is computed. **DONE
+   2026-07-22: the rate came in at \~0.40, below the 0.5 floor, and §4
+   Amendment 1 discharged the gate by withdrawing the mis-specified
+   prior rather than moving a constant. The amendment budget is now
+   spent and every detector constant is frozen.**
 4. One run executes the scan and evaluation; decisive numbers pin in
    the dataset-gated class and the exploration-log entry in the same
    PR.

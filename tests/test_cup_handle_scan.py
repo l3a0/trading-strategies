@@ -22,6 +22,7 @@ from engine.cup_handle_scan import (
     cluster_null_p,
     detect_cup_handle,
     quadratic_roundness,
+    spans_return_break,
     stratum_of,
 )
 
@@ -278,7 +279,8 @@ class TestEvaluation:
             'BBB': {'dates': np.array(['2024-01-02', '2024-01-03']),
                     'close': np.array([50.0, 48.0])},
         }
-        clusters = build_clusters({'AAA': [0], 'BBB': [0]}, data, 1)
+        clusters, dropped = build_clusters({'AAA': [0], 'BBB': [0]}, data, 1)
+        assert dropped == 0
         (cl,) = clusters
         assert sorted(cl['members']) == ['AAA', 'BBB']
         assert cl['ret'] == pytest.approx((0.10 - 0.04) / 2)
@@ -293,7 +295,7 @@ class TestEvaluation:
                     'close': np.linspace(100, 200, n) * m}
                 for t, m in (('AAA', 1.0), ('BBB', 2.0))}
         trades = {'AAA': [400, 450], 'BBB': [400]}
-        clusters = build_clusters(trades, data, 5)
+        clusters, _ = build_clusters(trades, data, 5)
         r = cluster_null_p(clusters, data, 5, b=200)
         assert r['win_rate'] == 1.0
         assert r['null_rate_mean'] == 1.0
@@ -304,7 +306,7 @@ class TestEvaluation:
         trades = {'AAA': [520, 540], 'BBB': [380]}
         # BBB's entry 380 needs 380+5 < 400 (ok) but many null draws for
         # BBB land before DETECT_FLOOR=330 or past 395 -> dropped
-        clusters = build_clusters(trades, data, 5)
+        clusters, _ = build_clusters(trades, data, 5)
         r1 = cluster_null_p(clusters, data, 5, b=200)
         r2 = cluster_null_p(clusters, data, 5, b=200)
         assert r1['p'] == r2['p']
@@ -319,3 +321,68 @@ class TestEvaluation:
         out = chs.run_scan(['ZZZ'], evaluate=False)
         assert 'evaluation' not in out and 'survives' not in out
         assert out['missing'] == ['ZZZ']
+
+class TestReturnBreakGuard:
+    """A value detachment (spin-off, purge dividend) is a REAL price move
+    and a FAKE return. The guard drops any window measured across one —
+    from the real book and from the null alike, since applying it to only
+    one side would bias the comparison."""
+
+    def test_window_spanning_a_break_is_flagged(self):
+        breaks = np.array([50])
+        # break strictly after entry and at or before exit -> contaminated
+        assert spans_return_break(breaks, 45, 5) is True
+        assert spans_return_break(breaks, 49, 1) is True
+        assert spans_return_break(breaks, 30, 20) is True
+
+    def test_entry_on_the_break_day_is_clean(self):
+        # close[t] already reflects the detachment, so the forward return
+        # is honest — this is the boundary that must NOT be over-excluded
+        assert spans_return_break(np.array([50]), 50, 10) is False
+
+    def test_window_ending_before_or_starting_after_is_clean(self):
+        breaks = np.array([50])
+        assert spans_return_break(breaks, 40, 9) is False   # exits at 49
+        assert spans_return_break(breaks, 51, 10) is False  # starts past it
+        assert spans_return_break(np.empty(0, dtype=int), 45, 20) is False
+
+    def test_build_clusters_drops_and_counts_the_contaminated_entry(self,
+                                                                   monkeypatch):
+        import engine.cup_handle_scan as chs
+        # AAA detaches on index 1: $100 -> $38 with the holder made whole.
+        # Ungated, that books a -62% "loss"; the guard must drop it.
+        data = {
+            'AAA': {'dates': np.array(['2024-01-02', '2024-01-03']),
+                    'close': np.array([100.0, 38.0])},
+            'BBB': {'dates': np.array(['2024-01-02', '2024-01-03']),
+                    'close': np.array([50.0, 55.0])},
+        }
+        monkeypatch.setattr(chs, 'return_break_indices',
+                            lambda t, d: (np.array([1]) if t == 'AAA'
+                                          else np.empty(0, dtype=int)))
+        clusters, dropped = chs.build_clusters({'AAA': [0], 'BBB': [0]},
+                                               data, 1)
+        assert dropped == 1
+        (cl,) = clusters
+        assert cl['members'] == ['BBB']          # AAA's fake loss excluded
+        assert cl['ret'] == pytest.approx(0.10)  # BBB alone, not the mean
+
+    def test_guard_is_off_by_default_for_tickers_without_breaks(self):
+        # the whole S&P universe minus three names must be untouched
+        data = {
+            'AAA': {'dates': np.array(['2024-01-02', '2024-01-03']),
+                    'close': np.array([100.0, 110.0])},
+        }
+        clusters, dropped = build_clusters({'AAA': [0]}, data, 1)
+        assert dropped == 0
+        assert clusters[0]['ret'] == pytest.approx(0.10)
+
+    def test_real_table_indices_resolve_against_a_real_series(self):
+        from pipeline.minute_archive import (RETURN_BREAKS,
+                                             return_break_indices)
+        # every listed date must be findable, and a ticker with no entry
+        # must yield nothing — the table is keyed on the retained series
+        dates = np.array(['2010-07-19', '2010-07-20', '2010-07-21'])
+        assert return_break_indices('WY', dates).tolist() == [1]
+        assert return_break_indices('AAPL', dates).tolist() == []
+        assert set(RETURN_BREAKS) == {'MO', 'ROK', 'WY'}

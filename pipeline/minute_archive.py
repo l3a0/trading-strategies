@@ -470,6 +470,63 @@ TICKER_DROP_WINDOWS = {
 }
 
 
+# Days where the as-traded close DETACHES from what a holder actually
+# earned, because value left the share and arrived somewhere else (a
+# spun-off share, a distributed dividend). The price series is CORRECT —
+# these are not defects and nothing is dropped. But a return computed
+# across one of these days is fiction: it books a 60-70% loss against a
+# holder who was made whole in cash or stock.
+#
+# Prices are for patterns; returns need distributions. This archive has NO
+# distribution data at all, so the split between the two tables matters:
+# RESOLVED_CLIFFS says "this move is real, keep the rows"; RETURN_BREAKS
+# says "this move is real AND it is not a return." Every entry here is a
+# RESOLVED_CLIFFS event whose cause was a corporate action rather than a
+# repricing. The thirteen kept cliffs NOT listed here (AAPL's 2000 profit
+# warning, AIG on Lehman Monday, PCG's bankruptcy filing) are genuine
+# losses a holder genuinely took, and they belong in a return series.
+#
+# ---------------------------------------------------------------------
+# WHAT THIS TABLE DOES NOT COVER, stated loudly because it is the real
+# exposure: the cliff guard only flags day-over-day ratios outside
+# [0.5, 2.0], so it can only have surfaced detachments large enough to
+# roughly HALVE the price. A 20-30% spin-off sails straight through, looks
+# exactly like an ordinary bad week, and nothing in this repo can see it —
+# we have no dividend or distribution feed. So this table is a floor on
+# known contamination, NOT a guarantee of clean returns. Ordinary
+# quarterly dividends (~0.5%) are noise at these horizons; the untracked
+# middle is not.
+#
+# Sourced from the owner-signed rulings; each date is the EX/detachment
+# session, i.e. the first session quoted without the distributed value.
+RETURN_BREAKS: dict[str, tuple[str, ...]] = {
+    # the Philip Morris International spin-off: -69.9% ($73.83 -> $22.20)
+    # against 1.000000 PM share received per MO share
+    'MO': ('2008-03-31',),
+    # Rockwell Collins distributed 1-for-1 as the parent renamed itself
+    # Rockwell Automation: -61.2% ($38.20 -> $14.82)
+    'ROK': ('2001-07-02',),
+    # the REIT-conversion E&P purge dividend: -61.9% ($41.84 -> $15.93)
+    # against $26.46341416/share paid ~10% cash / ~90% stock
+    'WY': ('2010-07-20',),
+}
+
+
+def return_break_indices(ticker: str, dates: np.ndarray) -> np.ndarray:
+    """Session indices of ``ticker``'s return breaks within ``dates``.
+
+    A break at index ``j`` contaminates any return measured across it —
+    i.e. any window ``(t, t + H]`` with ``t < j <= t + H``. Dates absent
+    from the series (clipped away, or before the span) simply do not
+    appear; a ticker with no breaks returns an empty array.
+    """
+    wanted = RETURN_BREAKS.get(ticker)
+    if not wanted:
+        return np.empty(0, dtype=int)
+    pos = {str(d): i for i, d in enumerate(dates)}
+    return np.array(sorted(pos[w] for w in wanted if w in pos), dtype=int)
+
+
 # ------------------------------------------------------------------ §2 data
 
 def universe() -> list[str]:
