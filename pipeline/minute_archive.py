@@ -147,6 +147,28 @@ RESOLVED_CLIFFS = {
         'investment portfolio and conduits, on the day the whole sector '
         'repriced — BAC -29, JPM -22, C -20, HBAN -16 the same session, '
         'all independently confirmed real (owner-signed 2026-07-22)',
+    ('WY', '2010-07-20'):
+        'real event: -62% ($41.84 -> $15.93) as the REIT-conversion E&P '
+        'purge dividend went ex — $26.46341416/share, declared 2010-07-11, '
+        'record 07-22, PAID 2010-09-01 (~10% cash / ~90% stock). All three '
+        'sources agree to the cent; WY has 3 mismatch days in 6,676 '
+        'sessions. NOT a split, despite ending in ~1.5x more shares: the '
+        'SHARE COUNT DID NOT MOVE on the ex-date — it stayed ~211.6M until '
+        'the 324M new shares were issued six weeks later, which is why the '
+        'tape shows no second step in September. A split moves price and '
+        'share count the SAME day; this moved them six weeks apart, and '
+        'the price step is the dividend. The snapshot correctly has NO '
+        '2010 entry (the rumoured 1-for-5 reverse split never happened) '
+        'and NO factor should be added: the two published ratios '
+        '(1.70292240 stock-elect / 1.44340808 + $4.03 cash-elect) attach '
+        'to the September payment, are election-dependent, and neither '
+        'reproduces the observed 0.3807 — which sits between the '
+        'dividend-value (0.36752) and dilution (0.39492) factors because '
+        'the share count was not fixed until 2010-08-26. Back-solving it '
+        'would be deriving our own factor (the LDOS rule). CAVEAT for '
+        'total-return work: this is a $26.46/share distribution, so any '
+        'return/drawdown/Sharpe series over 2010 must account for it or '
+        'book a spurious -62% month (owner-signed 2026-07-22)',
     ('WMB', '2002-07-22'):
         'real event: -61% ($5.16 -> $2.01) in the post-Enron energy-'
         'merchant liquidity crisis, and it kept falling to $1.20 the next '
