@@ -997,6 +997,151 @@ revival of a specific signal here arrives as a *new* frozen design,
 never as a re-read of these cells. §6's escalation path fires for
 nothing: no claim survived.
 
+## The intraday breakout on the minute archive — NO CONTINUATION, AND THE TAPE IS DOING IT (2026-07-22)
+
+**The idea.** This one came from a chart rather than a backtest. On a
+5-minute candle chart a large cap sits in a two-hour range, then rips on
+heavy volume — RSI in the seventies, price extended well above the 50-,
+100- and 200-bar moving averages. Every discretionary trader has been
+asked to judge that bar. Does the rest of *that session* keep going?
+
+**How it was tested.** The five things the chart shows, written as a
+screen and applied at every 5-minute bar close using only information
+available at that close: a fresh two-hour high (`brk2h`), a 30-minute
+impulse of +1.5% or better (`mom6`) that is also at least 3 sigma for
+that name (`z6`), twice the usual volume for that clock window (`rvol`),
+more than 1% above the 50-bar EMA (`ext50`), and Wilder RSI at 70 or
+above. Run across 501 S&P 500 names from the minute archive, 2010
+onward, reporting 2016 onward: **2,508,712 permissive triggers, of which
+28,951 match the full screen, over 2,431 sessions and 499 names.** It
+fires on most sessions — this is a common bar, not a rare one.
+
+Three things carry the result, and each is a place the obvious version of
+this study goes wrong:
+
+- The **estimator** is a two-way demean, not a raw win rate. The same
+  tape that lifted this name lifted everything else, so the excess
+  subtracts the name's own average at that clock, the same session's move
+  at that clock across every other name, and the clock's own drift, each
+  leave-one-out.
+- **Inference resamples calendar sessions**, never events. A market-wide
+  rip fires hundreds of names on the same bar, so the event count is not
+  the sample size; the session count is.
+- A **placebo** keeps each event's name and clock but moves it to a
+  random session. It returns `+0.28 bp` (sd 0.70), so the machinery is
+  not manufacturing the effect. Unbiasedness at the intermediate horizons
+  is pinned separately by synthetic recovery tests, which inject a known
+  effect and check it comes back.
+
+Pinned in `TestContinuationResults` and the always-run detector and
+estimator batteries (tests/test_intraday_continuation.py); the panel
+itself is dataset-gated because the archive is personal and gitignored,
+so the published run is committed as
+[data/intraday_continuation_results.json](../data/intraday_continuation_results.json).
+Exploratory, kill-or-justify, no idea-ledger rows.
+
+**The verdict — the breakout does worse than the names that did not
+break out.** The raw win rate is the trap: half the time it closes
+higher, which reads like a coin flip until you ask what everything else
+did over the identical window.
+
+| measure | chart-like breakout | its own session's peers |
+| --- | --- | --- |
+| closes higher | 49.3% | 52.2% |
+| excess to the close | −8.15 bp, 95% CI [−14.8, −2.0] | — |
+| touches +0.5% before −0.5% | 46.5% | — |
+| touches −0.5% first | 53.2% | — |
+
+The interval excludes zero on the *negative* side. Entering at the next
+bar's open instead of the signal close does not rescue it — measured
+slippage is `−0.10 bp`, so this is not an artifact of an unfillable
+entry price.
+
+**Breadth is the whole story.** Splitting on how much of the eligible
+universe fired the same screen on the same bar separates "this name broke
+out" from "the tape went up", and they are opposite populations:
+
+| how much of the tape | events | sessions | closes higher | peers | excess |
+| --- | --- | --- | --- | --- | --- |
+| lone mover (<0.5%) | 16,252 | 2,417 | 46.8% | 50.6% | −6.11 bp |
+| thin (0.5–2%) | 7,416 | 793 | 47.3% | 51.1% | −17.61 bp |
+| moderate (2–5%) | 2,229 | 92 | 55.7% | 56.9% | −8.73 bp |
+| broad (5–15%) | 1,355 | 23 | 51.1% | 47.8% | +1.52 bp |
+| tape-wide (>15%) | 1,699 | 5 | 71.9% | 69.7% | +6.69 bp |
+
+When the name is the only one breaking out, the rest of the session
+closes higher **46.8%** of the time. The impressive 71.9% row is five
+sessions in eleven years on which the whole market ripped, and its peers
+did 69.7% — the excess there is +6.69 bp with an interval spanning
+[−77.9, +24.2], which is to say nothing at all.
+
+**There is no continuation phase.** Recording the forward path bar by bar
+rather than only at the close shows the excess is already negative on the
+very next bar and deteriorates for about an hour before flattening:
+
+| held for | raw | excess |
+| --- | --- | --- |
+| 5 min | −1.3 bp | −2.90 bp |
+| 20 min | −4.4 bp | −5.28 bp |
+| 60 min | −3.8 bp | −8.68 bp |
+| 2 hours | +0.9 bp | −7.16 bp |
+| 5 hours | −9.3 bp | −9.38 bp |
+
+The best relative price is the signal bar itself. The median time from
+the signal to the session's forward high is **14 bars (70 minutes)** — the
+move puts its best price in early and drifts off it.
+
+This also settles the time-of-day pattern, which looks like a real effect
+and is not. Late-day breakouts hold up far better in raw terms simply
+because less session remains for them to give back; split by entry clock
+on a balanced panel the decay curves have the same shape and the same
+50-to-80-minute trough, and the late-day cells' peers rise just as much.
+The clock is truncating a common curve, not changing it.
+
+**What the signal does predict is size.** Realized volatility after the
+signal, against the same name's own normal at that clock:
+
+| window | realized | own normal | ratio |
+| --- | --- | --- | --- |
+| 0–30m | 106 bp | 45 bp | 2.68× |
+| 30–60m | 81 bp | 40 bp | 2.18× |
+| 60–90m | 69 bp | 37 bp | 2.00× |
+| 2–3h | 78 bp | 47 bp | 1.73× |
+| 4–5h | 67 bp | 45 bp | 1.52× |
+
+So the bar roughly triples the size of what follows and says nothing
+about its direction. The volatility excess decays far more slowly than
+the direction does — still 1.5× four hours later — which means the two
+signals have genuinely different tenors.
+
+That is a volatility statement, and turning it into a trade needs a
+second number this repo cannot currently measure: whether the option
+market had already marked implied volatility up by more than the \~2.4×
+realized expansion. The chain stores are end-of-day snapshots, and the
+quote that matters is the one at the signal bar. A first pass on the four
+names with both a minute archive and a chain store returned 63 usable
+event-days on NVDA alone at `t = −0.59` — no information, not evidence of
+mispricing. **The option question is UNVERIFIED, not answered**, and
+settling it needs intraday option quotes, which is a data acquisition
+rather than an analysis.
+
+**What this does not establish.** The universe is the 2026-07 S&P 500
+snapshot, so both arms are drawn from a survivor-biased population; the
+bias largely cancels in a difference but inflates the level of each side.
+There is no earnings or news calendar, so "idiosyncratic" is proxied by
+breadth and gap, never identified. There are no quotes, so the only
+friction measured is the close-to-next-open slip and every cost beyond it
+is an assumption. And the subject that prompted the question trades far
+above the liquidity of anything in the archive, so the pooled figure is a
+large-cap answer, not a single-name one.
+
+The wrong-signed direction is the fourth time this repo has conditioned
+on a recent up-move and found the sign backwards — after the post-rip
+cooldown, the trend gate, and the IV-richness gate. The fade is bigger
+and more consistent than the null, but at −8 bp against a realistic
+large-cap round trip of 8–15 bp it is not a trade in either direction;
+it is a reason not to initiate into one.
+
 ## Related, recorded elsewhere
 
 - **Trend gate** (suspend selling during a 200-day uptrend) — a *registered*
