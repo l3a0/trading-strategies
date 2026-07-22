@@ -356,6 +356,42 @@ TICKER_START_CLIPS = {
     # (the PTC recipe) would have discarded 12 good years. The structural
     # corruption ends 2011-09-29 (owner-signed 2026-07-22)
     'TFC': '2011-09-30',
+    # the SHARE LINE, not the entity, is what a price series measures.
+    # On 2001-02-27 Firstar merged WITH AND INTO U.S. Bancorp: USB was
+    # the LEGAL survivor (same CIK 36104, charter, file number, still
+    # filing today) — but each FIRSTAR share converted 1-for-1 while
+    # each OLD-USB share became 1.265 shares. So the surviving stock
+    # line is Firstar's and the surviving registrant is U.S. Bancorp's,
+    # and they point opposite ways.
+    #
+    # Our tape carries the OLD U.S. Bancorp before the merger — proven
+    # penny-exact against the merger proxy, whose Q1-2001 closing
+    # high/low of $31.94/$28.94 match our $31.9375/$28.9375. It splices
+    # WITHOUT expressing the 1.265 reclassification, so it books a
+    # PHANTOM -20.3% on 2001-02-27 ($29.50 -> $23.50 = 1/1.265). yfinance
+    # has no seam because it carries FIRSTAR (also penny-exact: Firstar's
+    # 10-K close $21.13 vs yfinance $21.125), which is the ISSUER'S OWN
+    # convention — the FY2001 10-K presents Firstar's prior-year prices.
+    #
+    # So NEITHER source is corrupt; they are two different companies.
+    # The lesson recorded: vendor AGREEMENT is not corroboration. An
+    # earlier draft of this ruling routed USB to the AV reference on
+    # "two sources agree against one", which would have PRESERVED the
+    # fake -20% day and blamed the source following the issuer. The
+    # primary record settled it (owner-signed 2026-07-22)
+    'USB': '2001-02-27',
+    # pre-2011 rows are WIMM-BILL-DANN FOODS, the Russian dairy company
+    # whose NYSE ADR PepsiCo bought out — our tape runs 2002-02-28 to
+    # 2011-05-27, then an ~11-YEAR GAP while the symbol sat vacant, then
+    # Warner Bros. Discovery from 2022-04-04, matching both references to
+    # the cent. The gap is the cleanest reuse tell in the archive: most
+    # are inferred from a price seam, this one advertises itself. Note
+    # our tape LACKS Discovery's pre-2022 history entirely (the
+    # references back-stitch it from DISCA; we have the dairy company
+    # instead), so the clip discards no usable Warner history. The 2009
+    # flag that surfaced this sits inside the dairy era and is subsumed
+    # (owner-signed 2026-07-22)
+    'WBD': '2022-04-04',
 }
 
 # §2 hand-resolutions, owner-signed 2026-07-21: DROP WINDOWS — spans
@@ -389,6 +425,12 @@ TICKER_DROP_WINDOWS = {
     # and 159% off; the other eight are 2-5% noise. Dropping them joins
     # $18.44 -> $18.60, a 0.9% step (owner-signed 2026-07-22)
     'T': [('2005-11-28', '2005-11-29')],
+    # a single corrupt day surviving the 2001 clip: ours reads $35.42
+    # where BOTH references say $38.42, with neighbours at $39.14 and
+    # $39.26 — a transposed digit, and the one-bar-V signature sitting
+    # just under the flag thresholds. Dropping it joins $39.14 -> $39.26,
+    # a 0.3% step (owner-signed 2026-07-22)
+    'USB': [('2023-07-21', '2023-07-21')],
 }
 
 
