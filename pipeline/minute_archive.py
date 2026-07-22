@@ -85,6 +85,22 @@ RESOLVED_CLIFFS = {
         'real event: ~+102% (stock doubled) after a Dec-4 8-K raised the '
         'profit forecast + reaffirmed capital, on a broad market rally — '
         'The Hartford; triple-confirmed on price (owner-signed 2026-07-21)',
+    ('MO', '2008-03-31'):
+        'real event: the Philip Morris International SPIN-OFF ex-date, -70% '
+        '— 1.000000 PM share per MO share, distributed 2008-03-28. Holders '
+        'lost nothing: MO $22.20 + PM $50.58 = $72.78 against the $73.83 '
+        'cum close (the 1.4% residual is one day of market movement); '
+        'basis split 30.5/69.5 per Altria\'s tax-basis notice. MO traded '
+        'with DUE BILLS through 2008-03-28 — the NYSE convention for '
+        'distributions >=25% of value, the same mechanic that moved KDP\'s '
+        'step a day past its record date. The company is CONTINUOUS across '
+        'it (Altria, just smaller), so this is kept like AIG/GL rather than '
+        'clipped like a predecessor era; a clip would cost 8.2 years and '
+        'change nothing (zero detections either way). NOTE the sibling '
+        '2007-04-02 Kraft spin-off (-22%, 0.692024 KFT/MO) sits INSIDE the '
+        '[0.5, 2.0] guard and never flags — verified as the only other '
+        '>20% one-day drop in MO\'s 6,675 sessions, so the guard catches '
+        'one of the two by construction (owner-signed 2026-07-21)',
 }
 
 # §2 hand-resolutions, owner-signed 2026-07-21: START CLIPS for tickers
