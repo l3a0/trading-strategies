@@ -147,6 +147,11 @@ RESOLVED_CLIFFS = {
         'investment portfolio and conduits, on the day the whole sector '
         'repriced — BAC -29, JPM -22, C -20, HBAN -16 the same session, '
         'all independently confirmed real (owner-signed 2026-07-22)',
+    ('WMB', '2002-07-22'):
+        'real event: -61% ($5.16 -> $2.01) in the post-Enron energy-'
+        'merchant liquidity crisis, and it kept falling to $1.20 the next '
+        'session; all three sources agree to the cent and WMB has only 13 '
+        'mismatch days in 6,676 sessions (owner-signed 2026-07-22)',
 }
 
 # §2 hand-resolutions, owner-signed 2026-07-21: START CLIPS for tickers
@@ -392,6 +397,15 @@ TICKER_START_CLIPS = {
     # flag that surfaced this sits inside the dairy era and is subsumed
     # (owner-signed 2026-07-22)
     'WBD': '2022-04-04',
+    # two unrelated companies: WEIGHT WATCHERS through 2019-04-18 (its
+    # famous +105% Oprah-investment day is in there) and WILLIS TOWERS
+    # WATSON from 2019-04-22, which both references carry throughout.
+    # EVERY session of 2016-2018 disagrees with the reference; from the
+    # clip there are ZERO mismatches across 1,822 sessions. Costs 4,385
+    # sessions, but they belong to a weight-loss company rather than an
+    # insurance broker. The snapshot's 0.3775 factor is Weight Watchers'
+    # and falls pre-window, inert (owner-signed 2026-07-22)
+    'WTW': '2019-04-22',
 }
 
 # §2 hand-resolutions, owner-signed 2026-07-21: DROP WINDOWS — spans

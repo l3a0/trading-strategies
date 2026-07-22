@@ -163,6 +163,11 @@ class TestAggregation:
         assert '2001-09-10' not in [d for d, _ in splits['NVDA']]
         assert not [d for d, _ in splits.get('EXPE', [])
                     if d.startswith('2011')]
+        # WST's 2:1 is re-dated to its true ex-date: the as-traded
+        # halving is on 2004-09-30 ($41.00 -> $20.74), and the vendor's
+        # 09-29 made the ADJUSTED series spike instead of stepping down
+        assert ('2004-09-30', 2.0) in [(d, f) for d, f in splits['WST']]
+        assert '2004-09-29' not in [d for d, _ in splits['WST']]
 
     def test_elv_ruling_is_start_clip_not_drop_window(self):
         # the 2026-07-21 re-ruling: the whole pre-2011 ELV tape is
