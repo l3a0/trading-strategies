@@ -101,6 +101,79 @@ RESOLVED_CLIFFS = {
         '[0.5, 2.0] guard and never flags — verified as the only other '
         '>20% one-day drop in MO\'s 6,675 sessions, so the guard catches '
         'one of the two by construction (owner-signed 2026-07-21)',
+    # ---- the 2020-03-09 oil cohort (owner-signed 2026-07-22) ----
+    # OPEC-Russia talks collapsed 2020-03-06, Saudi launched a price war
+    # over the weekend, WTI fell ~25% Monday and the S&P tripped a
+    # circuit breaker. SEVEN energy names moved together in a gradient
+    # ordered by leverage/oil sensitivity — APA -54.8, OXY -53.5,
+    # TRGP -52.8, FANG -44.6, HAL -37.6, DVN -37.5, EOG -32.0 — of which
+    # only the first three cross the 50% guard. A vendor error does not
+    # arrange itself by balance-sheet risk across seven symbols.
+    ('OXY', '2020-03-09'):
+        'real event: -53.5% on the COVID/OPEC oil Black Monday; unanimous '
+        'across our tape and both references (owner-signed 2026-07-22)',
+    ('TRGP', '2020-03-09'):
+        'real event: -52.8% on the same Black Monday, third of the cohort; '
+        'only 7 mismatch days in 3,927 sessions (owner-signed 2026-07-22)',
+    ('PCG', '2019-01-14'):
+        'real event: -52.3% the day PG&E announced it would file Chapter 11 '
+        'over Camp Fire wildfire liabilities (its CEO resigned the same '
+        'day); fell a further 18% next session (owner-signed 2026-07-22)',
+    ('PWR', '2002-07-02'):
+        'real event: -68% on Quanta Services PR 02-24, issued AFTER the '
+        '2002-07-01 close and traded on the 07-02 pre-open call: FY02 EPS '
+        'guidance cut to $0.45-0.55 from $1.12-1.20, its two largest '
+        'customers in bankruptcy suspending all network work. The FY02 '
+        '10-K Item 5 table (Q3 high 10.19 / low 1.75) brackets both '
+        'closes; no split/spin-off/dividend (owner-signed 2026-07-22)',
+    ('REGN', '2003-03-31'):
+        'real event: -56.6% on the AXOKINE Phase III obesity results — '
+        'endpoints hit but tiny (6.2 lb vs 2.6 placebo) and ~70% of '
+        'patients developed antibodies; the CEO called the magnitude '
+        '"small". Adjustment factor is exactly 1.0: REGN has never split '
+        'and pays no dividend (owner-signed 2026-07-22)',
+    ('ROK', '2001-07-02'):
+        'real event: -61% as ROCKWELL COLLINS was distributed 1-for-1 and '
+        'the parent renamed itself Rockwell Automation. Holders whole: the '
+        'official basis allocation implies ~$22.55 of Collins value per '
+        'share against the $23.38 observed drop (2.2% residual). CONTINUOUS '
+        'registrant — CIK 0001024478 unbroken, EDGAR former-names Rockwell '
+        'International -> Rockwell Automation, Collins booked as a '
+        'discontinued operation with prior periods restated: the '
+        'parent-continues signature that separates this from the JCI/IR '
+        'clips (owner-signed 2026-07-22)',
+    ('STT', '2009-01-20'):
+        'real event: -59% as Q4 results exposed unrealized losses in its '
+        'investment portfolio and conduits, on the day the whole sector '
+        'repriced — BAC -29, JPM -22, C -20, HBAN -16 the same session, '
+        'all independently confirmed real (owner-signed 2026-07-22)',
+    ('WY', '2010-07-20'):
+        'real event: -62% ($41.84 -> $15.93) as the REIT-conversion E&P '
+        'purge dividend went ex — $26.46341416/share, declared 2010-07-11, '
+        'record 07-22, PAID 2010-09-01 (~10% cash / ~90% stock). All three '
+        'sources agree to the cent; WY has 3 mismatch days in 6,676 '
+        'sessions. NOT a split, despite ending in ~1.5x more shares: the '
+        'SHARE COUNT DID NOT MOVE on the ex-date — it stayed ~211.6M until '
+        'the 324M new shares were issued six weeks later, which is why the '
+        'tape shows no second step in September. A split moves price and '
+        'share count the SAME day; this moved them six weeks apart, and '
+        'the price step is the dividend. The snapshot correctly has NO '
+        '2010 entry (the rumoured 1-for-5 reverse split never happened) '
+        'and NO factor should be added: the two published ratios '
+        '(1.70292240 stock-elect / 1.44340808 + $4.03 cash-elect) attach '
+        'to the September payment, are election-dependent, and neither '
+        'reproduces the observed 0.3807 — which sits between the '
+        'dividend-value (0.36752) and dilution (0.39492) factors because '
+        'the share count was not fixed until 2010-08-26. Back-solving it '
+        'would be deriving our own factor (the LDOS rule). CAVEAT for '
+        'total-return work: this is a $26.46/share distribution, so any '
+        'return/drawdown/Sharpe series over 2010 must account for it or '
+        'book a spurious -62% month (owner-signed 2026-07-22)',
+    ('WMB', '2002-07-22'):
+        'real event: -61% ($5.16 -> $2.01) in the post-Enron energy-'
+        'merchant liquidity crisis, and it kept falling to $1.20 the next '
+        'session; all three sources agree to the cent and WMB has only 13 '
+        'mismatch days in 6,676 sessions (owner-signed 2026-07-22)',
 }
 
 # §2 hand-resolutions, owner-signed 2026-07-21: START CLIPS for tickers
@@ -282,6 +355,79 @@ TICKER_START_CLIPS = {
     # on LIN) should use 2018-10-31, Linde plc's first real session
     # (owner-signed 2026-07-21)
     'LIN': '2014-12-22',
+    # the 2013 News Corp separation, seen from the publishing side. Both
+    # classes carry the OLD combined News Corporation (~$32.7) through
+    # 2013-06-28 — trading with due bills — and the NEW publishing-only
+    # News Corp (~$14.8) from 2013-07-01, which RETAINED these symbols
+    # while the old entity became 21st Century Fox and moved to FOXA.
+    # Timeline already pinned by the FOX/FOXA rulings (Nasdaq symbology
+    # notice + SEC filings); from 2013-07-01 the tape matches the
+    # reference to the cent. Costs 8 sessions each — the archive only
+    # starts 2013-06-19 (owner-signed 2026-07-22)
+    'NWSA': '2013-07-01',
+    'NWS': '2013-07-01',
+    # PTC's tape is CORRUPT for a decade: 2,712 of 6,675 sessions (41%)
+    # disagree with the reference, and 2005/2008/2010 are wrong on EVERY
+    # session. Ratios swing 0.12x..5.8x, so it is not one mis-scaled
+    # factor — the era is simply unreliable. It stops cleanly: 1 stray in
+    # 2011, 3 in 2012, then all 3,432 sessions after 2012-11-23 match.
+    # The cliff guard saw only 46 of the 2,712 bad days, because the
+    # corruption alternates between scales and only the transitions jump
+    # >50% — the clearest case for the reference cross-check in the
+    # archive (owner-signed 2026-07-22)
+    'PTC': '2012-11-26',
+    # TFC the same disease, different boundary: 2004-2010 wrong on EVERY
+    # session (alternating to ~0.28x), 2011 partial, then 2012-2023
+    # PERFECTLY clean. NOTE the boundary is NOT the last mismatch — a
+    # lone 2.6%-off day in 2024-08 is benign noise, and clipping there
+    # (the PTC recipe) would have discarded 12 good years. The structural
+    # corruption ends 2011-09-29 (owner-signed 2026-07-22)
+    'TFC': '2011-09-30',
+    # the SHARE LINE, not the entity, is what a price series measures.
+    # On 2001-02-27 Firstar merged WITH AND INTO U.S. Bancorp: USB was
+    # the LEGAL survivor (same CIK 36104, charter, file number, still
+    # filing today) — but each FIRSTAR share converted 1-for-1 while
+    # each OLD-USB share became 1.265 shares. So the surviving stock
+    # line is Firstar's and the surviving registrant is U.S. Bancorp's,
+    # and they point opposite ways.
+    #
+    # Our tape carries the OLD U.S. Bancorp before the merger — proven
+    # penny-exact against the merger proxy, whose Q1-2001 closing
+    # high/low of $31.94/$28.94 match our $31.9375/$28.9375. It splices
+    # WITHOUT expressing the 1.265 reclassification, so it books a
+    # PHANTOM -20.3% on 2001-02-27 ($29.50 -> $23.50 = 1/1.265). yfinance
+    # has no seam because it carries FIRSTAR (also penny-exact: Firstar's
+    # 10-K close $21.13 vs yfinance $21.125), which is the ISSUER'S OWN
+    # convention — the FY2001 10-K presents Firstar's prior-year prices.
+    #
+    # So NEITHER source is corrupt; they are two different companies.
+    # The lesson recorded: vendor AGREEMENT is not corroboration. An
+    # earlier draft of this ruling routed USB to the AV reference on
+    # "two sources agree against one", which would have PRESERVED the
+    # fake -20% day and blamed the source following the issuer. The
+    # primary record settled it (owner-signed 2026-07-22)
+    'USB': '2001-02-27',
+    # pre-2011 rows are WIMM-BILL-DANN FOODS, the Russian dairy company
+    # whose NYSE ADR PepsiCo bought out — our tape runs 2002-02-28 to
+    # 2011-05-27, then an ~11-YEAR GAP while the symbol sat vacant, then
+    # Warner Bros. Discovery from 2022-04-04, matching both references to
+    # the cent. The gap is the cleanest reuse tell in the archive: most
+    # are inferred from a price seam, this one advertises itself. Note
+    # our tape LACKS Discovery's pre-2022 history entirely (the
+    # references back-stitch it from DISCA; we have the dairy company
+    # instead), so the clip discards no usable Warner history. The 2009
+    # flag that surfaced this sits inside the dairy era and is subsumed
+    # (owner-signed 2026-07-22)
+    'WBD': '2022-04-04',
+    # two unrelated companies: WEIGHT WATCHERS through 2019-04-18 (its
+    # famous +105% Oprah-investment day is in there) and WILLIS TOWERS
+    # WATSON from 2019-04-22, which both references carry throughout.
+    # EVERY session of 2016-2018 disagrees with the reference; from the
+    # clip there are ZERO mismatches across 1,822 sessions. Costs 4,385
+    # sessions, but they belong to a weight-loss company rather than an
+    # insurance broker. The snapshot's 0.3775 factor is Weight Watchers'
+    # and falls pre-window, inert (owner-signed 2026-07-22)
+    'WTW': '2019-04-22',
 }
 
 # §2 hand-resolutions, owner-signed 2026-07-21: DROP WINDOWS — spans
@@ -306,6 +452,21 @@ TICKER_DROP_WINDOWS = {
     # (a day far below both neighbours that fully recovers — real
     # crashes do not round-trip) (owner-signed 2026-07-21)
     'EXPD': [('2000-04-07', '2000-04-07')],
+    # two corrupt days in the week AT&T's merger with SBC closed: ours
+    # reads $46.85 and $64.92 when the stock was ~$25 (both references
+    # agree). NOT a company switch — the tape matches before and after,
+    # so the SBC lineage is continuous. The guard caught only the EXIT:
+    # entering the spike was a 1.92x move, just under the 2.0 ceiling,
+    # so it passed silently. Of T's 10 mismatch days these two are 87%
+    # and 159% off; the other eight are 2-5% noise. Dropping them joins
+    # $18.44 -> $18.60, a 0.9% step (owner-signed 2026-07-22)
+    'T': [('2005-11-28', '2005-11-29')],
+    # a single corrupt day surviving the 2001 clip: ours reads $35.42
+    # where BOTH references say $38.42, with neighbours at $39.14 and
+    # $39.26 — a transposed digit, and the one-bar-V signature sitting
+    # just under the flag thresholds. Dropping it joins $39.14 -> $39.26,
+    # a 0.3% step (owner-signed 2026-07-22)
+    'USB': [('2023-07-21', '2023-07-21')],
 }
 
 
