@@ -1,0 +1,113 @@
+ticker,ex_date,ratio,event,basis,as_of
+A,2014-11-03,1.398,Agilent Technologies spin-off of Keysight Technologies (KEYS): special stock dividend of 1 Keysight share for every 2 Agilent shares. Record date 2014,researched:high,2026-07-20
+ABT,2004-05-03,1.0688328345446771,"Abbott spun off Hospira, Inc",researched:high,2026-07-20
+ABT,2013-01-02,2.084201750729471,"AbbVie (ABBV) spin-off, ex 2013-01-02: 1 ABBV per 1 ABT",researched:high,2026-07-20
+ADP,2007-04-02,1.1070519207350824,Automatic Data Processing spin-off of Broadridge Financial Solutions (BR): tax-free dividend of 1 Broadridge share for every 4 ADP shares (~138.5M BR ,researched:high,2026-07-20
+ADP,2014-10-01,1.139,"Automatic Data Processing spin-off of CDK Global (CDK, formerly ADP Dealer Services): 1 CDK share for every 3 ADP shares (~160.6M CDK shares distribut",researched:high,2026-07-20
+APD,2016-10-03,1.081,"Air Products spun off its Electronic Materials Division as Versum Materials, Inc",researched:high,2026-07-20
+APTV,2017-12-05,1.193,Delphi Automotive PLC spin-off of Delphi Technologies PLC: 1 Delphi Technologies ordinary share for every 3 Delphi Automotive shares. Record date 2017,researched:high,2026-07-20
+AXP,1994-05-31,1.13314447592068,value detachment (unresearched),ratio-rule,2026-07-20
+AXP,2005-10-03,1.1424654404204273,"American Express spin-off of Ameriprise Financial: 1 Ameriprise share per 5 AXP shares (record 2005-09-19, distribution 2005-09-30, spin effective 200",researched:high,2026-07-20
+BAX,1992-12-01,1.1010426874249915,value detachment (unresearched),ratio-rule,2026-07-20
+BAX,2015-07-01,1.841,"Baxter International spin-off of Baxalta Incorporated (~80.5% stake) as a special dividend: 1 Baxalta share per 1 Baxter share, distributed 12:01am 20",researched:high,2026-07-20
+BDX,2022-04-01,1.025,"Becton, Dickinson completed the spin-off of Embecta Corp",researched:high,2026-07-20
+BDX,2026-02-10,1.272,"Becton Dickinson spin-off of its Biosciences & Diagnostic Solutions business, combined with Waters Corporation via a Reverse Morris Trust. BD holders ",researched:high,2026-07-20
+BMY,2001-08-07,1.0506662800214757,"Bristol-Myers Squibb spun off its orthopaedics business as Zimmer Holdings: on August 6, 2001 BMS distributed all Zimmer shares to BMS stockholders as a dividen",researched:high,2026-07-20
+BNY,2007-07-02,0.9434,Merger of The Bank of New York Company into The Bank of New York Mellon Corporation (effective 2007-07-01; first trading day 2007-07-02). Bank of New ,researched:inert-sharecount,2026-07-20
+C,1995-10-03,1.0040160642570282,Ticker C's pre-1998 history is Travelers Group Inc,researched:high,2026-07-20
+CMCSA,2026-01-05,1.067,"Comcast completed the pro-rata spin-off of Versant Media Group (NBCU cable networks; Nasdaq: VSNT), distributing 1 Versant share per 25 Comcast shares to holder",researched:high,2026-07-20
+CNP,2002-10-01,1.1862396204033214,"Reliant Energy spin-off of Reliant Resources, Inc. (RRI): special stock dividend of 0.788603 RRI share per Reliant Energy share (record 2002-09-20, co",researched:high,2026-07-20
+COP,2012-05-01,1.311791,"ConocoPhillips spin-off of Phillips 66 (PSX): 1 PSX share per 2 COP shares (record 2012-04-16, distribution after close 2012-04-30). PSX regular-way t",researched:high,2026-07-20
+DD,2019-04-02,1.487,"DowDuPont Inc. spin-off of Dow Inc. (DOW): 1 DOW share per 3 DowDuPont shares (record 2019-03-21, distribution 2019-04-01, ex-date/regular-way 2019-04",researched:high,2026-07-20
+DD,2019-06-03,0.4725,"Same ex-date, two actions effective 2019-06-01: (1) DowDuPont spin-off of Corteva, Inc. (CTVA), 1 CTVA per 3 shares, and (2) a 1-for-3 reverse stock s",deferred:needs-decomposition,2026-07-20
+DD,2025-11-03,2.39,"Qnity Electronics spin-off (1 Q per 2 DD), ex 2025-11-03",researched:high,2026-07-20
+DELL,2018-12-28,1.806,Dell Technologies completed its 'Class V transaction.' Each share of Class V (DVMT) tracking stock — a class of common stock of Dell Technologies Inc.,researched:inert-sharecount,2026-07-20
+DELL,2021-11-02,1.973,"VMware spin-off (0.440626 VMW per DELL), ex 2021-11-02 after a due-bill period",researched:high,2026-07-20
+DHR,2016-07-05,1.319,Danaher Corporation spun off Fortive Corporation (NYSE: FTV) as a pro rata dividend of one Fortive share for every two Danaher shares held (0.5:1). Re,researched:high,2026-07-20
+DHR,2023-10-02,1.128,Danaher Corporation spun off Veralto Corporation (NYSE: VLTO) as a pro rata dividend of one Veralto share for every three Danaher shares held (1:3). R,researched:high,2026-07-20
+DIS,2007-06-13,1.0136847440446022,Disney spun off its ABC Radio business (ABC Radio Holdings) pro rata — approximately 0,researched:high,2026-07-20
+DOC,2016-11-01,1.098,"Spin-off of Quality Care Properties (QCP) by HCP, Inc",researched:high,2026-07-20
+DOV,2014-03-03,1.205,"Spin-off of Knowles Corporation. Dover distributed 100% of Knowles common stock to Dover shareholders at 1 Knowles share per 2 Dover shares, record da",researched:high,2026-07-20
+DOV,2018-05-09,1.238,"Spin-off of Apergy Corporation (NYSE: APY, later ChampionX). Dover distributed 100% of Apergy at 1 Apergy share per 2 Dover shares, record date 2018-0",researched:high,2026-07-20
+DRI,2015-11-10,1.1186933661483387,"Spin-off of Four Corners Property Trust, Inc. (NYSE: FCPT), a REIT holding Darden's owned real estate. Darden distributed 1 FCPT share per 3 Darden sh",researched:high,2026-07-20
+DTE,2021-07-01,1.175,"Spin-off of DT Midstream, Inc. (NYSE: DTM). DTE distributed 96,732,466 DTM shares at 1 DTM share per 2 DTE shares, record date 2021-06-18, distributio",researched:high,2026-07-20
+DUK,2007-01-03,1.7208742040956806,"Spin-off of Spectra Energy Corp (SE): 0.5 Spectra share distributed per Duke Energy share; record date 2006-12-18, distribution consummated 2007-01-02",researched:high,2026-07-20
+EBAY,2015-07-20,2.376,"PayPal spin-off (1 PYPL per 1 EBAY), ex-distribution 2015-07-20",researched:high,2026-07-20
+ECHO,2019-09-11,1.234,"Wrong-registrant mis-stitch. Echo Global Logistics (ticker ECHO, the actual registrant) had NO split, stock dividend, spin-off, or special distributio",unresolved,2026-07-20
+EQT,2018-11-13,1.837,"Spin-off of Equitrans Midstream Corp (ETRN): 0.80 ETRN share distributed per EQT share; record date 2018-11-01, distribution effective 11:59 pm ET 201",researched:high,2026-07-20
+ETN,2001-01-02,1.1524720525527257,Spin-off of Axcelis Technologies Inc (ACLS): ~1.1 Axcelis shares distributed per Eaton share (Eaton's retained ~80M-share stake); record date 2000-12-,researched:high,2026-07-20
+EXC,2022-02-02,1.402,"Exelon Corporation tax-free spin-off of Constellation Energy (CEG). Exelon distributed 100% of CEG common stock pro-rata, 1 CEG share for every 3 EXC ",researched:high,2026-07-20
+F,1998-04-08,1.505797319680771,value detachment (unresearched),ratio-rule,2026-07-20
+F,2000-06-29,1.0409076714895389,Spin-off of Visteon Corporation by Ford Motor Company: Ford distributed its entire 130 million-share interest in Visteon as a tax-free dividend on 2000-06-28 (r,researched:high,2026-07-20
+F,2000-08-03,1.748175,"Ford Value Enhancement Plan (VEP) recapitalization, shareholder-approved Aug 2, 2000, effective ex Aug 3, 2000. Each old Ford common/Class B share was",researched:high,2026-07-20
+FDX,2026-06-01,1.241,"FedEx Corporation spin-off of FedEx Freight (NYSE: FDXF). FedEx distributed 80.1% of FedEx Freight common stock pro-rata, 1 FDXF share for every 2 FDX",researched:high,2026-07-20
+FLEX,2024-01-03,1.327,"Flex Ltd. spin-off of its remaining interest in Nextracker (NASDAQ: NXT), distributed pro-rata to Flex shareholders. Effected via distribution of Yuma",researched:high,2026-07-20
+FTV,2020-10-09,1.195,Fortive completed the spin-off of Vontier Corporation (NYSE: VNT). Pro-rata distribution of 2 Vontier shares per 5 Fortive shares (0.4 VNT per FTV) to,researched:high,2026-07-20
+FTV,2025-06-30,1.327,Fortive completed the separation of Ralliant Corporation (NYSE: RAL). Distribution of 1 Ralliant share per 3 Fortive shares to holders of record 2025-,researched:high,2026-07-20
+GE,2019-02-26,1.04,Spin-off of GE Transportation (Transportation Systems Holdings Inc,researched:high,2026-07-20
+GE,2023-01-04,1.281,General Electric completed the separation of GE HealthCare Technologies (Nasdaq: GEHC). Distribution of 1 GEHC share per 3 GE shares to holders of rec,researched:high,2026-07-20
+GE,2024-04-02,1.253,General Electric completed the spin-off of GE Vernova (NYSE: GEV); the remaining company continued as GE Aerospace on NYSE under 'GE'. Distribution of,researched:high,2026-07-20
+GIS,1995-05-30,1.2099213551119177,value detachment (unresearched),ratio-rule,2026-07-20
+GOOG,2014-03-27,2.002,"Google Class C (GOOG) capital stock distribution: one non-voting Class C share issued per existing Class A/B share of the SAME company (Google Inc., n",researched:inert-sharecount,2026-07-20
+HAL,1996-01-24,1.0493069327709048,"Halliburton spun off its insurance subsidiary as Highlands Insurance Group, Inc",researched:high,2026-07-20
+HON,2016-10-03,1.0053282396702523,Honeywell spun off its Resins & Chemicals business as AdvanSix Inc,researched:high,2026-07-20
+HON,2018-10-01,1.011,Honeywell spun off its Transportation Systems (turbocharger) business as Garrett Motion Inc,researched:high,2026-07-20
+HON,2018-10-29,1.032,"Honeywell spun off its Homes and Global Distribution business as Resideo Technologies, Inc",researched:high,2026-07-20
+HON,2025-10-30,1.061,Honeywell spun off its Advanced Materials business as Solstice Advanced Materials Inc,researched:high,2026-07-20
+HON,2026-06-29,0.9535,"TWO actions on the same ex-date 2026-06-29: (1) pro-rata spin-off of Honeywell Aerospace (ticker HONA) — one Aerospace share per two Honeywell shares,",deferred:needs-decomposition,2026-07-20
+HPE,2017-04-03,1.3348,"Reverse-Morris-Trust spin-off: HPE distributed 100% of Everett SpinCo, Inc. (its enterprise-services business) pro rata to holders (record 2017-03-20,",researched:high,2026-07-20
+HPE,2017-09-01,1.289,"Spin-off of Seattle SpinCo, Inc. and simultaneous merger into Micro Focus International plc. HPE distributed one share of Seattle SpinCo Class A commo",researched:high,2026-07-20
+HPQ,2015-11-02,2.202,Separation of Hewlett-Packard Company into HP Inc. (registrant kept ticker HPQ) and Hewlett Packard Enterprise (HPE). HP Co. distributed one HPE share,researched:high,2026-07-20
+HSIC,2019-02-08,1.275,Spin-off of Henry Schein's animal-health business (HS Spinco) and Reverse Morris Trust merger with Direct Vet Marketing (Vets First Choice) to form Co,researched:high,2026-07-20
+HST,1996-01-02,1.122334455667789,value detachment (unresearched),ratio-rule,2026-07-20
+IBM,2021-11-04,1.046,"IBM's spin-off of Kyndryl Holdings: one Kyndryl share distributed for every five IBM shares, distribution effective 2021-11-03, Kyndryl regular-way trading and ",researched:high,2026-07-20
+IP,2014-07-02,1.014,"Spin-off of the xpedx distribution business and its simultaneous Reverse-Morris-Trust merger with Unisource Worldwide to form Veritiv Corporation (NYSE: VRTV), ",researched:high,2026-07-20
+IP,2021-10-01,1.056,"Spin-off of the global printing papers business as Sylvamo Corporation (NYSE: SLVM), effective 12:01 a",researched:high,2026-07-20
+J,2024-09-30,1.197,"Spin-off of Jacobs' Critical Mission Solutions and Cyber & Intelligence Government Services businesses and Reverse Morris Trust merger with Amentum, c",researched:high,2026-07-20
+J,2025-05-16,1.01,"Jacobs Solutions paid a special dividend of 7,299,065 shares of Amentum Holdings, Inc",researched:high,2026-07-20
+JCI,2012-10-01,2.011667672500503,"Three-way separation of Tyco International Ltd. (the registrant whose lineage the JCI ticker continues; SEC CIK 0000833444, later renamed Johnson Cont",researched:high,2026-07-20
+JCI,2016-09-06,0.955,"Johnson Controls-Tyco merger, closed 2016-09-02; Tyco (same registrant CIK 0000833444) was renamed Johnson Controls International plc and kept the JCI",researched:inert-sharecount,2026-07-20
+KEY,1994-03-02,1.205,value detachment (unresearched),ratio-rule,2026-07-20
+KMB,2014-11-03,1.043,"Kimberly-Clark spun off its health care business as Halyard Health, Inc",researched:high,2026-07-20
+LDOS,2013-09-30,0.405,"SAIC, Inc. (SEC CIK 0001336920) split into two companies after market close 2013-09-27. The parent was renamed Leidos Holdings, Inc. and executed a 1-",researched:inert-sharecount,2026-07-20
+LEN,2025-01-21,1.033,"Record/ex date for Lennar's taxable spin-off of Millrose Properties, Inc",researched:high,2026-07-20
+LH,2023-07-03,1.164,"Laboratory Corporation of America Holdings (Labcorp, SEC CIK 920148) completed the spin-off of Fortrea Holdings Inc. (its CRO/clinical-trials business",researched:high,2026-07-20
+LHX,2009-05-11,1.058425063505504,"LHX's price history is Harris Corporation's (same SEC registrant, CIK 0000202058, renamed L3Harris Technologies in 2019)",researched:high,2026-07-20
+LMT,1995-03-16,1.63,value detachment (unresearched),ratio-rule,2026-07-20
+MAR,2011-11-22,1.061,"Spin-off of Marriott Vacations Worldwide Corporation (NYSE: VAC) — 1 VAC share for every 10 MAR Class A shares; record 2011-11-10, distribution date 2011-11-21,",researched:high,2026-07-20
+MAS,2015-07-01,1.138,Masco Corporation spin-off of TopBuild Corp. (NYSE: BLD). Masco distributed one share of TopBuild for every nine shares of Masco held (record date 201,researched:high,2026-07-20
+MET,2017-08-07,1.122,"MetLife, Inc. spin-off of Brighthouse Financial, Inc. (NASDAQ: BHF). MetLife distributed one share of Brighthouse for every 11 shares of MetLife (reco",researched:high,2026-07-20
+MMM,2024-04-01,1.196,3M Company spin-off of its health-care business as Solventum Corporation (NYSE: SOLV). 3M distributed one share of Solventum for every four shares of ,researched:high,2026-07-20
+MRK,2021-06-03,1.048,Spin-off of Organon & Co,researched:high,2026-07-20
+MSI,2004-12-03,1.1173184357541899,"Motorola, Inc. distribution/spin-off of its remaining stake in Freescale Semiconductor, Inc. (NYSE: FSL). Motorola distributed 0.110415 of a share of ",researched:high,2026-07-20
+NI,2015-07-02,2.545,"Columbia Pipeline Group spin-off (1 CPGX per 1 NI), ex 2015-07-02",researched:high,2026-07-20
+NOC,2011-03-31,1.1068068622025458,"Northrop Grumman spin-off of Huntington Ingalls Industries (HII): distribution of 1 HII share for every 6 NOC shares to holders of record 2011-03-30, ",researched:high,2026-07-20
+O,2021-11-15,1.032,Spin-off of Orion Office REIT Inc,researched:high,2026-07-20
+OKE,2014-02-03,1.1422,"ONEOK spin-off of ONE Gas, Inc. (OGS): distribution of 1 OGS share for every 4 OKE shares to holders of record 2014-01-21, separation effective 2014-0",researched:high,2026-07-20
+OXY,2014-12-01,1.042,"Occidental completed the spin-off of California Resources Corporation (NYSE: CRC), distributing ~80",researched:high,2026-07-20
+OXY,2016-02-25,1.0017028949213662,"Occidental distributed its retained 71,500,000 CRC shares (~18",researched:high,2026-07-20
+PFE,2020-11-17,1.054,"Pfizer spun off its Upjohn business, which combined with Mylan to form Viatris Inc",researched:high,2026-07-20
+PNR,2018-05-01,1.489,Pentair plc spin-off of nVent Electric plc (NVT) via a dividend in specie: 1 nVent ordinary share for every 1 Pentair share to holders of record 2018-,researched:high,2026-07-20
+PPL,2015-06-02,1.0736525660296328,"PPL spun off PPL Energy Supply via Talen Energy Holdings, which immediately combined with Riverstone's RJS Power to form the separately listed Talen Energy Corp",researched:high,2026-07-20
+RF,2004-07-01,1.2346,Regions Financial / Union Planters merger of equals completed 2004-07-01. Old Regions Financial (NYSE: RF) and Union Planters (NYSE: UPC) merged into ,deferred:needs-decomposition,2026-07-20
+ROL,1984-07-02,2.198,value detachment (unresearched),ratio-rule,2026-07-20
+RTX,2020-04-03,1.589,"United Technologies (UTX) tax-free spin-offs of Carrier Global (CARR: 1 share per UTX share) and Otis Worldwide (OTIS: 0.5 share per UTX share), effec",researched:high,2026-07-20
+SO,2001-04-03,1.636929120969062,"Southern Company spin-off of Mirant Corporation: distributed 0.397614 Mirant shares per Southern share (all ~272M Mirant shares Southern held, ~80% of",researched:high,2026-07-20
+SPG,2014-05-29,1.063,Spin-off of Washington Prime Group Inc,researched:high,2026-07-20
+SPGI,2026-07-01,1.057,Spin-off of Mobility Global Inc,researched:high,2026-07-20
+T,2022-04-11,1.324,"AT&T spin-off of WarnerMedia (Spinco), which simultaneously merged with a Discovery subsidiary in a Reverse Morris Trust to form Warner Bros. Discover",researched:high,2026-07-20
+TT,2013-12-02,1.252,"Reused/renamed-ticker case. The 2013-12-02 adjustment belongs to Ingersoll-Rand plc (SEC CIK 1466258), which spun off Allegion plc (ALLE) at 1 Allegio",researched:high,2026-07-20
+TT,2020-03-02,1.289,Ingersoll-Rand plc completed a Reverse Morris Trust: on 2020-02-29 it spun off its Industrial Segment (~239M shares of Ingersoll-Rand U.S. HoldCo) to ,researched:high,2026-07-20
+UNP,1996-10-16,1.48720999405116,value detachment (unresearched),ratio-rule,2026-07-20
+VLO,2013-05-02,1.094,"Spin-off of CST Brands, Inc",researched:high,2026-07-20
+VTR,2015-08-18,0.8757,"Ventas, Inc. spun off Care Capital Properties, Inc. (CCP), a pure-play skilled-nursing REIT, distributing one CCP share for every four Ventas shares h",researched:high,2026-07-20
+VZ,2006-11-20,1.038055099964706,Spin-off of Idearc Inc,researched:high,2026-07-20
+VZ,2008-04-01,1.0046515366145252,Spin-off of Northern New England Spinco Inc,researched:high,2026-07-20
+VZ,2010-07-02,1.0662242546825904,Spin-off of New Communications Holdings Inc,researched:high,2026-07-20
+WBD,2014-08-07,1.957,"Reused-ticker trap: the WBD price series is stitched back through Discovery, Inc. / Discovery Communications, Inc. (the WBD ticker only exists since t",researched:inert-sharecount,2026-07-20
+WDC,2025-02-24,1.323,"Western Digital Corp. spun off its Flash business as Sandisk Corporation, distributing 0.33333 of a Sandisk share (SNDK) for each WDC share held by ho",researched:high,2026-07-20
+WMB,2001-04-24,1.0893246187363834,"Spin-off of Williams Communications Group, Inc",researched:high,2026-07-20
+WMB,2012-01-03,1.2266928361138372,"Spin-off of WPX Energy (Williams' E&P business): 1 WPX share distributed per 3 WMB shares. Record date Dec 14, 2011; distribution Dec 31, 2011; WPX be",researched:high,2026-07-20
+WTW,2016-01-05,0.3775,"Reverse stock split (share consolidation) tied to the Jan 4, 2016 Willis Group Holdings / Towers Watson merger. Immediately after the merger, Legacy W",researched:inert-sharecount,2026-07-20
+YUM,2016-11-01,1.391,"Spin-off of Yum China Holdings (YUMC): 1 YUMC share distributed per 1 YUM share. Record date Oct 19, 2016; distribution after close Oct 31, 2016; YUMC",researched:high,2026-07-20
+ZBH,2022-03-01,1.03,Spin-off of ZimVie Inc,researched:high,2026-07-20

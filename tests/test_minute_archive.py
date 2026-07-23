@@ -330,3 +330,121 @@ class TestReferenceCrosscheck:
         (ws / 'yyy_intraday_1min.csv.months.done').unlink()
         assert ma.archive_path('YYY') is None  # gz alone: unvouched
 
+
+
+class TestHygieneUniverse:
+    """The hygiene sweep and a study's population are different questions.
+    They were accidentally sharing one answer, so while the S&P 400 landed
+    the sweep kept re-checking the same S&P 500 names and reporting clean."""
+
+    def test_universe_stays_the_frozen_study_population(self):
+        import pipeline.minute_archive as ma
+        # the cup-and-handle design freezes this at the S&P 500 snapshot
+        assert ma.TICKERS_PATH == 'sp500_tickers_2026-07.txt'
+        assert len(ma.universe()) == 502
+
+    def test_archived_tickers_spans_every_snapshot(self, tmp_path, monkeypatch):
+        import pipeline.minute_archive as ma
+        monkeypatch.setattr(ma, 'data_path', lambda p: str(tmp_path / p))
+        (tmp_path / 'a.txt').write_text('AAA\nBBB\n')
+        (tmp_path / 'b.txt').write_text('BBB\nCCC\n')   # BBB in both
+        monkeypatch.setattr(ma, 'UNIVERSE_SNAPSHOTS', ('a.txt', 'b.txt'))
+        monkeypatch.setattr(ma, 'archive_path',
+                            lambda t: None if t == 'CCC' else '/x')
+        # deduped, snapshot order, and CCC excluded for having no archive
+        assert ma.archived_tickers() == ['AAA', 'BBB']
+
+    def test_missing_snapshot_is_skipped_not_fatal(self, tmp_path, monkeypatch):
+        import pipeline.minute_archive as ma
+        monkeypatch.setattr(ma, 'data_path', lambda p: str(tmp_path / p))
+        (tmp_path / 'a.txt').write_text('AAA\n')
+        monkeypatch.setattr(ma, 'UNIVERSE_SNAPSHOTS', ('a.txt', 'gone.txt'))
+        monkeypatch.setattr(ma, 'archive_path', lambda t: '/x')
+        assert ma.archived_tickers() == ['AAA']
+
+
+class TestValueDetachments:
+    """Convention: adjust only SHARE-COUNT changes. A spin-off leaves the
+    share count alone, so applying it as a split rescales every earlier
+    price — Abbott's real 2012-12-31 close was $65.47, rendered $31.41."""
+
+    # An exact simple fraction — a split (2:1, 7:5, 1:32) or a stock
+    # dividend (1.05 = 21/20) — is SUFFICIENT to be a share-count change
+    # but NOT necessary. These nine were researched to primary filings and
+    # are share-count changes whose ratio is market-derived, because how
+    # many shares got issued depended on a price: elective cash-or-stock
+    # dividends (SPG, MAR, HST, IRM's REIT distribution), Lennar's Class B
+    # stock dividend, and Google's 2015 Class C adjustment payment. Listed
+    # rather than pattern-matched, so adding a tenth is a deliberate act.
+    RESEARCHED_INEXACT = {
+        ('GOOG', '2015-04-27'), ('HST', '2009-11-04'), ('IRM', '2014-09-26'),
+        ('LEN', '2017-11-09'), ('MAR', '2009-06-23'), ('MAR', '2009-08-18'),
+        ('MAR', '2009-11-17'), ('SPG', '2009-08-13'), ('SPG', '2009-11-12'),
+    }
+
+    def test_split_table_holds_no_unvetted_market_derived_factors(self):
+        from fractions import Fraction
+        import pipeline.minute_archive as ma
+        bad = [(t, d, r) for t, rows in ma.load_splits().items()
+               for d, r in rows
+               if float(Fraction(r).limit_denominator(100)) != r
+               and (t, d) not in self.RESEARCHED_INEXACT]
+        assert bad == [], f'unvetted market-derived factors in the split table: {bad}'
+
+    def test_the_inexact_exceptions_are_all_still_present(self):
+        import pipeline.minute_archive as ma
+        s = ma.load_splits()
+        missing = [(t, d) for t, d in self.RESEARCHED_INEXACT
+                   if d not in {x for x, _ in s.get(t, [])}]
+        assert missing == [], f'researched share-count changes lost: {missing}'
+
+    def test_detachments_and_splits_are_disjoint(self):
+        import pipeline.minute_archive as ma
+        sp = {(t, d) for t, rows in ma.load_splits().items() for d, _ in rows}
+        det = {(t, d) for t, ds in ma.load_detachments().items() for d in ds}
+        assert not (sp & det), f'a row cannot be both: {sp & det}'
+
+    def test_reverse_splits_survived_the_reclassification(self):
+        import pipeline.minute_archive as ma
+        s = ma.load_splits()
+        # EQIX 1-for-32 and MNST 1-for-50: exact fractions whose
+        # denominators exceed the triage bound. Evicted by the first pass
+        # and restored — the bug this pins.
+        assert ('2002-12-31', 0.03125) in s['EQIX']
+        assert ('1988-02-29', 0.02) in s['MNST']
+
+    def test_return_breaks_read_both_sources(self, monkeypatch):
+        import pipeline.minute_archive as ma
+        dates = np.array(['2013-01-01', '2013-01-02', '2013-01-03'])
+        monkeypatch.setattr(ma, 'RETURN_BREAKS', {'XXX': ('2013-01-01',)})
+        monkeypatch.setattr(ma, 'load_detachments',
+                            lambda: {'XXX': ('2013-01-03',)})
+        # hand-signed table AND the committed snapshot, merged and sorted
+        assert ma.return_break_indices('XXX', dates).tolist() == [0, 2]
+
+    def test_a_date_in_both_sources_is_not_double_counted(self, monkeypatch):
+        import pipeline.minute_archive as ma
+        dates = np.array(['2013-01-01', '2013-01-02'])
+        monkeypatch.setattr(ma, 'RETURN_BREAKS', {'XXX': ('2013-01-02',)})
+        monkeypatch.setattr(ma, 'load_detachments',
+                            lambda: {'XXX': ('2013-01-02',)})
+        assert ma.return_break_indices('XXX', dates).tolist() == [1]
+
+    def test_hand_signed_breaks_and_blended_events_resolve(self):
+        import pipeline.minute_archive as ma
+        # the pure detachments plus the blended reverse-split+spin-off pair
+        assert {'MO', 'ROK', 'WY'} <= set(ma.RETURN_BREAKS)
+        assert ma.RETURN_BREAKS.get('HLT') == ('2017-01-04',)   # + 1-for-3
+        assert ma.RETURN_BREAKS.get('MSI') == ('2011-01-04',)   # + 1-for-7
+        d = ma.load_detachments()
+        assert 'ABT' in d and '2013-01-02' in d['ABT']   # AbbVie
+
+    def test_blended_events_are_in_both_split_table_and_return_breaks(self):
+        import pipeline.minute_archive as ma
+        # a blended reverse-split-and-spin-off adjusts (split table) AND is
+        # a return break (RETURN_BREAKS) — the two halves of one event
+        s = ma.load_splits()
+        for t, d in (('HLT', '2017-01-04'), ('MSI', '2011-01-04')):
+            assert d in {x for x, _ in s[t]}, f'{t} reverse split missing'
+            assert d in ma.RETURN_BREAKS[t], f'{t} return break missing'
+            assert d not in ma.load_detachments().get(t, ())  # not double-filed
