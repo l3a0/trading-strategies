@@ -428,3 +428,84 @@ class TestEyeballFigureClip:
         v = np.ones(VOL_AVG_WINDOW + 5)
         v[VOL_AVG_WINDOW + 2] = 4.0            # a 4x breakout-day spike
         assert _surge(v, VOL_AVG_WINDOW + 2) == pytest.approx(4.0)
+
+
+def _sp500_archive_present() -> bool:
+    """True iff enough of the S&P 500 minute archive is on disk to evaluate.
+    The archive is personal, gitignored and unpublished, so this class SKIPS
+    in CI and on a fresh clone — like every other real-data pin in the repo."""
+    import pipeline.minute_archive as ma
+    have = set(ma.archived_tickers())
+    return sum(1 for t in ma.universe() if t in have) >= 450
+
+
+@pytest.mark.skipif(not _sp500_archive_present(),
+                    reason="S&P 500 minute archive absent (gitignored, local-only)")
+class TestCupHandleSp500Pins:
+    """The §10 step-4 VERDICT, pinned. EXPLORATORY (sample-spent), never a
+    registered finding. The cup-and-handle breakout does NOT beat random
+    entry — its cluster win rate sits BELOW the matched-count random-entry
+    null at every horizon, p==1.0 (the null beats the observed in every
+    resample). The seventh kill of the entry-conditioning family, on its
+    best-hope single-name universe; the volume ablation is the same story.
+
+    Headline figures at B=10000 live in docs/explorations.md; this class
+    runs a reduced null count (self.B) for speed. The observed win rates,
+    base rates, cluster counts and detection total it pins are
+    RESAMPLE-INDEPENDENT (they come from build_clusters, not the null), so
+    they equal the published run exactly; the verdict (obs < null, p==1.0)
+    is deterministic under the frozen CUP_SEED and robust to b (obs sits
+    ~4.5 sigma below the null)."""
+
+    B = 1000
+
+    @pytest.fixture(scope='class')
+    def res(self):
+        from engine.cup_handle_scan import run_scan
+        from pipeline.minute_archive import universe
+        return run_scan(universe(), evaluate=True, b=self.B)
+
+    def test_detection_set_is_stable(self, res):
+        # 432 unchanged through the entire split reclassification — the shape
+        # rules are scale-invariant, so convention (a) never moved the set
+        assert res['tickers_scanned'] == 501
+        assert res['total_detections'] == 432
+        assert res['rate_per_ticker_decade'] == 0.401
+
+    def test_does_not_survive(self, res):
+        assert res['survives'] is False
+
+    def test_win_rate_below_random_at_every_horizon(self, res):
+        # the decisive result. (win_rate, base_rate, n_clusters) are
+        # resample-independent and pinned exactly; the null comparison and
+        # p==1.0 are the verdict.
+        expect = {   # horizon: (win_rate, base_rate, n_clusters)
+            'H5':   (0.534,  0.5393, 382),
+            'H10':  (0.555,  0.5535, 382),
+            'H15':  (0.5733, 0.5633, 382),
+            'H20':  (0.5486, 0.5695, 381),
+            'H60':  (0.5951, 0.6057, 368),
+            'H120': (0.6331, 0.6384, 357),
+        }
+        for hz, (win, base, ncl) in expect.items():
+            e = res['evaluation'][hz]
+            assert e['win_rate'] == win, hz
+            assert e['base_rate_bracket'] == base, hz
+            assert e['n_clusters'] == ncl, hz
+            assert e['null_rate_mean'] > e['win_rate'], hz   # below random
+            assert e['p'] == 1.0, hz                          # never beats it
+            assert not e['underpowered'], hz
+
+    def test_volume_ablation_is_the_same_story(self, res):
+        # strip the breakout-volume trigger -> ~3x more clusters, same verdict
+        for hz, ncl in (('H20', 1267), ('H60', 1098)):
+            a = res['ablation_no_volume'][hz]
+            assert a['n_clusters'] == ncl, hz
+            assert a['n_clusters'] > res['evaluation'][hz]['n_clusters'], hz
+            assert a['null_rate_mean'] > a['win_rate'], hz
+            assert a['p'] == 1.0, hz
+
+    def test_return_break_guard_fired_on_nothing(self, res):
+        # no detection window crossed a spin-off / purge dividend, as the
+        # pre-evaluate check predicted
+        assert res['evaluation']['H20']['return_break_trades_dropped'] == 0

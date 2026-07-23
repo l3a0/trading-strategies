@@ -525,6 +525,15 @@ pattern with pins.
    spent and every detector constant is frozen.**
 4. One run executes the scan and evaluation; decisive numbers pin in
    the dataset-gated class and the exploration-log entry in the same
-   PR.
+   PR. **DONE 2026-07-23: SURVIVES = False. The breakout's cluster win
+   rate is BELOW the matched-count random-entry null at every horizon
+   (54.9% vs 65.8% at 20 days), p = 1.0 — worse than random. The volume
+   ablation is the same story. Pinned by `TestCupHandleSp500Pins`; the
+   verdict is in `docs/explorations.md`.**
 5. §7 governs any escalation; otherwise the cup and handle closes with
-   the pins.
+   the pins. **DONE 2026-07-23: no escalation — it is a null (a passing
+   read would earn a registration; this is the opposite). The study is
+   CLOSED. The pattern is the seventh member of the entry-conditioning
+   family to fall to random entry, and it fell on its best-hope
+   single-name universe, so the universe hypothesis is refuted rather
+   than left open.**
