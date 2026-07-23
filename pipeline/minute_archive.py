@@ -203,6 +203,21 @@ RESOLVED_CLIFFS = {
     ('ARWR', '2016-11-30'):
         'real event: a single-name repricing, not a corporate action; the '
         'series joins cleanly on either side (owner-signed 2026-07-22)',
+    # ---- S&P 400 sweep, round 3: distressed-stock repricings (no action) ----
+    ('CAR', '2009-03-20'):
+        'real event: a crisis-bottom recovery of a distressed sub-$1 stock '
+        '(~$0.55 -> ~$1.09 on 2009-03-20, two days after QE1). Avis Budget '
+        "authorized but NEVER effected a 2009 reverse split; the move "
+        'persisted, so not a drop-window (owner-signed 2026-07-22)',
+    ('CAR', '2021-11-02'):
+        'real event: the Q3-2021 earnings + short squeeze (~$171 -> ~$357 '
+        'close, ~$545 intraday, eleven halts) the day after earnings; the '
+        'price stayed elevated, so a real repricing not a corrupt spike '
+        '(owner-signed 2026-07-22)',
+    ('CNO', '2009-03-02'):
+        'real event: a crisis repricing of CNO Financial (ex-Conseco), not '
+        'a corporate action; the series joins cleanly (owner-signed '
+        '2026-07-22)',
 }
 
 # §2 hand-resolutions, owner-signed 2026-07-21: START CLIPS for tickers
@@ -485,6 +500,14 @@ TICKER_START_CLIPS = {
     # its Chapter 11); Albertsons IPO'd onto the vacated symbol 2020-06-26
     # at $15.45. A 4.5-year gap separates the two companies
     'ACI': '2020-06-26',
+    # CHRD — a predecessor's tape dies 2010-04-21 at $5.04, then a ~10-year
+    # gap; the Oasis-Petroleum-emerged-from-Chapter-11 lineage (later merged
+    # with Whiting into Chord Energy) begins regular-way 2020-11-20 at $31.00.
+    # The clip subsumes the old 2007-02-20 flag (owner-signed 2026-07-22)
+    'CHRD': '2020-11-20',
+    # CHWY — the predecessor dies 2009-10-30 at $4.55; Chewy IPO'd onto the
+    # reused symbol 2019-06-14 at $34.83 (owner-signed 2026-07-22)
+    'CHWY': '2019-06-14',
 }
 
 # §2 hand-resolutions, owner-signed 2026-07-21: DROP WINDOWS — spans
