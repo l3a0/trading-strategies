@@ -70,8 +70,18 @@ jobs:
       # the intraday gate archive is local-only, a human-gated publish decision),
       # plus the S/R replication (synthetic layer AND result pins — its OHLC
       # inputs are committed CSVs, so the pins run here, primary tickers only).
+      # `-n auto` spreads the nine files across the runner's cores. This step
+      # was ~900s serial and dominated the whole CI wall-clock; two Monte-Carlo
+      # files (test_tharp_random_entry, test_tharp_sr_replication) were ~69% of
+      # it. The suite is synthetic (no chain stores), so the workers are
+      # memory-light — none of the OOM pressure that made the scout-buckets
+      # process-pool a wash on the 7GB runner. Coverage is dropped here on
+      # purpose: it was informational (never uploaded, badged, or gated), it
+      # adds per-line tracing overhead, and it fights xdist (pytest-cov needs a
+      # per-worker combine). Devs still get it locally via `pytest --cov`
+      # (README). Verified: 374 pass / 1 skip under -n auto.
       - name: Engine tests
-        run: pytest tests/test_cc_backtest.py tests/test_download_option_dailies.py tests/test_evalue_fdr.py tests/test_tharp_random_entry.py tests/test_wheel_1dte.py tests/test_tharp_sr_replication.py tests/test_cup_handle_scan.py tests/test_intraday_continuation.py tests/test_minute_archive.py --cov=. --cov-branch -v
+        run: pytest tests/test_cc_backtest.py tests/test_download_option_dailies.py tests/test_evalue_fdr.py tests/test_tharp_random_entry.py tests/test_wheel_1dte.py tests/test_tharp_sr_replication.py tests/test_cup_handle_scan.py tests/test_intraday_continuation.py tests/test_minute_archive.py -n auto -q
       # Smoke test: run the actual backtest against the committed MSFT CSV to
       # catch breakage in the main entry point the unit tests might miss
       # (CSV parsing, __main__ wiring, print formatting).
