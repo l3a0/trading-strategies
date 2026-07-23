@@ -430,8 +430,21 @@ class TestValueDetachments:
                             lambda: {'XXX': ('2013-01-02',)})
         assert ma.return_break_indices('XXX', dates).tolist() == [1]
 
-    def test_the_three_hand_signed_breaks_still_resolve(self):
+    def test_hand_signed_breaks_and_blended_events_resolve(self):
         import pipeline.minute_archive as ma
-        assert set(ma.RETURN_BREAKS) == {'MO', 'ROK', 'WY'}
+        # the pure detachments plus the blended reverse-split+spin-off pair
+        assert {'MO', 'ROK', 'WY'} <= set(ma.RETURN_BREAKS)
+        assert ma.RETURN_BREAKS.get('HLT') == ('2017-01-04',)   # + 1-for-3
+        assert ma.RETURN_BREAKS.get('MSI') == ('2011-01-04',)   # + 1-for-7
         d = ma.load_detachments()
         assert 'ABT' in d and '2013-01-02' in d['ABT']   # AbbVie
+
+    def test_blended_events_are_in_both_split_table_and_return_breaks(self):
+        import pipeline.minute_archive as ma
+        # a blended reverse-split-and-spin-off adjusts (split table) AND is
+        # a return break (RETURN_BREAKS) — the two halves of one event
+        s = ma.load_splits()
+        for t, d in (('HLT', '2017-01-04'), ('MSI', '2011-01-04')):
+            assert d in {x for x, _ in s[t]}, f'{t} reverse split missing'
+            assert d in ma.RETURN_BREAKS[t], f'{t} return break missing'
+            assert d not in ma.load_detachments().get(t, ())  # not double-filed

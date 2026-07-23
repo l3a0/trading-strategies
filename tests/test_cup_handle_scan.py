@@ -385,4 +385,7 @@ class TestReturnBreakGuard:
         dates = np.array(['2010-07-19', '2010-07-20', '2010-07-21'])
         assert return_break_indices('WY', dates).tolist() == [1]
         assert return_break_indices('AAPL', dates).tolist() == []
-        assert set(RETURN_BREAKS) == {'MO', 'ROK', 'WY'}
+        # RETURN_BREAKS holds the pure detachments (MO/ROK/WY) plus the
+        # blended reverse-split-and-spin-off events (HLT/MSI); the wider
+        # detachment set lives in the committed CSV
+        assert {'MO', 'ROK', 'WY'} <= set(RETURN_BREAKS)

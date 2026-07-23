@@ -174,6 +174,35 @@ RESOLVED_CLIFFS = {
         'merchant liquidity crisis, and it kept falling to $1.20 the next '
         'session; all three sources agree to the cent and WMB has only 13 '
         'mismatch days in 6,676 sessions (owner-signed 2026-07-22)',
+    # ---- value detachments surfaced by the split reclassification ----
+    # These are spin-offs: the price step is REAL (value left the share)
+    # so the rows are KEPT and the cliff is resolved, and each is ALSO a
+    # return break via value_detachments_2026-07.csv. No split factor is
+    # added because the share count did not change (owner-signed
+    # 2026-07-22, researched to primary filings + adversarial review).
+    ('ABT', '2013-01-02'):
+        'the AbbVie (ABBV) spin-off, ex 2013-01-02: 1 ABBV per 1 ABT. The '
+        'factor was applying as a 2:1 split, halving every pre-2013 Abbott '
+        'price ($65.47 shown as $31.41); now as-traded and a return break',
+    ('DD', '2025-11-03'):
+        'the Qnity Electronics spin-off, ex 2025-11-03: 1 Qnity share per '
+        '2 DD (-42% seam $81.65 -> $34.68, matched by 0.5 x Q close). NOT '
+        "the 1-for-3 reverse split, which is separately dated 2026-06-24 "
+        'in the split table',
+    ('DELL', '2021-11-02'):
+        'the VMware spin-off, ex 2021-11-02 after a due-bill period: '
+        '0.440626 VMW per DELL (-51% seam $111.51 -> $54.61, matched by '
+        'the VMW ex-dividend value)',
+    ('EBAY', '2015-07-20'):
+        'the PayPal spin-off, ex-distribution 2015-07-20: 1 PYPL per 1 '
+        'EBAY (-57% seam $66.13 -> $28.60, matched by PYPL first-day value)',
+    ('NI', '2015-07-02'):
+        'the Columbia Pipeline Group spin-off, ex 2015-07-02: 1 CPGX per '
+        '1 NI (share count unchanged; no split factor)',
+    # a genuine repricing kept as-is (survives the ARWR reverse-split fix)
+    ('ARWR', '2016-11-30'):
+        'real event: a single-name repricing, not a corporate action; the '
+        'series joins cleanly on either side (owner-signed 2026-07-22)',
 }
 
 # §2 hand-resolutions, owner-signed 2026-07-21: START CLIPS for tickers
@@ -428,6 +457,34 @@ TICKER_START_CLIPS = {
     # insurance broker. The snapshot's 0.3775 factor is Weight Watchers'
     # and falls pre-window, inert (owner-signed 2026-07-22)
     'WTW': '2019-04-22',
+    # ---- ticker-reuse clips surfaced in the S&P 400 / Nasdaq-100 sweep ----
+    # pre-2018 rows are the ORIGINAL BJ's Wholesale (taken private 2011,
+    # last session 2011-09-30 at $51.23); the RE-IPO'd BJ's Wholesale Club
+    # Holdings began regular-way NYSE trading 2018-06-28 at $22.02
+    # (owner-signed 2026-07-22)
+    'BJ': '2018-06-28',
+    # pre-2018 rows are a different company on the reused symbol; Pinduoduo
+    # (PDD Holdings) began regular-way Nasdaq trading 2018-07-26 at $26.59,
+    # after our tape's predecessor ends 2010-08-20 at $9.98 (owner-signed
+    # 2026-07-22)
+    'PDD': '2018-07-26',
+    # pre-2026 rows are a predecessor on the reused symbol ending 2026-04-06
+    # at $21.98; the current SPCX listing began 2026-06-12 at $161.59
+    # (owner-signed 2026-07-22)
+    'SPCX': '2026-06-12',
+    # AA and ACI: the two lineage clips researched with an adversarial
+    # refute pass earlier in the same session (owner-signed 2026-07-22).
+    # AA — Alcoa Inc RENAMED itself Arconic and kept the registrant (CIK
+    # 4281, now HWM); the NEW Alcoa Corporation (CIK 1675149) took the AA
+    # symbol at regular-way open 2016-11-01. Both the 2000 2:1 and the
+    # 2016 1-for-3 reverse belong to the company that is now HWM, so no
+    # split row is added; the clip clears both flags (seam $28.72 ->
+    # $23.00 is economically whole: ARNC $22.24 + 1/3 x $22.10)
+    'AA': '2016-11-01',
+    # ACI — Arch Coal's tape dies at $0.83 on 2016-01-08 (three days before
+    # its Chapter 11); Albertsons IPO'd onto the vacated symbol 2020-06-26
+    # at $15.45. A 4.5-year gap separates the two companies
+    'ACI': '2020-06-26',
 }
 
 # §2 hand-resolutions, owner-signed 2026-07-21: DROP WINDOWS — spans
@@ -467,6 +524,14 @@ TICKER_DROP_WINDOWS = {
     # just under the flag thresholds. Dropping it joins $39.14 -> $39.26,
     # a 0.3% step (owner-signed 2026-07-22)
     'USB': [('2023-07-21', '2023-07-21')],
+    # ASML's Oct-2007 minute tape is garbage: after the 3:1 split is
+    # applied, closes thrash between $2.91 and $148.03 around a stable
+    # ~$33 level for 18 trading days. The window ENDS 2007-10-26 — the
+    # 2007-10-29 flag is the EXIT ($35.25, sitting between the clean
+    # $32.86 and the following $34.99), not a corrupt day, so dropping
+    # only through 10-26 joins $32.86 -> $35.25 and clears every flag
+    # (the TFC boundary lesson) (owner-signed 2026-07-22)
+    'ASML': [('2007-10-01', '2007-10-26')],
 }
 
 
@@ -517,6 +582,18 @@ RETURN_BREAKS: dict[str, tuple[str, ...]] = {
     # the REIT-conversion E&P purge dividend: -61.9% ($41.84 -> $15.93)
     # against $26.46341416/share paid ~10% cash / ~90% stock
     'WY': ('2010-07-20',),
+    # BLENDED events: a reverse split AND a spin-off on the same day. The
+    # reverse split (a share-count change) lives in the split table and
+    # adjusts the price; the residual is the spin-off, a return break the
+    # split factor cannot express. So the date is in BOTH the split table
+    # and here — the two mechanisms handle the two halves (owner-signed
+    # 2026-07-22, verified against the tape + primary filings).
+    # Hilton's 1-for-3 reverse + Park Hotels (PK) & Hilton Grand Vacations
+    # (HGV) spin-offs, 2017-01-04:
+    'HLT': ('2017-01-04',),
+    # Motorola Solutions' 1-for-7 reverse + the Motorola Mobility (MMI)
+    # spin-off, 2011-01-04:
+    'MSI': ('2011-01-04',),
 }
 
 
