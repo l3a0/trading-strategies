@@ -277,6 +277,15 @@ The detector is falsified first, as its own deliverable:
   split reclassification — the scale-invariance of the shape rules made
   the evaluation set stable through convention (a).
 
+  ![A 5x4 grid of the twenty highest-volume-surge cup-and-handle detections across the S&P 500, from ISRG (12.4x) to GM (5.3x). Each panel plots price ending at the breakout day with a green up-triangle, the cup span shaded blue and the handle span shaded orange, the left rim / bottom / right rim marked and the handle-high breakout level dashed. Every formation shows a prior uptrend, a rounded U-dip, a recovery to the rim and a short quiet handle; none is a vertical split-jump or a corrupt spike.](figures/cup_handle_eyeball.png)
+
+  *The §4 eyeball pass. Twenty cups, no artifacts: after the split
+  reclassification the highest-surge breakouts are real O'Neil bases, not
+  adjustment glitches — the check that clears the detector for step 4.
+  Each panel stops AT its breakout day, so the figure shows what the
+  buyer saw and nothing after, keeping returns unseen until the
+  `--evaluate` gate.*
+
 ### Amendment 1 — the band was mis-specified; no constant moves (owner-signed 2026-07-22)
 
 This is the one sanctioned amendment round. **It moves zero constants.**
