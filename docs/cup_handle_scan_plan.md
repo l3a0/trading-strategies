@@ -266,7 +266,25 @@ The detector is falsified first, as its own deliverable:
   breakout annotated, **clipped at the breakout day** (the right edge
   is `t`; no post-breakout path is rendered, so no return is seen
   before §10 step 4). A human looks at it; a detector nobody has
-  looked at is not a detector.
+  looked at is not a detector. **DONE 2026-07-23**
+  (`engine/cup_handle_figure.py` → `docs/figures/cup_handle_eyeball.png`,
+  owner-signed): all twenty are recognizable cups — a rounded U-dip, a
+  recovery to the rim, a short quiet handle, a volume breakout — with no
+  split-jump, corrupt-spike, or noise artifact among the top surges (the
+  strongest confirmation the split hygiene held). The shallowest two
+  (AXON 2023, EME 2017) sit at the roundness floor, admissible bases
+  rather than failures. The detection count is 432, unchanged by the
+  split reclassification — the scale-invariance of the shape rules made
+  the evaluation set stable through convention (a).
+
+  ![A 5x4 grid of the twenty highest-volume-surge cup-and-handle detections across the S&P 500, from ISRG (12.4x) to GM (5.3x). Each panel plots price ending at the breakout day with a green up-triangle, the cup span shaded blue and the handle span shaded orange, the left rim / bottom / right rim marked and the handle-high breakout level dashed. Every formation shows a prior uptrend, a rounded U-dip, a recovery to the rim and a short quiet handle; none is a vertical split-jump or a corrupt spike.](figures/cup_handle_eyeball.png)
+
+  *The §4 eyeball pass. Twenty cups, no artifacts: after the split
+  reclassification the highest-surge breakouts are real O'Neil bases, not
+  adjustment glitches — the check that clears the detector for step 4.
+  Each panel stops AT its breakout day, so the figure shows what the
+  buyer saw and nothing after, keeping returns unseen until the
+  `--evaluate` gate.*
 
 ### Amendment 1 — the band was mis-specified; no constant moves (owner-signed 2026-07-22)
 
@@ -475,9 +493,13 @@ pattern with pins.
   cluster verdicts, and the ablations. The data-layer half (aggregation,
   split adjustment, the rulings, the cross-check) moved with its code to
   `tests/test_minute_archive.py`; both run in CI.
-- **Figures**: the §4 eyeball figure via
-  `search/make_exploration_figures.py` (regenerable, committed PNG,
-  clipped at the breakout day).
+- **Figures**: the §4 eyeball figure via `engine/cup_handle_figure.py`
+  (regenerable, committed PNG, clipped at the breakout day). Located
+  beside the detector rather than in the plan's originally-named
+  `search/make_exploration_figures.py`, which lives in the chain-store
+  data world; keeping the minute-archive figure with its own detector
+  avoids coupling two disjoint domains (a location note, not a
+  methodology change — the §2-to-`pipeline` move set the precedent).
 - **Results surface**: a `docs/explorations.md` entry.
 - **Plumbing**: CLAUDE.md symbol regex, README rows; the synthetic
   layer rides the CI engine job.
