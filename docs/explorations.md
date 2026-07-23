@@ -1162,3 +1162,74 @@ it is a reason not to initiate into one.
   call wing — promising, not a confirmed edge. Corrected numbers and the rf-base
   fix are in [vol_premium.md](vol_premium.md); the put side — where the premium
   actually lives — is blocked on a put-inclusive data fetch.
+
+## The cup and handle, counted across the S&P 500 — WORSE THAN RANDOM AT EVERY HORIZON (2026-07-23)
+
+**Epistemic class: exploratory.** Sample-spent, kill-or-justify, never a
+registered verdict — the sibling of the support/resistance replication
+above. Survivorship-flattered by construction (today's 502 constituents,
+the winners) and the verdict of one frozen detector, one point in a large
+definition space. Both caps are permanent; see
+[cup_handle_scan_plan.md](cup_handle_scan_plan.md).
+
+**The claim.** O'Neil's flagship base-and-breakout: a stock carves a
+months-long rounded cup, drifts down a week or two in quiet volume (the
+handle), then breaks above the handle high on a volume surge — the buy
+signal. Do those breakouts, detected by frozen mechanical rules, beat
+entering on random days? The committed prior said no — the
+entry-conditioning family was already 0-of-6 (support/resistance's
+six-signal batch, the wheel's up-day gate) — and the pattern's one honest
+hope was **universe**: O'Neil's mechanism is claimed for single growth
+stocks, not the mean-reverting index ETFs everything else ran on. The
+S&P 500 minute archive gives it \~500 single names × \~26 years of daily
+bars, pooled, with real statistical power.
+
+**The verdict: it does not beat random entry — it is worse than random.**
+432 detections across 501 names (rate 0.40/ticker-decade). At every
+horizon the breakout's cluster win rate sits BELOW the matched-count
+random-entry null, with p = 1.0 — the random null beats the observed in
+every one of 10,000 resamples.
+
+| Horizon | Breakout win% | Random-entry null% | base rate | p |
+| --- | --- | --- | --- | --- |
+| 5 days | 53.4% | 61.8% | 53.9% | 1.0 |
+| 10 days | 55.5% | 65.1% | 55.4% | 1.0 |
+| 15 days | 57.3% | 66.1% | 56.3% | 1.0 |
+| 20 days | 54.9% | 65.8% | 57.0% | 1.0 |
+| 60 days | 59.5% | 69.1% | 60.6% | 1.0 |
+| 120 days | 63.3% | 71.9% | 63.8% | 1.0 |
+
+The raw returns are positive (0.3% at a week up to 7% at 120 days) — but
+that is just bull-market drift on today's survivors, and random entry on
+the same names captures MORE of it. The observed win rate barely differs
+from the unconditional base rate (54.9% vs 57.0% at 20 days); the
+*conditioning* adds nothing and, by entering right after a run-up to a new
+high, times slightly worse than a coin flip on the calendar.
+
+**The volume ablation says the same thing.** Strip the breakout-volume
+trigger and you admit \~3× more signals (1,267 clusters at 20 days) and get
+an identical result — observed below null, p = 1.0. The volume surge is not
+the culprit; the whole buy-the-breakout concept underperforms.
+
+**Why the result is strong: it died on its best-hope universe.** Across
+\~500 single names, pooled with real power (382 clusters at the headline
+horizons, not underpowered), the breakout still loses to random. The
+universe hypothesis is refuted, not left open. This makes the cup and
+handle the **seventh** member of the entry-conditioning family to fall to
+random entry — conditioning entry on recent strength has the sign
+backwards, exactly what the committed prior predicted, now confirmed on the
+widest, cleanest test the repo can run.
+
+![A 5x4 grid of the twenty highest-volume-surge cup-and-handle detections across the S&P 500, from ISRG to GM. Each panel plots price ending at the breakout day with a green up-triangle, the cup shaded blue and the handle shaded orange; every formation shows a prior uptrend, a rounded U-dip, a recovery to the rim and a short quiet handle.](figures/cup_handle_eyeball.png)
+
+*The §4 eyeball pass, signed off before any return was computed: twenty
+real cups, no split-jump or corrupt-spike artifacts among the top surges.
+The detector finds genuine O'Neil bases — they simply do not mark a better
+entry than the calendar.*
+
+Pinned by `TestCupHandleSp500Pins` in
+[tests/test_cup_handle_scan.py](../tests/test_cup_handle_scan.py)
+(dataset-gated, skips in CI — the S&P 500 minute archive is personal and
+gitignored). The class runs a reduced null count for speed; the observed
+rates it pins are resample-independent and the verdict (obs < null,
+p = 1.0) is robust. Headline figures above are the published B=10,000 run.

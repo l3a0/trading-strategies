@@ -414,7 +414,13 @@ def _era_of(date: str) -> int:
     return -1
 
 
-def run_scan(tickers: Sequence[str], evaluate: bool = False) -> dict[str, Any]:
+def run_scan(tickers: Sequence[str], evaluate: bool = False,
+             b: int = B_RESAMPLES) -> dict[str, Any]:
+    # `b` is the null resample count, threaded to cluster_null_p; the default
+    # B_RESAMPLES=10000 is the published figure. The dataset-gated pin test
+    # passes a smaller b for speed — the observed win rates, detections, and
+    # base rates it pins are b-INDEPENDENT, and the verdict (obs < null,
+    # p==1.0, survives=False) is robust to b (obs sits ~11pp below the null).
     splits = load_splits()
     failed = failed_tickers()
     data: dict[str, dict[str, np.ndarray]] = {}
@@ -483,7 +489,7 @@ def run_scan(tickers: Sequence[str], evaluate: bool = False) -> dict[str, Any]:
                                       len(pooled_data[t]['close']))
                       for t in pooled_data}
             clusters, n_broken = build_clusters(trades, pooled_data, hz)
-            e = cluster_null_p(clusters, pooled_data, hz)
+            e = cluster_null_p(clusters, pooled_data, hz, b=b)
             # §5 reported diagnostics: pooled per-trade win rate, member
             # counts, per-ticker and per-era splits, survivorship bracket
             breaks = _break_map(pooled_data)
@@ -542,7 +548,7 @@ def run_scan(tickers: Sequence[str], evaluate: bool = False) -> dict[str, Any]:
                       for t in pooled_data}
             clusters, n_broken = build_clusters(trades, pooled_data, hz)
             abl = cluster_null_p(clusters, pooled_data, hz,
-                                 variant='no_volume')
+                                 variant='no_volume', b=b)
             abl['return_break_trades_dropped'] = n_broken
             out['ablation_no_volume'][f'H{hz}'] = abl
     return out
