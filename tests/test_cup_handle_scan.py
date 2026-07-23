@@ -389,3 +389,42 @@ class TestReturnBreakGuard:
         # blended reverse-split-and-spin-off events (HLT/MSI); the wider
         # detachment set lives in the committed CSV
         assert {'MO', 'ROK', 'WY'} <= set(RETURN_BREAKS)
+
+
+class TestEyeballFigureClip:
+    """The §4 eyeball figure must never render a bar past the breakout day
+    t — that clip is the hygiene guarantee that no return leaks before
+    §10 step 4. Pinned with a recording stub so a future refactor can't
+    silently widen the window."""
+
+    def test_panel_never_plots_past_the_breakout(self):
+        import numpy as np
+        from engine.cup_handle_figure import _panel
+
+        class RecAx:
+            def __init__(self): self.max_x = -1
+            def plot(self, x, *a, **k):
+                xs = np.atleast_1d(x)
+                self.max_x = max(self.max_x, int(np.max(xs)))
+            def axvspan(self, a, b, **k): self.max_x = max(self.max_x, b)
+            def axhline(self, *a, **k): pass
+            def set_title(self, *a, **k): pass
+            def tick_params(self, *a, **k): pass
+            def margins(self, *a, **k): pass
+
+        c = np.linspace(100, 200, 900)
+        d = np.array([f'2020-{1 + i % 12:02d}-{1 + i % 28:02d}' for i in range(900)])
+        hit = {'l': 400, 'r': 700, 'b': 550, 'h0': 720, 't': 740,
+               'depth': 0.2, 'roundness': 0.3, 'date': '2020-01-01',
+               'surge': 3.0}
+        ax = RecAx()
+        _panel(ax, 'XXX', hit, c, d)
+        assert ax.max_x <= hit['t'], f'plotted past breakout: {ax.max_x} > {hit["t"]}'
+
+    def test_surge_is_trigger_over_trailing_average(self):
+        import numpy as np
+        from engine.cup_handle_figure import _surge
+        from engine.cup_handle_scan import VOL_AVG_WINDOW
+        v = np.ones(VOL_AVG_WINDOW + 5)
+        v[VOL_AVG_WINDOW + 2] = 4.0            # a 4x breakout-day spike
+        assert _surge(v, VOL_AVG_WINDOW + 2) == pytest.approx(4.0)
