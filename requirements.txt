@@ -5,6 +5,13 @@ yfinance
 pytest
 pytest-cov
 pytest-xdist
-ruff
-pyright
+# The linters are PINNED while everything else floats, on purpose: a new
+# ruff/pyright release adds rules that flag previously-clean code and breaks
+# CI with no code change (ruff 0.16.0 did exactly this on 2026-07-23 —
+# EXE001/RUF046 on files untouched for months). Bump these deliberately,
+# clearing the new findings in the same commit, rather than have a linter
+# release fail an unrelated PR. numpy/pandas/etc. don't have this failure
+# mode, so they stay unpinned.
+ruff==0.15.16
+pyright==1.1.411
 pandas-stubs
