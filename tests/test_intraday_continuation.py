@@ -29,6 +29,9 @@ import pytest
 
 from common.paths import data_path
 from engine.intraday_continuation import (
+    CAPTURE_BRACKETS,
+    CAPTURE_FILLS,
+    CAPTURE_RESULTS_FILE,
     CHART_SCREEN,
     FIRST_BAR,
     HORIZONS,
@@ -39,10 +42,13 @@ from engine.intraday_continuation import (
     SESSION_BARS,
     TRIGGER_MOM6,
     VOL_WINDOWS,
+    _bracket_to_close,
     _forward_extremes,
     _leave_one_out,
     bar_features,
     breakout_mask,
+    build_capture_results,
+    capture_ticker,
     ema,
     five_minute_bars,
     forward_paths,
@@ -50,6 +56,7 @@ from engine.intraday_continuation import (
     prior_mean,
     prior_median_columns,
     realized_vol,
+    run_capture,
     run_scan,
     session_bootstrap,
     two_way_excess,
@@ -590,3 +597,147 @@ class TestContinuationArchiveRoundTrip:
         shutil.copy(src, os.path.join(out, 'ZZZZ.npz'))
         with pytest.raises(ValueError, match='margins disagree'):
             load_scan(out)
+
+
+# ------------------------------------------------------ the capture addendum
+
+class TestCaptureMechanics:
+    """The direction-free bracket and its two fill conventions, on paths
+    small enough to check by hand."""
+
+    def _path(self, moves):
+        """A forward high/low/close path from a list of (h, l, c) triples."""
+        arr = np.array(moves, dtype=float)
+        return arr[:, 0], arr[:, 1], arr[:, 2]
+
+    def test_no_touch_returns_none(self):
+        hs, ls, cs = self._path([(100.4, 99.7, 100.0)] * 5)
+        assert _bracket_to_close(hs, ls, cs, 100.0, 100.1, 0.01, 'barrier') is None
+
+    def test_upside_touch_held_to_close_long(self):
+        # bar 1 tags +1%, session closes +2% -> long from 101 to 102
+        hs, ls, cs = self._path([(100.5, 99.8, 100.2), (101.5, 100.6, 101.2),
+                                 (102.2, 101.5, 102.0)])
+        r = _bracket_to_close(hs, ls, cs, 100.0, 102.0, 0.01, 'barrier')
+        assert r == pytest.approx(102.0 / 101.0 - 1)
+
+    def test_downside_touch_is_a_short(self):
+        hs, ls, cs = self._path([(100.2, 99.5, 99.8), (99.6, 98.5, 98.7),
+                                 (98.8, 97.9, 98.0)])
+        r = _bracket_to_close(hs, ls, cs, 100.0, 98.0, 0.01, 'barrier')
+        # short from 99, close 98 -> +(99-98)/99
+        assert r == pytest.approx(-1 * (98.0 / 99.0 - 1))
+
+    def test_touch_fill_differs_from_barrier_fill(self):
+        # the triggering bar closes ABOVE the +1% barrier: chasing costs
+        # the long a worse entry (101.4 vs 101.0), so a smaller gain
+        hs, ls, cs = self._path([(100.4, 99.9, 100.3), (101.6, 100.7, 101.4),
+                                 (102.0, 101.2, 102.0)])
+        bar = _bracket_to_close(hs, ls, cs, 100.0, 102.0, 0.01, 'barrier')
+        touch = _bracket_to_close(hs, ls, cs, 100.0, 102.0, 0.01, 'touch')
+        assert bar is not None and touch is not None
+        assert touch < bar
+        assert touch == pytest.approx(102.0 / 101.4 - 1)
+
+    def test_a_both_barriers_bar_is_booked_adverse(self):
+        # one bar spans both +/-1%; unresolvable, so it must NOT be booked
+        # as the favourable side
+        hs, ls, cs = self._path([(101.5, 98.5, 100.0), (100.0, 99.0, 99.5)])
+        r_up = _bracket_to_close(hs, ls, cs, 100.0, 101.0, 0.01, 'barrier')
+        # side is forced short (adverse tie), entry 99, close 101 -> a loss
+        assert r_up is not None and r_up < 0
+
+
+@pytest.mark.skipif(
+    __import__('engine.intraday_continuation', fromlist=['archive_path'])
+    .archive_path('NVDA') is None,
+    reason='minute archive absent (personal, gitignored)')
+class TestCaptureArchiveRoundTrip:
+    """The capture path runs on real tape. Not a headline pin — the
+    committed results file (full universe) carries the numbers."""
+
+    def test_capture_writes_and_merges(self, tmp_path):
+        out = str(tmp_path / 'cap')
+        rows = run_capture(['NVDA', 'AAPL'], out)
+        assert {r['ticker'] for r in rows} == {'NVDA', 'AAPL'}
+        res = build_capture_results(out)
+        assert res['n_names'] == 2
+        assert len(res['cells']) == len(CAPTURE_BRACKETS) * len(CAPTURE_FILLS)
+        for c in res['cells']:
+            assert c['n'] > 0
+            assert c['bracket_n'] in CAPTURE_BRACKETS
+            assert c['fill'] in CAPTURE_FILLS
+
+    def test_per_ticker_files_are_deterministic(self, tmp_path):
+        # the per-ticker RNG is seeded from the name, so two runs match
+        a, b = str(tmp_path / 'a'), str(tmp_path / 'b')
+        capture_ticker('AAPL', a)
+        capture_ticker('AAPL', b)
+        za = np.load(os.path.join(a, 'AAPL.npz'))
+        zb = np.load(os.path.join(b, 'AAPL.npz'))
+        for k in za.files:
+            if za[k].dtype.kind == 'f':
+                assert np.allclose(za[k], zb[k], equal_nan=True)
+            else:
+                assert np.array_equal(za[k], zb[k])
+
+
+class TestCaptureResults:
+    """Pins the committed capture run so the addendum's prose cannot drift.
+
+    The finding, in order: (1) a generic bracket held to the close captures
+    essentially nothing, so the control is a real falsification; (2) the
+    breakout bracket DOES beat that control on optimistic fills; (3) but a
+    realistic touch fill roughly HALVES the tight-bracket edge and knocks
+    the wider brackets out of significance; and (4) what survives — the
+    tight bracket at ~+6.5 bp — sits inside a large-cap round trip, so it
+    is measured, not tradable.
+    """
+
+    @pytest.fixture(scope='class')
+    def cap(self):
+        p = data_path(CAPTURE_RESULTS_FILE)
+        if not os.path.exists(p):
+            pytest.skip(f'{CAPTURE_RESULTS_FILE} not committed yet')
+        with open(p) as f:
+            return json.load(f)
+
+    def _by(self, cap):
+        return {(c['bracket_n'], c['fill']): c for c in cap['cells']}
+
+    def test_the_panel_is_the_full_universe(self, cap):
+        assert cap['n_names'] > 400
+        assert cap['sessions'] > 1500
+
+    def test_random_entry_captures_essentially_nothing(self, cap):
+        # the control is the falsification: a generic bracket held to close
+        # must not be broadly profitable, or the event adds nothing
+        for c in cap['cells']:
+            assert abs(c['control_bp']) < 6.0
+
+    def test_the_tight_bracket_beats_random_on_optimistic_fills(self, cap):
+        # on the exact-level (barrier) fill the tight bracket clears zero
+        # cleanly: the range-expansion edge over random entry is real
+        c = self._by(cap)[(min(CAPTURE_BRACKETS), 'barrier')]
+        assert c['excess_bp'] > 8.0
+        assert c['ci_bp'][0] > 0            # 95% interval excludes zero
+        assert c['p'] < 0.01
+
+    def test_a_realistic_fill_roughly_halves_the_tight_edge(self, cap):
+        # the whole reason for the fill test: chasing the fast bar (touch
+        # fill) cuts the tight-bracket excess to about half, though it
+        # stays positive rather than collapsing
+        by = self._by(cap)
+        barrier = by[(min(CAPTURE_BRACKETS), 'barrier')]['excess_bp']
+        touch = by[(min(CAPTURE_BRACKETS), 'touch')]['excess_bp']
+        assert 0 < touch < 0.7 * barrier
+
+    def test_the_surviving_edge_is_below_a_large_cap_round_trip(self, cap):
+        # the only realistic-fill cell that stays significant is the tight
+        # bracket, and its excess sits inside the 8-15 bp cost band, so the
+        # verdict is cost-bound: measured, not tradable
+        sig_touch = [c for c in cap['cells']
+                     if c['fill'] == 'touch' and c['p'] < 0.05]
+        assert sig_touch                       # something is significant
+        for c in sig_touch:
+            assert c['excess_bp'] < 8.0        # below the low end of costs
