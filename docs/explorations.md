@@ -27,6 +27,135 @@ up, so be cautious" therefore skips the wrong cycles.
 
 ---
 
+## Volume-profile reversal — MEASURED, no edge (2026-07-24)
+
+**The idea.** Draw a volume profile — the histogram of how much volume traded
+at each price — and you get three levels: the **point of control** (POC, the
+busiest price), and the **value-area** edges above and below it (the band where
+about 70% of volume changed hands). The trade a chart tempts you into: when
+price pushes up to the top edge, **short** it; when it sinks to the bottom
+edge, **buy** it; bet on a snap back toward the POC. Is that snap-back a real
+edge on NVDA, or just a story?
+
+**The look-ahead trap that makes this hard.** A charting package draws the
+profile over the *whole* window on screen — including bars that print *after*
+the moment you would have traded. "Short the top" using a profile that already
+knows where the top ended up is the single reason these backtests look
+brilliant and die live. Every profile here is built **only from bars before the
+signal**, two ways, both searched as grid cells: a **prior-window** profile
+frozen from the prior 10–20 sessions (its value area spans days, so its POC is
+days away — a multi-day swing, held 5–10 days), and a **developing** profile
+rebuilt from *today's* bars so far (its POC is minutes away — an intraday trade
+held to the close).
+
+**How it was tested.** NVDA 5-minute bars, split-adjusted (the 2024 ×10 and
+2021 ×4 splits otherwise scatter volume into the wrong price bins), 2016–2026.
+The honest question is never "did the long make money" — NVDA rips upward, so
+any long looks good. Each trade is scored against a **matched random-entry
+control**: the same time of day, a *random other* session, the same
+target/stop bracket. The event minus its controls is the **excess** — what
+reaching the profile edge adds over trading that bracket at a random moment.
+Two readouts: the drift-stripped return (the money) and the **first-touch race**
+(does price reach the POC before the stop more often than the control does? —
+the mechanism). Inference resamples calendar sessions, significance is a
+Newey-West HAC t-stat, and the whole four-cell grid is judged together by
+Benjamini-Yekutieli so sweeping the knobs cannot manufacture a winner. Pinned
+in `TestNvdaVolumeProfileReversal`.
+
+**The verdict — no edge, and the intraday fade is backwards.** Zero of the four
+cells survive the false-discovery gate, at either fill or on the train-only
+span. The prior-window swing is simply null. The developing intraday fade is
+**significantly wrong-signed**: it *loses* to a random-time entry with the same
+bracket (realistic "touch" fills).
+
+| Cell (2016–2026, realistic fills) | trades | excess vs. random | HAC t | reaches POC before stop (event vs. control) |
+| --- | --- | --- | --- | --- |
+| prior-window, 20-session, 10-day hold | 1,671 | +1.4 bp | +0.04 | 32.9% vs 32.4% |
+| prior-window, 10-session, 5-day hold | 1,863 | −9.4 bp | −0.56 | 34.0% vs 34.4% |
+| developing, intraday to close (≥12 bars) | 3,992 | **−2.9 bp** | **−2.31** | **54.3% vs 51.7%** |
+| developing, intraday to close (≥24 bars) | 3,430 | −1.7 bp | −1.15 | 51.2% vs 48.4% |
+
+**The reversion is real but empty.** Look at the last column: at the developing
+edge, price *does* reach the POC before the stop more often than a random entry
+does (54.3% vs 51.7%, a gap the session bootstrap calls significant). The
+snap-back exists. But it does not pay — the reversion wins are small (the POC is
+close) and the occasional stop-out is large (a full value-area width beyond the
+edge), so a higher hit-rate still nets **negative** expectancy. Under optimistic
+exit fills the developing edge is flat (about +0.1 bp), so what little the fade
+"earns" gross is entirely eaten by realistic exit fills. A high win-rate with a
+losing bottom line.
+
+**The trap this avoids.** Two of them. First, look-ahead: an all-window profile
+would have let the fade "see" the reversion it was betting on. Second, drift and
+hit-rate as false comfort — without the matched control the longs would have
+shown NVDA's upward drift as fake alpha, and stopping at the 54% hit-rate (a
+number that *feels* like an edge) would have missed that the payoffs make it a
+net loser. The edge is thin-volume territory precisely because price moved
+*through* it quickly, so it is at least as often a breakout to run with as a
+level to fade — which is why fading it is sign-backwards, the same lesson the
+[intraday-continuation scout](../engine/intraday_continuation.py) found from the
+other side.
+
+**What about the opposite side — riding the breakout instead of fading it?** The
+natural next thought: if fading the edge loses, bet the other way — reach the
+top, go *long* (ride the breakout); reach the bottom, go short. On the same
+NVDA data this looks great — the two developing continuation cells clear the
+false-discovery gate (excess about +2.5 / +3.2 bp, HAC t about +2.0 / +2.2, both
+"survivors"). But that edge is a mirage. Flipping the trade is just the reversion
+result with its sign flipped — the same numbers, the other jersey (a continuation
+trade's P&L is the negative of the fade's, save for the rare bar that engulfs
+both exit levels). Because the hypothesis was formed *after* seeing the fade lose
+on this exact data, its significance cannot be trusted. The honest test is
+out-of-sample: fit on 2016–2021, then confirm the survivor on the 2022–2026 span
+it never saw. It collapses — **+0.06 bp, HAC t = +0.03, p = 0.46**, dead. The
+fade's wrong-signedness was a 2016–2021 quirk, not a durable breakout edge; on
+fresh data neither side does anything. This is the double-dipping trap the
+holdout exists to catch, and it is pinned (`TestNvdaVolumeProfileReversal`)
+alongside the reversion result.
+
+**Across the whole market (S&P 500 + Nasdaq-100 + S&P 400).** One ticker cannot
+tell a real tilt from luck — NVDA's fade "significantly lost," and its flip
+"significantly won" then died out of sample. So I ran both experiments across
+all 915 names that have an intraday archive (501 S&P 500 + 103 Nasdaq-100 + 399
+S&P 400): about 3.3 million intraday trades and 1.3 million multi-day trades,
+pooled with the same drift-strip, session-clustered bootstrap, and out-of-sample
+split. Two effects emerge — both real, both stable in the 2022–2026 holdout, and
+**opposite in sign by horizon**:
+
+| Fade the edge (short the top / long the bottom, back to POC) | full era | 2022–26 holdout | what it means |
+| --- | --- | --- | --- |
+| intraday (developing profile) | −0.4 bp (t = −11) | −0.3 bp (t = −6) | fading loses → a whisper of *continuation* |
+| multi-day (prior-window profile, 10-day hold) | +5.9 bp (t = +7) | +11.6 bp (t = +9) | fading wins → weak *reversion* |
+
+Intraday, the market rides *through* the busy price a hair more often than it
+snaps back (continuation), by about four tenths of a basis point. Over the next
+5–10 days it does the opposite — it drifts back toward the busy price
+(reversion), by a few basis points, and that multi-day reversion is **strongest
+in the S&P 400 mid-caps** (up to about +20 bp in the holdout) and, unusually,
+*strengthens* out of sample.
+
+Both are real. Neither is a tradable edge. The t-stats hit double digits only
+because n is in the millions — with 3.3 million trades a mean of 0.4 bp is
+eleven standard errors from zero and still 0.4 bp, an order of magnitude below
+the spread you would cross to capture it. NVDA misled twice over: its −2.9 bp
+fade-loss was about seven times the market-wide average (idiosyncratic), and its
+lone out-of-sample "continuation survivor" was noise the cross-section washes
+away. The honest read: the volume-profile edge carries a genuine, persistent,
+but economically negligible tilt — intraday momentum, multi-day mean-reversion.
+Pinned in `TestVolumeProfileUniverse` against the committed
+`data/volume_profile_universe_results.json`.
+
+**Exploratory, not a registered verdict.** This spends the sample to *size* an
+effect, not to bless a strategy. The honesty rail is the time-axis holdout (fit
+2016–2021, confirm on 2022–2026, boundary embargoed so no train trade reads a
+holdout-span bar). On NVDA nothing survived it; across the universe the tiny
+effects above do — which is exactly why the effect *size*, not the survival, is
+the verdict. Nothing here clears costs by the margin a tradable edge needs; the
+mid-cap multi-day reversion is the one thread worth a real pre-registration, not
+a headline.
+
+---
+
 ## Post-rip cooldown — KILLED (2026-06-13)
 
 **The idea.** After a "rip" that causes a deep-in-the-money buyback or a

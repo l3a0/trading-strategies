@@ -68,3 +68,5 @@ data/intraday_continuation_scan/
 data/intraday_capture_scan/
 data/intraday_exit_scan/
 data/intraday_multiday_scan/
+# Volume-profile universe scan output (regenerable: python -m engine.volume_profile_reversal universe)
+data/volume_profile_universe_scan/

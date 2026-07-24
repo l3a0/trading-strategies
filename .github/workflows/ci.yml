@@ -81,7 +81,7 @@ jobs:
       # per-worker combine). Devs still get it locally via `pytest --cov`
       # (README). Verified: 374 pass / 1 skip under -n auto.
       - name: Engine tests
-        run: pytest tests/test_cc_backtest.py tests/test_download_option_dailies.py tests/test_evalue_fdr.py tests/test_tharp_random_entry.py tests/test_wheel_1dte.py tests/test_tharp_sr_replication.py tests/test_cup_handle_scan.py tests/test_intraday_continuation.py tests/test_minute_archive.py -n auto -q
+        run: pytest tests/test_cc_backtest.py tests/test_download_option_dailies.py tests/test_evalue_fdr.py tests/test_tharp_random_entry.py tests/test_wheel_1dte.py tests/test_tharp_sr_replication.py tests/test_cup_handle_scan.py tests/test_intraday_continuation.py tests/test_volume_profile_reversal.py tests/test_minute_archive.py -n auto -q
       # Smoke test: run the actual backtest against the committed MSFT CSV to
       # catch breakage in the main entry point the unit tests might miss
       # (CSV parsing, __main__ wiring, print formatting).
