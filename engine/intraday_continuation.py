@@ -63,6 +63,7 @@ import argparse
 import glob
 import json
 import os
+import zlib
 from typing import Any, Iterable, Sequence
 
 import numpy as np
@@ -121,6 +122,28 @@ MARGINS_FILE = '_margins.npz'
 # The published run, committed so the log entry's prose is pinned by a
 # test even though regenerating the panel needs the gitignored archive.
 RESULTS_FILE = 'intraday_continuation_results.json'
+
+# --- the capture addendum: can the direction-free range expansion be traded? --
+# The direction is null but the SIZE is not, so the natural follow-up is a
+# direction-free bracket (an OCO pair straddling the signal bar, whichever
+# side trades first). The question this layer answers is whether that
+# bracket beats bracketing the SAME NAME at a random moment, and whether
+# any edge survives a realistic fill. Its own scan directory and committed
+# results, separate from the continuation panel above.
+CAPTURE_DIR = 'intraday_capture_scan'
+CAPTURE_RESULTS_FILE = 'intraday_capture_results.json'
+# entry distance either side of the signal bar, in units of sigma30 (the
+# name's own trailing 30-minute return sigma), so the bracket is Tharp-N,
+# not a fixed percent that mis-scales a utility against NVDA.
+CAPTURE_BRACKETS = (0.5, 1.0, 2.0)
+CAPTURE_CONTROLS = 5          # random same-name/same-clock controls per event
+# The two fill conventions are the survival test. 'barrier' fills at the
+# exact touched level (optimistic); 'touch' fills at the triggering bar's
+# CLOSE, a market-on-touch proxy that charges the chase into the fast bar.
+# The gap between them is entry-fill optimism, and the events are precisely
+# the widest-range bars, so it is the one bias that could manufacture a
+# spurious edge.
+CAPTURE_FILLS = ('barrier', 'touch')
 EVENT_FEATURES = ('mom6', 'mom_open', 'brk2h', 'brkday', 'rvol', 'ext50',
                   'rsi', 'sigma', 'z6', 'dollar_volume')
 
@@ -765,6 +788,176 @@ def breadth(panel: dict[str, Any], mask: np.ndarray) -> np.ndarray:
     return (firing / eligible)[E['date'], E['clock'].astype(np.int64) - FIRST_BAR]
 
 
+# --------------------------------------------------------------- capture
+
+def _bracket_to_close(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
+                      px: float, eod: float, width: float,
+                      fill: str) -> float | None:
+    """One direction-free bracket, entered at first touch, held to the close.
+
+    A stop-entry sits ``width`` either side of the signal bar; whichever
+    side trades first is taken and the other cancelled, so the trade has
+    no directional view — it is a bet that the range EXPANDS. Returns the
+    signed return from entry to the session close, or ``None`` if neither
+    side was touched.
+
+    ``fill`` decides where the entry prints. ``'barrier'`` assumes the
+    exact level (optimistic); ``'touch'`` takes the triggering bar's
+    close, which in a fast up-bar sits beyond the level and charges the
+    chase. A bar that spans BOTH sides is unresolvable at this resolution
+    and is booked to the adverse side, never the favourable one.
+    """
+    up, dn = highs >= px * (1 + width), lows <= px * (1 - width)
+    far = 1 << 30
+    iu = int(np.argmax(up)) if up.any() else far
+    idn = int(np.argmax(dn)) if dn.any() else far
+    if iu == idn == far:
+        return None
+    side = 1 if iu < idn else -1
+    j = min(iu, idn)
+    entry = px * (1 + side * width) if fill == 'barrier' else float(closes[j])
+    if entry <= 0:
+        return None
+    return side * (eod / entry - 1)
+
+
+def capture_ticker(ticker: str, out_dir: str) -> dict[str, Any] | None:
+    """Every chart-like event's bracket P&L, plus matched random controls.
+
+    The control is Tharp's random entry, matched where it matters: the
+    SAME ticker, the SAME clock bar, a different session drawn at random,
+    and the bracket sized off THAT session's own sigma30 — what you would
+    actually have known at that moment. Each event gets ``CAPTURE_CONTROLS``
+    controls; their mean is the counterfactual the event is judged against.
+
+    Per-ticker RNG seeded from the ticker name, so a sharded run and a
+    single-process run produce byte-identical files. Writes ``{ticker}.npz``;
+    returns a small summary, or ``None`` when the archive is unusable.
+    """
+    path = archive_path(ticker)
+    if path is None:
+        return None
+    bars = five_minute_bars(path, SCAN_START, TICKER_START_CLIPS.get(ticker),
+                            TICKER_DROP_WINDOWS.get(ticker, []))
+    if bars is None or len(bars['dates']) < SIGMA_SESSIONS + 5:
+        return None
+    dates, C, Hi, Lo, nb = (bars['dates'], bars['close'], bars['high'],
+                            bars['low'], bars['n_bars'])
+    feat = bar_features(bars)
+    sig30 = feat['sigma'][:, 0] * np.sqrt(6)
+    eligible = np.nonzero((nb >= MIN_SESSION_BARS) & np.isfinite(sig30)
+                          & (sig30 > 0) & (dates >= HEADLINE_START))[0]
+    if len(eligible) < 30:
+        return None
+    sess, bar = np.nonzero(breakout_mask(feat, CHART_SCREEN))
+    bar = bar + FIRST_BAR
+    keep = (nb[sess] >= MIN_SESSION_BARS) & (dates[sess] >= HEADLINE_START)
+    sess, bar = sess[keep], bar[keep]
+    rng = np.random.default_rng(CONTINUATION_SEED ^ zlib.crc32(ticker.encode()))
+
+    keys = [f'{k}_{f}' for k in CAPTURE_BRACKETS for f in CAPTURE_FILLS]
+    ev = {k: [] for k in keys}
+    ct = {k: [] for k in keys}
+    ev_dates, ev_sig = [], []
+    for e in range(len(sess)):
+        d, b = int(sess[e]), int(bar[e])
+        s30 = sig30[d]
+        if not (np.isfinite(s30) and s30 > 0):
+            continue
+        hs, ls, cs = Hi[d, b + 1:], Lo[d, b + 1:], C[d, b + 1:]
+        if len(hs) < 2:
+            continue
+        px, eod = float(C[d, b]), float(C[d, -1])
+        pool = rng.choice(eligible, size=CAPTURE_CONTROLS * 3, replace=True)
+        controls = [int(x) for x in pool if int(x) != d][:CAPTURE_CONTROLS]
+        if len(controls) < 2:
+            continue
+        for k in CAPTURE_BRACKETS:
+            for f in CAPTURE_FILLS:
+                ev[f'{k}_{f}'].append(
+                    _bracket_to_close(hs, ls, cs, px, eod, k * s30, f))
+                cvals = []
+                for d2 in controls:
+                    s2 = sig30[d2]
+                    r = _bracket_to_close(Hi[d2, b + 1:], Lo[d2, b + 1:],
+                                          C[d2, b + 1:], float(C[d2, b]),
+                                          float(C[d2, -1]), k * s2, f)
+                    if r is not None:
+                        cvals.append(r)
+                ct[f'{k}_{f}'].append(np.mean(cvals) if cvals else np.nan)
+        ev_dates.append(dates[d])
+        ev_sig.append(s30)
+    if not ev_dates:
+        return None
+    payload: dict[str, Any] = dict(ticker=ticker,
+                                   dates=np.array(ev_dates),
+                                   sigma30=np.array(ev_sig, dtype=np.float32))
+    for k in keys:
+        payload[f'ev_{k}'] = np.array(ev[k], dtype=np.float64)
+        payload[f'ct_{k}'] = np.array(ct[k], dtype=np.float64)
+    os.makedirs(out_dir, exist_ok=True)
+    np.savez_compressed(os.path.join(out_dir, f'{ticker}.npz'), **payload)
+    return dict(ticker=ticker, events=len(ev_dates))
+
+
+def run_capture(tickers: Iterable[str], out_dir: str,
+                skip_existing: bool = True) -> list[dict[str, Any]]:
+    """Capture pass over a ticker list; resumable, so it can be sharded.
+
+    Each ticker's file is self-contained (its controls are same-ticker),
+    so subsets can run in parallel into one directory and be merged by
+    ``build_capture_results`` with no ordering dependence.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    rows = []
+    for t in sorted(tickers):
+        if skip_existing and os.path.exists(os.path.join(out_dir, f'{t}.npz')):
+            continue
+        r = capture_ticker(t, out_dir)
+        if r is not None:
+            rows.append(r)
+    return rows
+
+
+def build_capture_results(out_dir: str) -> dict[str, Any]:
+    """Merge the capture files and bootstrap the event-vs-control excess."""
+    files = sorted(glob.glob(os.path.join(out_dir, '*.npz')))
+    if not files:
+        raise FileNotFoundError(f'no capture files under {out_dir}')
+    keys = [f'{k}_{f}' for k in CAPTURE_BRACKETS for f in CAPTURE_FILLS]
+    ev = {k: [] for k in keys}
+    ct = {k: [] for k in keys}
+    dates, sig = [], []
+    for fpath in files:
+        z = np.load(fpath, allow_pickle=False)
+        dates.append(z['dates'])
+        sig.append(z['sigma30'])
+        for k in keys:
+            ev[k].append(z[f'ev_{k}'])
+            ct[k].append(z[f'ct_{k}'])
+    dates = np.concatenate(dates)
+    sig = np.concatenate(sig).astype(np.float64)
+    cells = []
+    for k in CAPTURE_BRACKETS:
+        for f in CAPTURE_FILLS:
+            e = np.concatenate(ev[f'{k}_{f}'])
+            c = np.concatenate(ct[f'{k}_{f}'])
+            ok = np.isfinite(e) & np.isfinite(c)
+            be = session_bootstrap(e[ok], dates[ok], 2000)
+            bc = session_bootstrap(c[ok], dates[ok], 2000)
+            bd = session_bootstrap(e[ok] - c[ok], dates[ok], 2000)
+            cells.append(dict(
+                bracket_n=k, fill=f, n=int(ok.sum()),
+                sessions=bd['n_sessions'], trigger_rate=float(ok.mean()),
+                event_bp=be['mean'] * 1e4, control_bp=bc['mean'] * 1e4,
+                excess_bp=bd['mean'] * 1e4,
+                ci_bp=[bd['lo'] * 1e4, bd['hi'] * 1e4], p=bd['p']))
+    return dict(era=HEADLINE_START, screen=CHART_SCREEN,
+                controls=CAPTURE_CONTROLS, n_names=len(files),
+                sessions=int(len(np.unique(dates))),
+                sigma30_median_bp=float(np.median(sig) * 1e4), cells=cells)
+
+
 # -------------------------------------------------------------------- CLI
 
 def build_results(panel: dict[str, Any]) -> dict[str, Any]:
@@ -803,22 +996,42 @@ def main(argv: Sequence[str] | None = None) -> None:
                     help='read the archive and write the scan directory')
     ap.add_argument('--report', action='store_true',
                     help='read the scan directory and print the tables')
+    ap.add_argument('--capture', action='store_true',
+                    help='the bracket-vs-random-entry capture pass (re-reads '
+                         'the archive; its own directory)')
+    ap.add_argument('--write-capture', action='store_true',
+                    help=f'refresh the committed data/{CAPTURE_RESULTS_FILE}')
     ap.add_argument('--tickers', default=None,
                     help='comma-separated subset (default: the S&P 500 '
                          'universe plus SPY and QQQ)')
     ap.add_argument('--out', default=None, help=f'default: data/{SCAN_DIR}')
+    ap.add_argument('--capture-out', default=None,
+                    help=f'default: data/{CAPTURE_DIR}')
     ap.add_argument('--json', action='store_true')
     ap.add_argument('--write-results', action='store_true',
                     help=f'refresh the committed data/{RESULTS_FILE}')
     a = ap.parse_args(argv)
     out = a.out or data_path(SCAN_DIR)
+    cap_out = a.capture_out or data_path(CAPTURE_DIR)
 
+    tickers = (a.tickers.split(',') if a.tickers
+               else sorted(set(universe()) | {'SPY', 'QQQ'}))
     if a.scan:
-        tickers = (a.tickers.split(',') if a.tickers
-                   else sorted(set(universe()) | {'SPY', 'QQQ'}))
         rows = run_scan(tickers, out)
         print(f'scanned {len(rows)} tickers, '
               f'{sum(r["events"] for r in rows)} permissive triggers -> {out}')
+    if a.capture:
+        rows = run_capture(tickers, cap_out)
+        print(f'captured {len(rows)} tickers -> {cap_out}')
+    if a.write_capture:
+        cap = build_capture_results(cap_out)
+        with open(data_path(CAPTURE_RESULTS_FILE), 'w') as f:
+            json.dump(cap, f, indent=1, sort_keys=True)
+            f.write('\n')
+        print(f'wrote data/{CAPTURE_RESULTS_FILE}')
+        print(_fmt([c for c in cap['cells']],
+                   ('bracket_n', 'fill', 'n', 'event_bp', 'control_bp',
+                    'excess_bp', 'p')))
     if not (a.report or a.write_results):
         return
 

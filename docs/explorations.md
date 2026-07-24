@@ -1142,6 +1142,66 @@ and more consistent than the null, but at −8 bp against a realistic
 large-cap round trip of 8–15 bp it is not a trade in either direction;
 it is a reason not to initiate into one.
 
+### Addendum — can the direction-free range expansion be traded? (2026-07-23)
+
+The direction is null; the size is not, so the natural follow-up is a
+**direction-free bracket**: a stop-entry either side of the signal bar,
+whichever trades first is taken and the other cancelled, held to the
+close. It is a bet the range expands, with no view on which way. The
+question is whether that bracket beats bracketing the **same name at a
+random moment** — Tharp's random entry, matched on ticker and clock and
+sized off each session's own volatility (`capture_ticker`,
+`build_capture_results`, pinned by `TestCaptureResults`; the committed
+run is [data/intraday_capture_results.json](../data/intraday_capture_results.json),
+499 names, 2,426 sessions).
+
+The bracket distance is measured in `sigma30` — the name's own trailing
+30-minute return volatility — so it is a Van Tharp *N*, not a fixed
+percent that mis-scales a utility against NVDA. Median `sigma30` is
+\~48 bp. Every cell is scored two ways, and the second is the whole
+point: a **barrier** fill assumes the exact touched level (optimistic),
+a **touch** fill takes the triggering bar's close, which in a fast bar
+sits beyond the level and charges the chase. The gap between them is
+entry-fill optimism, and these events are precisely the widest-range
+bars, so it is the one bias that could manufacture a spurious edge.
+
+| bracket | fill | event | random entry | excess | 95% CI | p |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0.5N | barrier | +13.9 | +1.6 | **+12.3 bp** | [+5.7, +20.8] | 0.000 |
+| 0.5N | touch | +6.2 | −0.3 | +6.5 bp | [−0.1, +14.3] | 0.026 |
+| 1.0N | barrier | +10.3 | +0.9 | +9.4 bp | [−0.4, +20.5] | 0.034 |
+| 1.0N | touch | +6.3 | −0.4 | +6.7 bp | [−3.6, +18.6] | 0.148 |
+| 2.0N | barrier | +7.9 | −0.3 | +8.3 bp | [−2.8, +21.6] | 0.104 |
+| 2.0N | touch | +7.4 | −0.9 | +8.2 bp | [−4.5, +24.6] | 0.176 |
+
+Three things, in order. **Random entry captures essentially nothing** —
+the control column is within a basis point or two of zero everywhere — so
+a bracket held to the close is not generically profitable and the
+comparison is a real falsification, not a rising tide. **The breakout
+bracket does beat it**: on the exact-level fill the tight bracket is
++12.3 bp with the interval clear of zero, direction-free, so it is the
+volatility expansion being harvested rather than the null direction.
+
+**But the fill test roughly halves it.** Chasing the fast bar cuts the
+tight-bracket excess from +12.3 to +6.5 bp, and it knocks the wider
+brackets out of significance (`p` 0.15 and 0.18). So about half of the
+optimistic number was the perfect-fill assumption — exactly the bias the
+widest-range bars are most exposed to. What survives a realistic entry is
+one cell, the tightest bracket, at **+6.5 bp** — which sits *inside* the
+8–15 bp large-cap round trip. The expansion is real and attributable, and
+it is still smaller than the cost of harvesting it.
+
+Two adjacent measurements (not pinned here, both consistent with the
+above): the initial stop width barely moves expectancy — 1N, 2N, 3N and
+no-stop-at-all agree within a basis point or two — which is Tharp read
+correctly, the stop being the risk unit that makes sizing consistent, not
+a source of edge; and volatility-scaled brackets do **not** beat a plain
+fixed-percent bracket at matched whipsaw, so what residual survives looks
+closer to a fixed microstructure scale than to anything about the
+expansion. The honest use of the signal remains the risk one from the
+main entry — when it fires, the session's remaining range roughly triples
+and a normal stop is suddenly inside the noise — not a bracket trade.
+
 ## Related, recorded elsewhere
 
 - **Trend gate** (suspend selling during a 200-day uptrend) — a *registered*
