@@ -1266,6 +1266,63 @@ no fraction rescues the loss. The signal's only real use stays the risk
 one from the main entry — size *down* when it fires, because the session's
 remaining range roughly triples — not a trade to exit or size into.
 
+### Addendum 3 — does it continue for DAYS? (2026-07-23)
+
+Everything above is intra-session. This asks the overnight/swing regime:
+entered at the event day's close, what is the forward return at +1 day and
+scanned to +30? On split-adjusted daily prices (499 names, 2,415 event-
+dates, 2016+), committed as
+[data/intraday_multiday_results.json](../data/intraday_multiday_results.json)
+and pinned by `TestMultidayResults`. Note 1–30 days is the short-term
+*reversal* window; classic momentum lives at 3–12 months and is not tested
+here.
+
+**The trap the raw number sets.** Breakout names are high-beta (rolling
+β = **1.16**) and fire at the *start* of market up-runs, so the market
+itself keeps rising after the breakout — event-day forward SPY grows from
+\~0 at +1d to **+220 bp at +30d** (vs +91 bp on an average day). On a raw
+basis a breakout name is therefore up \~2–3% over the next month — but
+β × +220 bp ≈ +256 bp of that is the market, not the signal. "The stock is
+up over the next month" is true and completely misleading.
+
+**The name-specific alpha is negative at every horizon.** Removing β × the
+market (a causal rolling 60-day beta) *and* the name's own drift leaves a
+two-way-demeaned excess whose median is negative from +2d out and deepens
+with horizon:
+
+| horizon | median excess | % beating baseline | forward SPY (event-day) |
+| --- | --- | --- | --- |
+| +1d | −7.0 bp | 48% | −0.7 bp |
+| +5d | −24.7 bp | 47% | +11.6 bp |
+| +10d | −38.2 bp | 47% | +56.2 bp |
+| +20d | −52.1 bp | 47% | +156.1 bp |
+| +30d | −79.7 bp | 46% | +220.0 bp |
+
+The **median is the headline, not the mean** — this screen selects the
+most right-skewed "lottery" names, so a few big winners drag the mean
+around while its overlap-robust interval spans zero at every horizon. The
+median is decisively negative, and **fewer than half of breakouts (46–48%)
+beat their own beta-and-drift baseline at every single horizon.** Judged
+against a joint family-wise band (max-|t| across all 30 horizons, `t` band
+≈ 2.6, one shared block bootstrap over event-dates so overlap and same-day
+clustering resample together), **no horizon shows a positive edge** — the
+only |t| that even approaches the band is +30d at −2.3, and it is negative.
+
+**The +1 day** decomposes into a **+12.0 bp overnight gap** and a
+**−6.8 bp next-day intraday fade** — the same overnight-up / intraday-give-
+back pattern the intraday work found, now across the close.
+
+**The complete answer to "does it continue?"** Raw: yes — but that is
+β-loaded exposure to a rising market, not the breakout. Alpha: no — the
+name-specific contribution is a mild, pervasive *under*-drift at every
+horizon out to 30 days, consistent with the intraday null, the short-term-
+reversal literature, and this repo's four prior findings that conditioning
+on a recent up-move points the wrong way. **Limitations:** price not total
+return (\~0.15%/mo dividends, cancels in the market-adjusted difference);
+survivorship inflates the *raw* level of both arms (the 2026 snapshot),
+though the alpha cancels most of it; and 30 days does not reach the
+3–12-month momentum horizon.
+
 ## Related, recorded elsewhere
 
 - **Trend gate** (suspend selling during a 200-day uptrend) — a *registered*

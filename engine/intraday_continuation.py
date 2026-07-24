@@ -75,6 +75,8 @@ from pipeline.minute_archive import (
     TICKER_DROP_WINDOWS,
     TICKER_START_CLIPS,
     archive_path,
+    load_clean_daily,
+    load_splits,
     universe,
 )
 
@@ -166,6 +168,19 @@ EXIT_CONTROLS = 5
 # 3% "gunslinger" and past it) and the cost charged to the honest bag.
 SIZING_FRACTIONS = (0.005, 0.01, 0.02, 0.05)
 SIZING_COST_BP = 10.0        # a large-cap round trip, subtracted for the NET bag
+
+# --- the multi-day addendum: does the breakout keep going for DAYS? -----------
+# Everything above is intra-session. This asks the overnight/swing regime:
+# entered at the event day's close, what is the forward return at +1 day and
+# scanned to +30? Uses split-adjusted DAILY prices (from the archive) and SPY.
+# The trap is that breakout names are high-beta and cluster on up-market days,
+# so a beta=1 adjustment leaves market drift in; the primary estimator is a
+# rolling per-name beta, and because the population is right-skewed (lottery
+# names), the HEADLINE is the median and the sign test, not the mean.
+MULTIDAY_DIR = 'intraday_multiday_scan'
+MULTIDAY_RESULTS_FILE = 'intraday_multiday_results.json'
+MULTIDAY_HORIZONS = (1, 2, 3, 5, 10, 20, 30)   # trading days forward
+BETA_WINDOW = 60             # trailing sessions for the causal rolling beta
 
 EVENT_FEATURES = ('mom6', 'mom_open', 'brk2h', 'brkday', 'rvol', 'ext50',
                   'rsi', 'sigma', 'z6', 'dollar_volume')
@@ -1226,6 +1241,241 @@ def build_exit_results(out_dir: str) -> dict[str, Any]:
                 exits=exits, sizing=_sizing_block(rmult, mae, sig, dates))
 
 
+# ------------------------------------------------------------- multi-day
+
+_SPY_CACHE: dict[str, Any] = {}
+
+
+def _spy_daily(splits):
+    """SPY split-adjusted daily close + date->index map, memoized."""
+    if 'spy' not in _SPY_CACHE:
+        d, _ = load_clean_daily('SPY', splits)
+        if d is None:
+            raise FileNotFoundError('SPY daily series unavailable (archive absent)')
+        _SPY_CACHE['spy'] = (d['close'], {day: k for k, day in enumerate(d['dates'])})
+    return _SPY_CACHE['spy']
+
+
+def _chart_event_days(ticker: str) -> np.ndarray:
+    """Sorted unique chart-like breakout DAYS (dedup intraday triggers), 2016+.
+
+    Re-derived from the detector so the multi-day layer stands alone; a day
+    either had a chart-like breakout or it did not.
+    """
+    path = archive_path(ticker)
+    if path is None:
+        return np.array([], dtype='U10')
+    bars = five_minute_bars(path, SCAN_START, TICKER_START_CLIPS.get(ticker),
+                            TICKER_DROP_WINDOWS.get(ticker, []))
+    if bars is None or len(bars['dates']) < SIGMA_SESSIONS + 5:
+        return np.array([], dtype='U10')
+    sess, _ = np.nonzero(breakout_mask(bar_features(bars), CHART_SCREEN))
+    days = bars['dates'][np.unique(sess)]
+    return np.unique(days[days >= HEADLINE_START])
+
+
+def _rolling_beta(ret: np.ndarray, sret: np.ndarray, window: int) -> np.ndarray:
+    """Causal trailing-``window`` OLS beta of name returns on SPY returns.
+
+    ``beta[i]`` uses the ``window`` daily returns ending at day ``i`` (all
+    known at day ``i``'s close), so it is tradable for a decision made then.
+    """
+    n = len(ret) + 1
+    beta = np.full(n, np.nan)
+    for i in range(window, n):
+        x, y = sret[i - window:i], ret[i - window:i]
+        m = np.isfinite(x) & np.isfinite(y)
+        if m.sum() > window // 2 and x[m].var() > 0:
+            beta[i] = np.cov(x[m], y[m])[0, 1] / x[m].var()
+    return beta
+
+
+def multiday_ticker(ticker: str, out_dir: str, splits=None,
+                    spy=None) -> dict[str, Any] | None:
+    """Per event, the beta-adjusted forward excess at each horizon.
+
+    Entry = the event day's adjusted close; exit = close of day 0+N. The
+    excess is ``(name_fwd_N - beta_i*SPY_fwd_N)`` minus the name's own
+    unconditional beta-adjusted N-day forward drift — a two-way demean
+    against both the market (at the name's rolling beta) and the name's own
+    trend. Also records the +1d overnight/intraday split and the event-day
+    forward SPY (for the market-timing diagnostic). Writes ``{ticker}.npz``.
+    """
+    if splits is None:
+        splits = load_splits()
+    if spy is None:
+        spy = _spy_daily(splits)
+    spy_close, spy_idx = spy
+    ev_days = _chart_event_days(ticker)
+    if not len(ev_days):
+        return None
+    d, _ = load_clean_daily(ticker, splits)
+    if d is None or len(d['dates']) < BETA_WINDOW + max(MULTIDAY_HORIZONS) + 5:
+        return None
+    dates, close, op = d['dates'], d['close'], d['open']
+    didx = {day: k for k, day in enumerate(dates)}
+    ret = np.diff(close) / close[:-1]
+    sret = np.array([(spy_close[spy_idx[dates[k + 1]]] / spy_close[spy_idx[dates[k]]] - 1)
+                     if (dates[k] in spy_idx and dates[k + 1] in spy_idx) else np.nan
+                     for k in range(len(ret))])
+    beta = _rolling_beta(ret, sret, BETA_WINDOW)
+
+    nH = len(MULTIDAY_HORIZONS)
+    ex = {N: [] for N in MULTIDAY_HORIZONS}
+    spyf_ev = {N: [] for N in MULTIDAY_HORIZONS}
+    ev_dates, on, intr, ev_beta = [], [], [], []
+    # per horizon: the beta-adjusted forward array and its unconditional mean
+    badj, spyf_all = {}, {}
+    for N in MULTIDAY_HORIZONS:
+        fwd = np.full(len(close), np.nan)
+        fwd[:-N] = close[N:] / close[:-N] - 1
+        sf = np.full(len(close), np.nan)
+        for k in range(len(close) - N):
+            a = spy_idx.get(dates[k])
+            b = spy_idx.get(dates[k + N])
+            if a is not None and b is not None:
+                sf[k] = spy_close[b] / spy_close[a] - 1
+        badj[N] = fwd - beta * sf
+        spyf_all[N] = sf
+    uncond = {N: np.nanmean(badj[N]) for N in MULTIDAY_HORIZONS}
+
+    for day in ev_days:
+        i = didx.get(day)
+        if i is None or i < BETA_WINDOW or i + max(MULTIDAY_HORIZONS) >= len(close):
+            continue
+        if not np.isfinite(beta[i]):
+            continue
+        ok = all(np.isfinite(badj[N][i]) for N in MULTIDAY_HORIZONS)
+        if not ok:
+            continue
+        for N in MULTIDAY_HORIZONS:
+            ex[N].append(badj[N][i] - uncond[N])
+            spyf_ev[N].append(spyf_all[N][i])
+        on.append(op[i + 1] / close[i] - 1)
+        intr.append(close[i + 1] / op[i + 1] - 1)
+        ev_beta.append(beta[i])
+        ev_dates.append(day)
+    if not ev_dates:
+        return None
+    payload: dict[str, Any] = dict(
+        ticker=ticker, dates=np.array(ev_dates),
+        beta=np.array(ev_beta, dtype=np.float32),
+        overnight=np.array(on, dtype=np.float64),
+        intraday=np.array(intr, dtype=np.float64),
+        excess=np.array([ex[N] for N in MULTIDAY_HORIZONS], dtype=np.float64).T,
+        spy_fwd=np.array([spyf_ev[N] for N in MULTIDAY_HORIZONS], dtype=np.float64).T)
+    os.makedirs(out_dir, exist_ok=True)
+    np.savez_compressed(os.path.join(out_dir, f'{ticker}.npz'), **payload)
+    return dict(ticker=ticker, events=len(ev_dates), nH=nH)
+
+
+def run_multiday_scan(tickers: Iterable[str], out_dir: str,
+                      skip_existing: bool = True) -> list[dict[str, Any]]:
+    """Multi-day pass; resumable, so it can be sharded. SPY + splits load once."""
+    os.makedirs(out_dir, exist_ok=True)
+    splits = load_splits()
+    spy = _spy_daily(splits)
+    rows = []
+    for t in sorted(tickers):
+        if skip_existing and os.path.exists(os.path.join(out_dir, f'{t}.npz')):
+            continue
+        r = multiday_ticker(t, out_dir, splits, spy)
+        if r is not None:
+            rows.append(r)
+    return rows
+
+
+def _moving_block_boot(mat, block, reps=2000, seed=CONTINUATION_SEED):
+    """Moving-block bootstrap over the rows (event-dates) of a
+    (n_dates, n_horizons) mean-excess matrix.
+
+    Resamples contiguous runs of dates so overlapping forward windows and
+    same-day clusters stay together, and — crucially — uses the SAME
+    resampled dates across every horizon, so a family-wise max-|t| band can
+    be read off. Returns per-horizon (mean, lo, hi, p, t) plus the joint
+    95th-percentile of max-|t| across horizons.
+    """
+    nd, nH = mat.shape
+    obs = np.nanmean(mat, axis=0)
+    nb = max(1, nd // block)
+    rng = np.random.default_rng(seed)
+    draws = np.empty((reps, nH))
+    for r in range(reps):
+        starts = rng.integers(0, nd, nb)
+        idx = np.concatenate([(np.arange(s, s + block) % nd) for s in starts])
+        draws[r] = np.nanmean(mat[idx], axis=0)
+    se = draws.std(axis=0)
+    lo = np.percentile(draws, 2.5, axis=0)
+    hi = np.percentile(draws, 97.5, axis=0)
+    p = np.mean(draws <= 0, axis=0)
+    t = np.divide(obs, se, out=np.zeros_like(obs), where=se > 0)
+    tdist = np.abs((draws - obs) / np.where(se > 0, se, 1.0))
+    joint = float(np.percentile(tdist.max(axis=1), 95))
+    return obs, lo, hi, p, t, se, joint
+
+
+def build_multiday_results(out_dir: str) -> dict[str, Any]:
+    """Merge the multi-day files into the pinned result block.
+
+    Headline is the MEDIAN and the sign test (the population is right-
+    skewed), with the mean's overlap-robust interval alongside. Inference
+    is a moving-block bootstrap over event-dates (block = max horizon) with
+    a joint family-wise band across horizons.
+    """
+    files = sorted(glob.glob(os.path.join(out_dir, '*.npz')))
+    if not files:
+        raise FileNotFoundError(f'no multi-day files under {out_dir}')
+    dates, excess, spyf, on, intr, betas = [], [], [], [], [], []
+    for fp in files:
+        z = np.load(fp, allow_pickle=False)
+        dates.append(z['dates'])
+        excess.append(z['excess'])
+        spyf.append(z['spy_fwd'])
+        on.append(z['overnight'])
+        intr.append(z['intraday'])
+        betas.append(z['beta'])
+    dates = np.concatenate(dates)
+    excess = np.concatenate(excess, axis=0)
+    spyf = np.concatenate(spyf, axis=0)
+    on = np.concatenate(on)
+    intr = np.concatenate(intr)
+    betas = np.concatenate(betas).astype(np.float64)
+
+    # per-event-date mean-excess matrix (equal-weighted, one unit per date)
+    ud = np.array(sorted(set(dates.tolist())))
+    pos = {day: k for k, day in enumerate(ud)}
+    nH = excess.shape[1]
+    mat = np.full((len(ud), nH), np.nan)
+    cnt = np.zeros(len(ud))
+    acc = np.zeros((len(ud), nH))
+    for r in range(len(dates)):
+        k = pos[dates[r]]
+        acc[k] += np.where(np.isfinite(excess[r]), excess[r], 0.0)
+        cnt[k] += 1
+    mat = acc / np.maximum(cnt[:, None], 1)
+
+    obs, lo, hi, p, t, se, joint = _moving_block_boot(mat, block=max(MULTIDAY_HORIZONS))
+    horizons = []
+    for j, N in enumerate(MULTIDAY_HORIZONS):
+        col = excess[:, j]
+        col = col[np.isfinite(col)]
+        frac_pos = float(np.mean(col > 0))
+        horizons.append(dict(
+            days=N, n=int(len(col)),
+            mean_bp=float(obs[j] * 1e4), ci_bp=[float(lo[j] * 1e4), float(hi[j] * 1e4)],
+            p=float(p[j]), t=float(t[j]),
+            median_bp=float(np.median(col) * 1e4),
+            pct_positive=frac_pos,
+            event_spy_fwd_bp=float(np.nanmean(spyf[:, j]) * 1e4)))
+    return dict(
+        era=HEADLINE_START, n_names=len(files),
+        events=int(len(dates)), event_dates=int(len(ud)),
+        mean_beta=float(np.nanmean(betas)), family_band_t=joint,
+        overnight_bp=float(np.nanmean(on) * 1e4),
+        next_day_intraday_bp=float(np.nanmean(intr) * 1e4),
+        horizons=horizons)
+
+
 # -------------------------------------------------------------------- CLI
 
 def build_results(panel: dict[str, Any]) -> dict[str, Any]:
@@ -1282,6 +1532,13 @@ def main(argv: Sequence[str] | None = None) -> None:
                     help=f'default: data/{CAPTURE_DIR}')
     ap.add_argument('--exit-out', default=None,
                     help=f'default: data/{EXIT_DIR}')
+    ap.add_argument('--multiday', dest='multiday_scan', action='store_true',
+                    help='the +1..+30 day forward-return pass (daily data; '
+                         'its own directory)')
+    ap.add_argument('--write-multiday', action='store_true',
+                    help=f'refresh the committed data/{MULTIDAY_RESULTS_FILE}')
+    ap.add_argument('--multiday-out', default=None,
+                    help=f'default: data/{MULTIDAY_DIR}')
     ap.add_argument('--json', action='store_true')
     ap.add_argument('--write-results', action='store_true',
                     help=f'refresh the committed data/{RESULTS_FILE}')
@@ -1289,6 +1546,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     out = a.out or data_path(SCAN_DIR)
     cap_out = a.capture_out or data_path(CAPTURE_DIR)
     exit_out = a.exit_out or data_path(EXIT_DIR)
+    md_out = a.multiday_out or data_path(MULTIDAY_DIR)
 
     tickers = (a.tickers.split(',') if a.tickers
                else sorted(set(universe()) | {'SPY', 'QQQ'}))
@@ -1323,6 +1581,20 @@ def main(argv: Sequence[str] | None = None) -> None:
         print(f"\nsizing: mean R gross {s['mean_r_session_gross']:+.4f} "
               f"net {s['mean_r_session_net']:+.4f}  kelly gross "
               f"{s['kelly_session_gross']:.3f} net {s['kelly_session_net']:.3f}")
+    if a.multiday_scan:
+        rows = run_multiday_scan(tickers, md_out)
+        print(f'multiday-scanned {len(rows)} tickers -> {md_out}')
+    if a.write_multiday:
+        md = build_multiday_results(md_out)
+        with open(data_path(MULTIDAY_RESULTS_FILE), 'w') as f:
+            json.dump(md, f, indent=1, sort_keys=True)
+            f.write('\n')
+        print(f'wrote data/{MULTIDAY_RESULTS_FILE}')
+        print(f"beta {md['mean_beta']:.2f}  family-band |t| {md['family_band_t']:.2f}"
+              f"  overnight {md['overnight_bp']:+.1f}bp  next-day intraday "
+              f"{md['next_day_intraday_bp']:+.1f}bp")
+        print(_fmt(md['horizons'], ('days', 'n', 'mean_bp', 'median_bp',
+                                    'pct_positive', 'event_spy_fwd_bp', 't')))
     if not (a.report or a.write_results):
         return
 
