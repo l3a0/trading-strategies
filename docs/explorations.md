@@ -1202,6 +1202,70 @@ expansion. The honest use of the signal remains the risk one from the
 main entry — when it fires, the session's remaining range roughly triples
 and a normal stop is suddenly inside the noise — not a bracket trade.
 
+### Addendum 2 — do exits or position sizing change the verdict? (2026-07-23)
+
+Addendum 1 flagged the stop-width, exit-timing and sizing measurements as
+"not pinned here." This pins them, on the full universe (499 names, 2,425
+sessions, the same direction-free 1N bracket), committed as
+[data/intraday_exit_sizing_results.json](../data/intraday_exit_sizing_results.json)
+and enforced by `TestExitSizingResults`.
+
+**Exits: nothing beats holding to the close.** Every exit rule is scored
+the same way the entry was — event minus its Tharp random-entry control,
+under the realistic touch fill. The bracket's edge IS the full-session
+range expansion, so any rule that cuts it short sheds edge:
+
+| exit rule | event-vs-control excess |
+| --- | --- |
+| **hold to close** | **+6.55 bp** |
+| stop at 3N | +4.58 bp |
+| exit at 60 min | +3.15 bp |
+| stop at 2N | +3.62 bp |
+| exit at 30 min | +2.82 bp |
+| stop at 1N | +2.31 bp |
+| trailing stop 1N | −0.02 bp |
+| profit target +1N | −1.30 bp |
+
+Hold-to-close tops the table. Stops shed edge and tighten toward the
+no-stop number as they widen — the stop is a risk unit, not a source of
+return, exactly as the main entry found. Time exits throw away the hour
+of expansion. The trailing stop is the worst active rule — it gets shaken
+out by the very volatility that is the edge (it is far more negative under
+the optimistic barrier fill, `−13 bp`, the fill-sensitivity a fast-bar
+stop always carries). The target caps the winners while keeping the
+losers. So the best exit is the least clever one.
+
+**Sizing: no bet size rescues a losing edge.** The bracket's per-trade
+returns are expressed in R-multiples (R = the name's own `sigma30`,
+median \~48 bp) and fed to the repo's fixed-fractional resampler
+([common/position_sizing.py](../common/position_sizing.py)). The unit is
+the **session**, not the trade: a market-wide rip fires many correlated
+names at once, so a real account bets on the day, and resampling whole
+sessions bundles those correlated trades rather than drawing them
+independently. Per-trade expectancy is invariant to bet size, so sizing
+only shapes the geometric path — it cannot move the sign.
+
+| fraction | GROSS (optimistic fill) median / ruin | NET of 10 bp median / ruin |
+| --- | --- | --- |
+| 0.5% | 1.01× / 11% | 0.07× / **100%** |
+| 1% | 0.84× / 50% | 0.00× / 100% |
+| 2% | 0.33× / 84% | 0.00× / 100% |
+| 5% | 0.00× / 99% | 0.00× / 100% |
+
+Two readings. On the **optimistic gross** edge (mean R `+0.008`) the
+growth-optimal fraction is a **Kelly of \~0.2%**, and over-betting past it
+ruins you — the classic volatility tax, ruin climbing monotonically with
+size to near-certain by 5%. On the **honest net-of-cost** edge (mean R
+`−0.22`, Kelly `0`) every fraction ruins with near-certainty and the
+median account goes to zero: sizing a negative-expectancy edge only sets
+how fast you go broke.
+
+**The verdict for both is moot-for-profit.** There is no positive
+net edge to exit-optimize or to size; the best exit is hold-to-close and
+no fraction rescues the loss. The signal's only real use stays the risk
+one from the main entry — size *down* when it fires, because the session's
+remaining range roughly triples — not a trade to exit or size into.
+
 ## Related, recorded elsewhere
 
 - **Trend gate** (suspend selling during a 200-day uptrend) — a *registered*
