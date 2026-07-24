@@ -1202,6 +1202,127 @@ expansion. The honest use of the signal remains the risk one from the
 main entry — when it fires, the session's remaining range roughly triples
 and a normal stop is suddenly inside the noise — not a bracket trade.
 
+### Addendum 2 — do exits or position sizing change the verdict? (2026-07-23)
+
+Addendum 1 flagged the stop-width, exit-timing and sizing measurements as
+"not pinned here." This pins them, on the full universe (499 names, 2,425
+sessions, the same direction-free 1N bracket), committed as
+[data/intraday_exit_sizing_results.json](../data/intraday_exit_sizing_results.json)
+and enforced by `TestExitSizingResults`.
+
+**Exits: nothing beats holding to the close.** Every exit rule is scored
+the same way the entry was — event minus its Tharp random-entry control,
+under the realistic touch fill. The bracket's edge IS the full-session
+range expansion, so any rule that cuts it short sheds edge:
+
+| exit rule | event-vs-control excess |
+| --- | --- |
+| **hold to close** | **+6.55 bp** |
+| stop at 3N | +4.58 bp |
+| exit at 60 min | +3.15 bp |
+| stop at 2N | +3.62 bp |
+| exit at 30 min | +2.82 bp |
+| stop at 1N | +2.31 bp |
+| trailing stop 1N | −0.02 bp |
+| profit target +1N | −1.30 bp |
+
+Hold-to-close tops the table. Stops shed edge and tighten toward the
+no-stop number as they widen — the stop is a risk unit, not a source of
+return, exactly as the main entry found. Time exits throw away the hour
+of expansion. The trailing stop is the worst active rule — it gets shaken
+out by the very volatility that is the edge (it is far more negative under
+the optimistic barrier fill, `−13 bp`, the fill-sensitivity a fast-bar
+stop always carries). The target caps the winners while keeping the
+losers. So the best exit is the least clever one.
+
+**Sizing: no bet size rescues a losing edge.** The bracket's per-trade
+returns are expressed in R-multiples (R = the name's own `sigma30`,
+median \~48 bp) and fed to the repo's fixed-fractional resampler
+([common/position_sizing.py](../common/position_sizing.py)). The unit is
+the **session**, not the trade: a market-wide rip fires many correlated
+names at once, so a real account bets on the day, and resampling whole
+sessions bundles those correlated trades rather than drawing them
+independently. Per-trade expectancy is invariant to bet size, so sizing
+only shapes the geometric path — it cannot move the sign.
+
+| fraction | GROSS (optimistic fill) median / ruin | NET of 10 bp median / ruin |
+| --- | --- | --- |
+| 0.5% | 1.01× / 11% | 0.07× / **100%** |
+| 1% | 0.84× / 50% | 0.00× / 100% |
+| 2% | 0.33× / 84% | 0.00× / 100% |
+| 5% | 0.00× / 99% | 0.00× / 100% |
+
+Two readings. On the **optimistic gross** edge (mean R `+0.008`) the
+growth-optimal fraction is a **Kelly of \~0.2%**, and over-betting past it
+ruins you — the classic volatility tax, ruin climbing monotonically with
+size to near-certain by 5%. On the **honest net-of-cost** edge (mean R
+`−0.22`, Kelly `0`) every fraction ruins with near-certainty and the
+median account goes to zero: sizing a negative-expectancy edge only sets
+how fast you go broke.
+
+**The verdict for both is moot-for-profit.** There is no positive
+net edge to exit-optimize or to size; the best exit is hold-to-close and
+no fraction rescues the loss. The signal's only real use stays the risk
+one from the main entry — size *down* when it fires, because the session's
+remaining range roughly triples — not a trade to exit or size into.
+
+### Addendum 3 — does it continue for DAYS? (2026-07-23)
+
+Everything above is intra-session. This asks the overnight/swing regime:
+entered at the event day's close, what is the forward return at +1 day and
+scanned to +30? On split-adjusted daily prices (499 names, 2,415 event-
+dates, 2016+), committed as
+[data/intraday_multiday_results.json](../data/intraday_multiday_results.json)
+and pinned by `TestMultidayResults`. Note 1–30 days is the short-term
+*reversal* window; classic momentum lives at 3–12 months and is not tested
+here.
+
+**The trap the raw number sets.** Breakout names are high-beta (rolling
+β = **1.16**) and fire at the *start* of market up-runs, so the market
+itself keeps rising after the breakout — event-day forward SPY grows from
+\~0 at +1d to **+220 bp at +30d** (vs +91 bp on an average day). On a raw
+basis a breakout name is therefore up \~2–3% over the next month — but
+β × +220 bp ≈ +256 bp of that is the market, not the signal. "The stock is
+up over the next month" is true and completely misleading.
+
+**The name-specific alpha is negative at every horizon.** Removing β × the
+market (a causal rolling 60-day beta) *and* the name's own drift leaves a
+two-way-demeaned excess whose median is negative from +2d out and deepens
+with horizon:
+
+| horizon | median excess | % beating baseline | forward SPY (event-day) |
+| --- | --- | --- | --- |
+| +1d | −7.0 bp | 48% | −0.7 bp |
+| +5d | −24.7 bp | 47% | +11.6 bp |
+| +10d | −38.2 bp | 47% | +56.2 bp |
+| +20d | −52.1 bp | 47% | +156.1 bp |
+| +30d | −79.7 bp | 46% | +220.0 bp |
+
+The **median is the headline, not the mean** — this screen selects the
+most right-skewed "lottery" names, so a few big winners drag the mean
+around while its overlap-robust interval spans zero at every horizon. The
+median is decisively negative, and **fewer than half of breakouts (46–48%)
+beat their own beta-and-drift baseline at every single horizon.** Judged
+against a joint family-wise band (max-|t| across all 30 horizons, `t` band
+≈ 2.6, one shared block bootstrap over event-dates so overlap and same-day
+clustering resample together), **no horizon shows a positive edge** — the
+only |t| that even approaches the band is +30d at −2.3, and it is negative.
+
+**The +1 day** decomposes into a **+12.0 bp overnight gap** and a
+**−6.8 bp next-day intraday fade** — the same overnight-up / intraday-give-
+back pattern the intraday work found, now across the close.
+
+**The complete answer to "does it continue?"** Raw: yes — but that is
+β-loaded exposure to a rising market, not the breakout. Alpha: no — the
+name-specific contribution is a mild, pervasive *under*-drift at every
+horizon out to 30 days, consistent with the intraday null, the short-term-
+reversal literature, and this repo's four prior findings that conditioning
+on a recent up-move points the wrong way. **Limitations:** price not total
+return (\~0.15%/mo dividends, cancels in the market-adjusted difference);
+survivorship inflates the *raw* level of both arms (the 2026 snapshot),
+though the alpha cancels most of it; and 30 days does not reach the
+3–12-month momentum horizon.
+
 ## Related, recorded elsewhere
 
 - **Trend gate** (suspend selling during a 200-day uptrend) — a *registered*

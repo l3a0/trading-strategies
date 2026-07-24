@@ -66,3 +66,5 @@ data/sp500_intraday_1min/
 # Intraday-continuation scan output (regenerable: python -m engine.intraday_continuation --scan)
 data/intraday_continuation_scan/
 data/intraday_capture_scan/
+data/intraday_exit_scan/
+data/intraday_multiday_scan/
