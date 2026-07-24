@@ -448,3 +448,59 @@ class TestValueDetachments:
             assert d in {x for x, _ in s[t]}, f'{t} reverse split missing'
             assert d in ma.RETURN_BREAKS[t], f'{t} return break missing'
             assert d not in ma.load_detachments().get(t, ())  # not double-filed
+
+
+class TestHygieneRulingsDataFile:
+    """The owner-signed rulings moved from hardcoded dict literals to
+    data/hygiene_rulings.csv (2026-07-23) when the S&P 400 onboarding pushed
+    them past ~180 rulings. The module rebuilds the identical dicts at
+    import; this pins the loader and the file's integrity."""
+
+    def test_loader_rebuilds_four_tables(self):
+        import pipeline.minute_archive as ma
+        resolved, clips, drops, breaks = ma.load_hygiene_rulings()
+        # the module-level tables ARE the loader's output
+        assert resolved == ma.RESOLVED_CLIFFS
+        assert clips == ma.TICKER_START_CLIPS
+        assert drops == ma.TICKER_DROP_WINDOWS
+        assert breaks == ma.RETURN_BREAKS
+
+    def test_value_types_match_the_old_dicts(self):
+        import pipeline.minute_archive as ma
+        # resolved_cliff value is the reason string; the rest are the engine
+        # values the tables always held
+        (k, v) = next(iter(ma.RESOLVED_CLIFFS.items()))
+        assert isinstance(k, tuple) and isinstance(v, str)
+        assert all(isinstance(v, str) for v in ma.TICKER_START_CLIPS.values())
+        assert all(isinstance(w, list) and isinstance(w[0], tuple)
+                   for w in ma.TICKER_DROP_WINDOWS.values())
+        assert all(isinstance(v, tuple) for v in ma.RETURN_BREAKS.values())
+
+    def test_every_row_has_a_reason_and_a_valid_kind(self):
+        import csv as _csv
+        from pipeline.minute_archive import HYGIENE_RULINGS_PATH
+        from common.paths import data_path
+        kinds = {'resolved_cliff', 'start_clip', 'drop_window', 'return_break'}
+        with open(data_path(HYGIENE_RULINGS_PATH)) as f:
+            rows = list(_csv.DictReader(f))
+        assert rows, 'rulings file is empty'
+        for r in rows:
+            assert r['kind'] in kinds, r
+            assert r['reason'].strip(), f"no reason for {r['ticker']} {r['date']}"
+            if r['kind'] == 'drop_window':
+                assert r['end'], f"drop_window needs an end: {r}"
+
+    def test_unknown_kind_raises(self, tmp_path, monkeypatch):
+        import pipeline.minute_archive as ma
+        bad = tmp_path / 'bad.csv'
+        bad.write_text('kind,ticker,date,end,reason\nbogus,X,2020-01-01,,r\n')
+        monkeypatch.setattr(ma, 'data_path', lambda p: str(bad))
+        with pytest.raises(ValueError, match='unknown ruling kind'):
+            ma.load_hygiene_rulings()
+
+    def test_known_rulings_survived_the_migration(self):
+        import pipeline.minute_archive as ma
+        assert ma.TICKER_START_CLIPS['AA'] == '2016-11-01'      # Alcoa/Arconic
+        assert ('AAPL', '2000-09-29') in ma.RESOLVED_CLIFFS     # profit warning
+        assert ma.TICKER_DROP_WINDOWS['ASML'] == [('2007-10-01', '2007-10-26')]
+        assert ma.RETURN_BREAKS['MO'] == ('2008-03-31',)        # PMI spin-off
