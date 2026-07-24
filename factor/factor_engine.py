@@ -93,6 +93,8 @@ class GrammarFactorBackend:
     end: str = FACTOR_END
     fwd: int = 1
     min_periods: int = MIN_IC_PERIODS
+    require_mechanism: bool = False         # promotion-first: mechanism is INFORMATIONAL by default;
+                                            # opt in to restore the foil-paper fail-closed on family=None
 
     def enumerate(self) -> list[ExprFactor]:
         """The bounded grammar slice (factor_grammar.enumerate_exprs), each at the +1 harvesting bet."""
@@ -122,10 +124,12 @@ class GrammarFactorBackend:
     def score(self, candidate: ExprFactor) -> dict[str, Any]:
         """The honest-core-facing row: evaluate the Expr to a signal ONCE, compute its rank-IC AND its
         mechanism `family` (the loading regression) from it, and hand both to the SHARED `ic_to_row` —
-        byte-identical in shape to a primitive's row, so it feeds e-LOND the same. A coherent Expr scores
-        normally; a mechanism-incoherent one fails closed (H1b)."""
+        byte-identical in shape to a primitive's row, so it feeds e-LOND the same. `family` is recorded but
+        does NOT gate by default (promotion-first); construct with ``require_mechanism=True`` to restore the
+        foil-paper fail-closed on a mechanism-incoherent Expr."""
         signal = evaluate_expr(candidate.expr, self.prices)
         ic = information_coefficient(signal, self.prices, self.fwd)
         family = loading_family(signal, self.prices)
         return ic_to_row(ic, family, candidate.predicted_sign, canonical_expr_key(candidate.expr),
-                         self.universe, self.end, self.lineage(candidate), self.min_periods)
+                         self.universe, self.end, self.lineage(candidate), self.min_periods,
+                         require_mechanism=self.require_mechanism)

@@ -86,16 +86,26 @@ class TestGrammarScoring:
         fams = {_backend().mechanism(c) for c in _backend().enumerate()}
         assert None in fams and fams & {'trend', 'lowvol'}
 
-    def test_incoherent_expr_fails_closed(self) -> None:
-        # H1b live: a grammar Expr that loads on no registered premium types None -> measurement_invalid,
-        # never flags (the foil-paper defense, now live for factors).
-        fb = _backend()
+    def test_incoherent_expr_fails_closed_when_require_mechanism(self) -> None:
+        # the OPT-IN foil-paper gate: with require_mechanism=True, a grammar Expr that loads on no
+        # registered premium types None -> measurement_invalid, never flags.
+        fb = _backend(require_mechanism=True)
         incoherent = [c for c in fb.enumerate() if fb.mechanism(c) is None]
         assert incoherent, 'expected at least one mechanism-incoherent Expr in the slice'
         row = fb.score(incoherent[0])
         assert row['family'] is None and row['mechanism_ok'] is False
         assert row['measurement_invalid'] is True and row['p_value'] is None
         assert CONTRACT <= set(row)
+
+    def test_incoherent_expr_scored_by_default(self) -> None:
+        # promotion-first DEFAULT (require_mechanism off): a data-sufficient incoherent Expr is SCORED and
+        # flag-eligible (family recorded None, but not gated out).
+        fb = _backend()
+        rows = [fb.score(c) for c in fb.enumerate() if fb.mechanism(c) is None]
+        scored = [r for r in rows if r['t_stat_newey_west'] is not None]   # data-sufficient incoherent
+        assert scored, 'expected a data-sufficient incoherent Expr in the slice'
+        assert all(not r['measurement_invalid'] and r['p_value'] is not None for r in scored)
+        assert all(r['family'] is None and r['mechanism_ok'] is False for r in scored)
 
     def test_row_matches_the_shared_row_source(self) -> None:
         # the grammar scorer emits the SAME row the shared ic_to_row builds — one contract source

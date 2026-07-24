@@ -14,11 +14,15 @@ for scale; the minimal-dependency core (evalue_fdr's design) is unchanged. The f
 fixed slice — F3 generalizes them to a bounded formula grammar.
 
 STATUS (docs/integration_plan.md phasing):
-  * THE MECHANISM GATE is LIVE (H1b). A factor has no greek signature to read, so its mechanism is the
-    LOADING REGRESSION (factor_mechanism.py): `mechanism` types a factor by the registered premium it
-    loads on, or `None` for a mechanism-incoherent one. `score` wires it in (factor_engine.py shares the
-    path), so an incoherent row gets `family=None`, `p_value=None`, and fails closed (e=0 under e-LOND,
-    never flags) — `measurement_invalid` now fires on DATA-INSUFFICIENCY *or* mechanism-incoherence.
+  * MECHANISM IS INFORMATIONAL BY DEFAULT (promotion-first). A factor has no greek signature to read, so
+    its mechanism is the LOADING REGRESSION (factor_mechanism.py): `mechanism` types a factor by the
+    registered premium it loads on, or `None` for a mechanism-incoherent one. `score` RECORDS this
+    (`family` / `mechanism_ok`) but does NOT gate on it — an incoherent factor is still scored and
+    flag-eligible; the arbiter of an edge is out-of-sample net-of-cost persistence, not an explanation.
+    Construct the backend with `require_mechanism=True` to restore the fail-closed foil-paper defense
+    (family=None -> `measurement_invalid`, `p_value=None`, e=0, never flags): a TESTED OPT-IN, defaulted
+    OFF for BOTH the human and the automated (proposer) paths. `measurement_invalid` otherwise fires on
+    DATA-INSUFFICIENCY only.
   * PROMOTION stays CLOSED and survivors EXPLORATORY until the Phase-C time-axis holdout exists. The
     factor menu-walker proposer (factor_search.py, F4) runs the search loop, but a flagged cell escalates
     to manual pre-registration + the holdout — it is never auto-promoted.
@@ -121,18 +125,21 @@ def information_coefficient(values: pd.DataFrame, prices: pd.DataFrame, fwd: int
 
 
 def ic_to_row(ic: np.ndarray, family: str | None, predicted_sign: int, key: str, universe: str, end: str,
-              lineage: str, min_periods: int = MIN_IC_PERIODS) -> dict[str, Any]:
-    """Build the honest-core-facing row from a factor's IC series + its mechanism `family` (H1b) — the
+              lineage: str, min_periods: int = MIN_IC_PERIODS,
+              require_mechanism: bool = False) -> dict[str, Any]:
+    """Build the honest-core-facing row from a factor's IC series + its mechanism `family` — the
     SINGLE row source shared by the primitive scorer (`FactorBackend`) and the grammar scorer
     (`factor_engine.GrammarFactorBackend`), so both emit the IDENTICAL contract: {phase, key, ticker,
     predicted_sign, family, mechanism_ok, measurement_invalid, n_days, t_stat_newey_west, sign_ok,
     p_value, end, data_lineage_hash}.
 
-    `measurement_invalid` (never flags) fires on EITHER axis: DATA-INSUFFICIENCY (too few IC periods / a
-    zero-variance IC) OR MECHANISM-INCOHERENCE (`family is None` — the loading regression found no
-    registered premium). A mechanism-incoherent factor that HAS data keeps its t-stat for transparency but
-    its `p_value` is None (e=0, never flags) — the foil-paper defense, mirroring the option path's
-    family-None branch. A coherent factor (family set) scores normally."""
+    MECHANISM IS INFORMATIONAL BY DEFAULT (promotion-first): `family` / `mechanism_ok` are RECORDED so a
+    reviewer can see whether a survivor loads on a registered premium, but a mechanism-incoherent factor
+    (`family is None`) is still scored and flag-eligible — the arbiter of an edge is out-of-sample,
+    net-of-cost persistence, not an explanation. Set ``require_mechanism=True`` to restore the fail-closed
+    foil-paper defense (family=None -> measurement_invalid, p_value None, e=0, never flags): a tested
+    opt-in, defaulted OFF for BOTH the human and the automated (proposer) paths. DATA-INSUFFICIENCY (too
+    few IC periods / a zero-variance IC) always invalidates, gate or not."""
     n = int(ic.size)
     row = {'phase': 'factor', 'key': key, 'ticker': universe, 'predicted_sign': predicted_sign,
            'family': family, 'mechanism_ok': family is not None, 'end': end, 'data_lineage_hash': lineage}
@@ -144,10 +151,10 @@ def ic_to_row(ic: np.ndarray, family: str | None, predicted_sign: int, key: str,
     # for factors, the same HAC convention the option path uses (cc_backtest.compute_statistics).
     t_ic = newey_west_t(ic)
     t_sign = (t_ic > 0) - (t_ic < 0)
-    incoherent = family is None                                   # mechanism-incoherent: keep t, never flag
-    return {**row, 'measurement_invalid': incoherent, 'n_days': n, 't_stat_newey_west': t_ic,
+    gated_out = require_mechanism and family is None       # opt-in foil-paper gate: keep t, never flag
+    return {**row, 'measurement_invalid': gated_out, 'n_days': n, 't_stat_newey_west': t_ic,
             'sign_ok': bool(t_sign == predicted_sign),
-            'p_value': None if incoherent else round(_asymptotic_p(t_ic, predicted_sign), 4)}
+            'p_value': None if gated_out else round(_asymptotic_p(t_ic, predicted_sign), 4)}
 
 
 @dataclass
@@ -163,6 +170,8 @@ class FactorBackend:
     end: str = FACTOR_END                  # as-of date the panel is loaded through
     fwd: int = 1                           # forward-return horizon for the IC (periods)
     min_periods: int = MIN_IC_PERIODS
+    require_mechanism: bool = False         # promotion-first: mechanism is INFORMATIONAL by default;
+                                            # opt in to restore the foil-paper fail-closed on family=None
 
     def enumerate(self) -> list[Factor]:
         """The F2 primitive slice: every (name, window), harvesting convention (predicted_sign +1)."""
@@ -189,10 +198,12 @@ class FactorBackend:
 
     def score(self, candidate: Factor) -> dict[str, Any]:
         """The honest-core-facing row: evaluate the factor's signal ONCE, compute its IC series AND its
-        mechanism `family` (the loading regression) from it, and hand both to `ic_to_row`. A coherent
-        factor scores normally; a mechanism-incoherent one fails closed (the gate is now live, H1b)."""
+        mechanism `family` (the loading regression) from it, and hand both to `ic_to_row`. `family` is
+        recorded but does NOT gate by default (promotion-first); construct the backend with
+        ``require_mechanism=True`` to restore the foil-paper fail-closed on a mechanism-incoherent factor."""
         signal = evaluate_factor(candidate, self.prices)
         ic = information_coefficient(signal, self.prices, self.fwd)
         family = loading_family(signal, self.prices)
         return ic_to_row(ic, family, candidate.predicted_sign, factor_key(candidate), self.universe,
-                         self.end, self.lineage(candidate), self.min_periods)
+                         self.end, self.lineage(candidate), self.min_periods,
+                         require_mechanism=self.require_mechanism)

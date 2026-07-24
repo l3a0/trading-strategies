@@ -129,17 +129,28 @@ class TestFactorScoring:
             assert row['family'] in REGISTERED_PREMIA and row['mechanism_ok'] is True
             assert fb.mechanism(f) == row['family']
 
-    def test_ic_to_row_fails_closed_on_incoherent_family(self) -> None:
-        # the gate logic directly: family=None keeps the t for transparency but NEVER flags (p=None,
-        # measurement_invalid); a typed family scores normally. (Mirrors the option path's family-None.)
+    def test_ic_to_row_fails_closed_when_require_mechanism(self) -> None:
+        # the OPT-IN foil-paper gate: with require_mechanism=True, family=None keeps the t for transparency
+        # but NEVER flags (p=None, measurement_invalid); a typed family scores normally.
         from factor.factor_backend import ic_to_row
         ic = np.linspace(0.05, 0.15, 100)                    # mean 0.1, real variance -> a big t
-        coherent = ic_to_row(ic, 'trend', 1, 'k', 'U', '2026', 'lin')
-        incoherent = ic_to_row(ic, None, 1, 'k', 'U', '2026', 'lin')
+        coherent = ic_to_row(ic, 'trend', 1, 'k', 'U', '2026', 'lin', require_mechanism=True)
+        incoherent = ic_to_row(ic, None, 1, 'k', 'U', '2026', 'lin', require_mechanism=True)
         assert coherent['measurement_invalid'] is False and coherent['p_value'] is not None
         assert incoherent['measurement_invalid'] is True and incoherent['p_value'] is None
         assert incoherent['t_stat_newey_west'] == coherent['t_stat_newey_west']   # t kept for transparency
         assert incoherent['family'] is None and incoherent['mechanism_ok'] is False
+
+    def test_ic_to_row_default_records_family_but_does_not_gate(self) -> None:
+        # promotion-first DEFAULT (require_mechanism off): family is RECORDED but does NOT gate — a
+        # mechanism-incoherent factor is scored and flag-eligible; the arbiter is the out-of-sample
+        # holdout, not an explanation. (Data-insufficiency still invalidates, separately.)
+        from factor.factor_backend import ic_to_row
+        ic = np.linspace(0.05, 0.15, 100)
+        default = ic_to_row(ic, None, 1, 'k', 'U', '2026', 'lin')      # default: no mechanism requirement
+        assert default['measurement_invalid'] is False and default['p_value'] is not None
+        assert default['family'] is None and default['mechanism_ok'] is False   # recorded, not gating
+        assert default['t_stat_newey_west'] is not None
 
 
 class TestFactorBackendFeedsHonestCore:
