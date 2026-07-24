@@ -33,6 +33,8 @@ from engine.intraday_continuation import (
     CAPTURE_FILLS,
     CAPTURE_RESULTS_FILE,
     CHART_SCREEN,
+    EXIT_RULES,
+    EXIT_RESULTS_FILE,
     FIRST_BAR,
     HORIZONS,
     LAST_BAR,
@@ -42,14 +44,17 @@ from engine.intraday_continuation import (
     SESSION_BARS,
     TRIGGER_MOM6,
     VOL_WINDOWS,
+    _bracket_exits,
     _bracket_to_close,
     _forward_extremes,
     _leave_one_out,
     bar_features,
     breakout_mask,
     build_capture_results,
+    build_exit_results,
     capture_ticker,
     ema,
+    exit_ticker,
     five_minute_bars,
     forward_paths,
     load_scan,
@@ -57,6 +62,7 @@ from engine.intraday_continuation import (
     prior_median_columns,
     realized_vol,
     run_capture,
+    run_exit_scan,
     run_scan,
     session_bootstrap,
     two_way_excess,
@@ -741,3 +747,182 @@ class TestCaptureResults:
         assert sig_touch                       # something is significant
         for c in sig_touch:
             assert c['excess_bp'] < 8.0        # below the low end of costs
+
+
+# ------------------------------------------------------ exits + sizing addendum
+
+class TestExitMechanics:
+    """The exit rules on the direction-free bracket, on paths small enough
+    to check by hand. sigma30 = 0.01 throughout, so 1N = 1% and the entry
+    bracket sits at +/-1%."""
+
+    def _p(self, moves):
+        arr = np.array(moves, dtype=float)
+        return arr[:, 0], arr[:, 1], arr[:, 2]
+
+    def _ex(self, hs, ls, cs, px, eod, sig, fill):
+        """``_bracket_exits`` for the cases that must enter (narrows None)."""
+        r = _bracket_exits(hs, ls, cs, px, eod, sig, fill)
+        assert r is not None
+        return r
+
+    def test_no_entry_returns_none(self):
+        hs, ls, cs = self._p([(100.5, 99.6, 100.0)] * 5)
+        assert _bracket_exits(hs, ls, cs, 100.0, 100.1, 0.01, 'barrier') is None
+
+    def test_hold_to_close_is_the_signal_return(self):
+        # long entered at +1% (101), session closes at 103
+        hs, ls, cs = self._p([(101.2, 100.4, 101.1), (102.0, 101.0, 101.8),
+                              (103.2, 102.5, 103.0)])
+        out, side, _ = self._ex(hs, ls, cs, 100.0, 103.0, 0.01, 'barrier')
+        assert side == 1
+        assert out['close'] == pytest.approx(103.0 / 101.0 - 1)
+
+    def test_time_exit_takes_the_offset_bar_close(self):
+        # t30 = 6 bars after entry; build 8 forward bars, entry on bar 0
+        moves = [(101.5, 100.5, 101.0)] + [(102.0, 100.8, 100.0 + b)
+                                           for b in range(1, 9)]
+        hs, ls, cs = self._p(moves)
+        out, _, _ = self._ex(hs, ls, cs, 100.0, 108.0, 0.01, 'barrier')
+        # entry 101 at bar 0; bar 6 close = 100+6 = 106
+        assert out['t30'] == pytest.approx(106.0 / 101.0 - 1)
+
+    def test_stop_is_hit_and_booked_at_the_level_on_barrier_fill(self):
+        # long entry 101, stop1 at 101*(1-0.01) = 99.99; bar 1 low pierces it
+        hs, ls, cs = self._p([(101.5, 100.6, 101.2), (101.0, 99.0, 99.5),
+                              (100.0, 99.4, 99.8)])
+        out, _, _ = self._ex(hs, ls, cs, 100.0, 99.8, 0.01, 'barrier')
+        assert out['stop1'] == pytest.approx(101.0 * (1 - 0.01) / 101.0 - 1)
+
+    def test_stop_touch_fill_uses_the_crossing_bar_close(self):
+        hs, ls, cs = self._p([(101.5, 100.6, 101.2), (101.0, 99.0, 99.5),
+                              (100.0, 99.4, 99.8)])
+        out, _, _ = self._ex(hs, ls, cs, 100.0, 99.8, 0.01, 'touch')
+        # touch fill enters at the crossing bar's close (101.2), not the
+        # 101 barrier, and exits at bar-1's close (99.5)
+        assert out['stop1'] == pytest.approx(99.5 / 101.2 - 1)
+
+    def test_trailing_high_water_is_strictly_causal(self):
+        # a late spike must NOT tighten an earlier bar's trailing stop
+        hs, ls, cs = self._p([(101.5, 100.6, 101.2),   # entry ~101
+                              (104.0, 103.0, 103.8),    # runs up: best -> 104
+                              (103.5, 102.5, 102.6),    # -1N (1%) from 104 = 102.96 -> hit
+                              (110.0, 109.0, 110.0)])    # a later spike, irrelevant
+        out, _, _ = self._ex(hs, ls, cs, 100.0, 110.0, 0.01, 'barrier')
+        # trails a fixed 1N (= sigma30*entry = 1.01) below the running best
+        # of 104 -> 102.99, NOT carried to the later 110 spike
+        assert out['trail1'] == pytest.approx((104.0 - 0.01 * 101.0) / 101.0 - 1)
+        assert out['trail1'] < out['close']    # trailing gave back the run
+
+    def test_a_downside_break_is_a_short(self):
+        hs, ls, cs = self._p([(100.3, 98.6, 98.8), (98.9, 97.8, 98.0),
+                              (98.2, 97.0, 97.5)])
+        out, side, _ = self._ex(hs, ls, cs, 100.0, 97.5, 0.01, 'barrier')
+        assert side == -1
+        assert out['close'] == pytest.approx(-1 * (97.5 / 99.0 - 1))
+
+    def test_mae_r_is_negative_and_in_sigma_units(self):
+        hs, ls, cs = self._p([(101.5, 100.6, 101.2), (101.4, 98.98, 100.0),
+                              (102.0, 101.0, 101.5)])
+        _, _, mae_r = self._ex(hs, ls, cs, 100.0, 101.5, 0.01, 'barrier')
+        # entry 101, worst low 98.98 -> ~-2% -> ~-2 sigma30
+        assert mae_r < 0
+        assert mae_r == pytest.approx((98.98 / 101.0 - 1) / 0.01, rel=1e-3)
+
+
+@pytest.mark.skipif(
+    __import__('engine.intraday_continuation', fromlist=['archive_path'])
+    .archive_path('NVDA') is None,
+    reason='minute archive absent (personal, gitignored)')
+class TestExitArchiveRoundTrip:
+    """The exit/sizing path runs on real tape; the full-universe numbers
+    live in the committed results file, not here."""
+
+    def test_scan_writes_merges_and_sizes(self, tmp_path):
+        out = str(tmp_path / 'exit')
+        rows = run_exit_scan(['NVDA', 'AAPL'], out)
+        assert {r['ticker'] for r in rows} == {'NVDA', 'AAPL'}
+        res = build_exit_results(out)
+        assert res['n_names'] == 2
+        assert {c['exit'] for c in res['exits']} == set(EXIT_RULES)
+        for c in res['exits']:
+            assert c['fill'] in CAPTURE_FILLS and c['n'] > 0
+        s = res['sizing']
+        assert s['n_trades'] > 0 and s['n_sessions'] > 0
+        assert len(s['gross']) == len(s['net'])
+
+    def test_per_ticker_files_are_deterministic(self, tmp_path):
+        a, b = str(tmp_path / 'a'), str(tmp_path / 'b')
+        exit_ticker('AAPL', a)
+        exit_ticker('AAPL', b)
+        za, zb = np.load(os.path.join(a, 'AAPL.npz')), np.load(os.path.join(b, 'AAPL.npz'))
+        for k in za.files:
+            if za[k].dtype.kind == 'f':
+                assert np.allclose(za[k], zb[k], equal_nan=True)
+            else:
+                assert np.array_equal(za[k], zb[k])
+
+
+class TestExitSizingResults:
+    """Pins the committed exit/sizing run so the addendum's prose cannot
+    drift. The verdict: no exit beats holding to the close, and no bet size
+    rescues an edge that is <= 0 after cost.
+    """
+
+    @pytest.fixture(scope='class')
+    def res(self):
+        p = data_path(EXIT_RESULTS_FILE)
+        if not os.path.exists(p):
+            pytest.skip(f'{EXIT_RESULTS_FILE} not committed yet')
+        with open(p) as f:
+            return json.load(f)
+
+    def _touch(self, res):
+        return {c['exit']: c for c in res['exits'] if c['fill'] == 'touch'}
+
+    def test_full_universe(self, res):
+        assert res['n_names'] > 400 and res['sessions'] > 1500
+
+    def test_hold_to_close_is_the_best_exit(self, res):
+        # under the realistic fill, no other exit's event-vs-control excess
+        # beats holding to the close
+        t = self._touch(res)
+        close = t['close']['excess_bp']
+        for rule, c in t.items():
+            if rule == 'close':
+                continue
+            assert c['excess_bp'] <= close + 1e-6
+
+    def test_time_exits_shed_edge(self, res):
+        # cutting early throws away the range-expansion edge
+        t = self._touch(res)
+        assert t['t60']['excess_bp'] < t['close']['excess_bp']
+        assert t['t30']['excess_bp'] < t['close']['excess_bp']
+
+    def test_trailing_and_target_do_not_beat_close(self, res):
+        t = self._touch(res)
+        assert t['trail1']['excess_bp'] < t['close']['excess_bp']
+        assert t['target1']['excess_bp'] < t['close']['excess_bp']
+
+    def test_sizing_expectancy_signs(self, res):
+        # the whole sizing argument turns on the sign: gross positive,
+        # net-of-cost negative
+        s = res['sizing']
+        assert s['mean_r_session_gross'] > 0
+        assert s['mean_r_session_net'] < 0
+        assert s['kelly_session_net'] == 0.0     # no bet on a losing edge
+
+    def test_net_edge_ruins_at_every_fraction(self, res):
+        # sizing cannot rescue the honest (net) edge: every fraction ruins
+        for cell in res['sizing']['net']:
+            assert cell['p_ruin'] > 0.9
+            assert cell['median_terminal'] < 1.0
+
+    def test_gross_edge_over_bets_past_a_tiny_kelly(self, res):
+        # even the optimistic edge has a small optimal fraction; beyond it
+        # ruin climbs monotonically with size
+        s = res['sizing']
+        assert 0 < s['kelly_session_gross'] < 0.02
+        ruin = [c['p_ruin'] for c in sorted(s['gross'], key=lambda x: x['fraction'])]
+        assert ruin == sorted(ruin)              # more size -> more ruin
+        assert ruin[-1] > 0.9                    # the largest fraction ruins

@@ -70,6 +70,7 @@ import numpy as np
 import pandas as pd
 
 from common.paths import data_path
+from common.position_sizing import kelly_fraction, sizing_sweep
 from pipeline.minute_archive import (
     TICKER_DROP_WINDOWS,
     TICKER_START_CLIPS,
@@ -144,6 +145,28 @@ CAPTURE_CONTROLS = 5          # random same-name/same-clock controls per event
 # the widest-range bars, so it is the one bias that could manufacture a
 # spurious edge.
 CAPTURE_FILLS = ('barrier', 'touch')
+
+# --- the exit / sizing addendum: do exits or sizing change the verdict? -------
+# Two follow-ups on the SAME direction-free 1N bracket. (1) EXITS — stop
+# width is one axis, exit timing/type another; the question is whether any
+# exit beats holding to the close. (2) SIZING — feed the bracket's per-trade
+# R-multiples into the fixed-fractional resampler; the question is whether
+# any bet size rescues an edge that is <= 0 after cost. Both re-read the
+# archive (they need the forward path), so their own scan dir + results.
+EXIT_DIR = 'intraday_exit_scan'
+EXIT_RESULTS_FILE = 'intraday_exit_sizing_results.json'
+EXIT_ENTRY_N = 1.0            # the bracket half-width these exits sit on, in sigma30
+# Every exit rule, evaluated from the bracket entry forward. Level exits
+# (stop/trail/target) are booked under BOTH fills, like the entry; time and
+# close exits fill at an observed bar close and carry no fill ambiguity.
+EXIT_RULES = ('close', 'stop1', 'stop2', 'stop3', 't30', 't60',
+              'trail1', 'target1')
+EXIT_CONTROLS = 5
+# fixed-fractional sizing: the bet-size grid (Tharp's band through Basso's
+# 3% "gunslinger" and past it) and the cost charged to the honest bag.
+SIZING_FRACTIONS = (0.005, 0.01, 0.02, 0.05)
+SIZING_COST_BP = 10.0        # a large-cap round trip, subtracted for the NET bag
+
 EVENT_FEATURES = ('mom6', 'mom_open', 'brk2h', 'brkday', 'rvol', 'ext50',
                   'rsi', 'sigma', 'z6', 'dollar_volume')
 
@@ -958,6 +981,251 @@ def build_capture_results(out_dir: str) -> dict[str, Any]:
                 sigma30_median_bp=float(np.median(sig) * 1e4), cells=cells)
 
 
+# --------------------------------------------------------- exits + sizing
+
+def _bracket_exits(highs, lows, closes, px, eod, sigma30, fill):
+    """Every exit rule for one direction-free 1N bracket entry.
+
+    Enters at first touch of +/- EXIT_ENTRY_N*sigma30 (barrier or touch
+    fill, as the entry), then evaluates each rule forward from that bar.
+    Returns ``(pnl_by_rule, side, mae_r)`` or ``None`` if never entered.
+    ``mae_r`` is the worst adverse excursion from entry in sigma30 units,
+    for the intratrade ruin test. Level exits (stop/trail/target) fill at
+    the level under 'barrier' and at the crossing bar's close under
+    'touch'; time exits fill at an observed bar close either way. The
+    trailing high-water is strictly causal — it ratchets only on bars up
+    to and including the current one.
+    """
+    w = EXIT_ENTRY_N * sigma30
+    up, dn = highs >= px * (1 + w), lows <= px * (1 - w)
+    far = 1 << 30
+    iu = int(np.argmax(up)) if up.any() else far
+    idn = int(np.argmax(dn)) if dn.any() else far
+    if iu == idn == far:
+        return None
+    side = 1 if iu < idn else -1
+    j = min(iu, idn)
+    entry = px * (1 + side * w) if fill == 'barrier' else float(closes[j])
+    if entry <= 0:
+        return None
+    fh, fl, fc = highs[j:], lows[j:], closes[j:]     # entry bar forward
+    n = len(fc)
+    out = {'close': side * (eod / entry - 1)}
+    for tag, k in (('t30', 6), ('t60', 12)):
+        out[tag] = side * (float(fc[min(k, n - 1)]) / entry - 1)
+    for s, tag in ((1, 'stop1'), (2, 'stop2'), (3, 'stop3')):
+        stop_px = entry - side * s * sigma30 * entry
+        hit = (np.nonzero(fl <= stop_px)[0] if side == 1
+               else np.nonzero(fh >= stop_px)[0])
+        if len(hit):
+            exit_px = stop_px if fill == 'barrier' else float(fc[hit[0]])
+        else:
+            exit_px = eod
+        out[tag] = side * (exit_px / entry - 1)
+    tw = sigma30 * entry                              # trailing stop, 1N
+    exit_px = eod
+    best = entry
+    for t in range(n):
+        if side == 1:
+            best = max(best, float(fh[t]))
+            if fl[t] <= best - tw:
+                exit_px = (best - tw) if fill == 'barrier' else float(fc[t])
+                break
+        else:
+            best = min(best, float(fl[t]))
+            if fh[t] >= best + tw:
+                exit_px = (best + tw) if fill == 'barrier' else float(fc[t])
+                break
+    out['trail1'] = side * (exit_px / entry - 1)
+    gw = sigma30 * entry                              # profit target, +1N
+    if side == 1:
+        hit = np.nonzero(fh >= entry + gw)[0]
+        exit_px = ((entry + gw) if fill == 'barrier' else float(fc[hit[0]])) \
+            if len(hit) else eod
+    else:
+        hit = np.nonzero(fl <= entry - gw)[0]
+        exit_px = ((entry - gw) if fill == 'barrier' else float(fc[hit[0]])) \
+            if len(hit) else eod
+    out['target1'] = side * (exit_px / entry - 1)
+    adverse = (float(np.min(fl)) / entry - 1) if side == 1 \
+        else -(float(np.max(fh)) / entry - 1)
+    return out, side, adverse / sigma30
+
+
+def exit_ticker(ticker: str, out_dir: str) -> dict[str, Any] | None:
+    """Every event's exit-variant P&L plus matched random controls, and
+    the per-trade R-multiple / MAE-R that feed the sizing block.
+
+    Same matched control as the capture layer (same ticker, same clock, a
+    random session, sized off that session's own sigma30), same per-name
+    deterministic RNG. Writes ``{ticker}.npz``.
+    """
+    path = archive_path(ticker)
+    if path is None:
+        return None
+    bars = five_minute_bars(path, SCAN_START, TICKER_START_CLIPS.get(ticker),
+                            TICKER_DROP_WINDOWS.get(ticker, []))
+    if bars is None or len(bars['dates']) < SIGMA_SESSIONS + 5:
+        return None
+    dates, C, Hi, Lo, nb = (bars['dates'], bars['close'], bars['high'],
+                            bars['low'], bars['n_bars'])
+    feat = bar_features(bars)
+    sig30 = feat['sigma'][:, 0] * np.sqrt(6)
+    elig = np.nonzero((nb >= MIN_SESSION_BARS) & np.isfinite(sig30)
+                      & (sig30 > 0) & (dates >= HEADLINE_START))[0]
+    if len(elig) < 30:
+        return None
+    sess, bar = np.nonzero(breakout_mask(feat, CHART_SCREEN))
+    bar = bar + FIRST_BAR
+    keep = (nb[sess] >= MIN_SESSION_BARS) & (dates[sess] >= HEADLINE_START)
+    sess, bar = sess[keep], bar[keep]
+    rng = np.random.default_rng(CONTINUATION_SEED ^ zlib.crc32(ticker.encode()))
+
+    keys = [f'{r}_{f}' for r in EXIT_RULES for f in CAPTURE_FILLS]
+    ev = {k: [] for k in keys}
+    ct = {k: [] for k in keys}
+    ev_dates, ev_sig, ev_r, ev_mae = [], [], [], []
+    for e in range(len(sess)):
+        d, b = int(sess[e]), int(bar[e])
+        v = sig30[d]
+        hs, ls, cs = Hi[d, b + 1:], Lo[d, b + 1:], C[d, b + 1:]
+        if len(hs) < 2 or not (np.isfinite(v) and v > 0):
+            continue
+        px, eod = float(C[d, b]), float(C[d, -1])
+        raw = {f: _bracket_exits(hs, ls, cs, px, eod, v, f) for f in CAPTURE_FILLS}
+        if any(g is None for g in raw.values()):
+            continue
+        got = {f: g for f, g in raw.items() if g is not None}   # all present here
+        pool = rng.choice(elig, size=EXIT_CONTROLS * 3, replace=True)
+        controls = [int(x) for x in pool if int(x) != d][:EXIT_CONTROLS]
+        if len(controls) < 2:
+            continue
+        cacc = {k: [] for k in keys}
+        for d2 in controls:
+            for f in CAPTURE_FILLS:
+                cr = _bracket_exits(Hi[d2, b + 1:], Lo[d2, b + 1:], C[d2, b + 1:],
+                                    float(C[d2, b]), float(C[d2, -1]), sig30[d2], f)
+                if cr is None:
+                    continue
+                for rule in EXIT_RULES:
+                    cacc[f'{rule}_{f}'].append(cr[0][rule])
+        for f in CAPTURE_FILLS:
+            out_f = got[f][0]
+            for rule in EXIT_RULES:
+                ev[f'{rule}_{f}'].append(out_f[rule])
+                cv = cacc[f'{rule}_{f}']
+                ct[f'{rule}_{f}'].append(float(np.mean(cv)) if cv else np.nan)
+        out_touch, _, mae_r = got['touch']
+        ev_r.append(out_touch['close'] / v)          # R = touch-fill close / sigma30
+        ev_mae.append(mae_r)
+        ev_sig.append(v)
+        ev_dates.append(dates[d])
+    if not ev_dates:
+        return None
+    payload: dict[str, Any] = dict(
+        ticker=ticker, dates=np.array(ev_dates),
+        sigma30=np.array(ev_sig, dtype=np.float32),
+        r_mult=np.array(ev_r, dtype=np.float64),
+        mae_r=np.array(ev_mae, dtype=np.float64))
+    for k in keys:
+        payload[f'ev_{k}'] = np.array(ev[k], dtype=np.float64)
+        payload[f'ct_{k}'] = np.array(ct[k], dtype=np.float64)
+    os.makedirs(out_dir, exist_ok=True)
+    np.savez_compressed(os.path.join(out_dir, f'{ticker}.npz'), **payload)
+    return dict(ticker=ticker, events=len(ev_dates))
+
+
+def run_exit_scan(tickers: Iterable[str], out_dir: str,
+                  skip_existing: bool = True) -> list[dict[str, Any]]:
+    """Exit/sizing pass over a ticker list; resumable, so it can be sharded."""
+    os.makedirs(out_dir, exist_ok=True)
+    rows = []
+    for t in sorted(tickers):
+        if skip_existing and os.path.exists(os.path.join(out_dir, f'{t}.npz')):
+            continue
+        r = exit_ticker(t, out_dir)
+        if r is not None:
+            rows.append(r)
+    return rows
+
+
+def _sizing_block(r_mult, mae_r, sigma30, dates):
+    """Session-clustered fixed-fractional sizing, gross and net of cost.
+
+    The sizing unit is the SESSION, not the individual trade: a market-wide
+    rip fires many correlated names at once, so a real account bets on the
+    day, and resampling whole sessions bundles those correlated trades
+    rather than drawing them independently. Each session's R is the
+    equal-weight mean across that day's events. The NET bag charges
+    SIZING_COST_BP per trade before aggregation.
+    """
+    cost = (SIZING_COST_BP / 1e4) / sigma30           # per-trade cost in R units
+    r_net = r_mult - cost
+    ud, inv = np.unique(dates, return_inverse=True)
+    sess_g = np.array([r_mult[inv == i].mean() for i in range(len(ud))])
+    sess_n = np.array([r_net[inv == i].mean() for i in range(len(ud))])
+
+    def sweep(bag):
+        sw = sizing_sweep(bag, fractions=SIZING_FRACTIONS, n_paths=3000,
+                          seed=CONTINUATION_SEED)
+        return [dict(fraction=f, median_terminal=s['terminal']['median'],
+                     max_dd_median=s['max_drawdown']['median'],
+                     p_ruin=s['p_ruin'],
+                     p_below_start=s['p_negative_terminal'])
+                for f, s in sw.items()]
+    return dict(
+        n_trades=int(len(r_mult)), n_sessions=int(len(ud)),
+        sigma30_median_bp=float(np.median(sigma30) * 1e4),
+        mean_r_trade_gross=float(r_mult.mean()),
+        mean_r_trade_net=float(r_net.mean()),
+        mean_r_session_gross=float(sess_g.mean()),
+        mean_r_session_net=float(sess_n.mean()),
+        kelly_session_gross=float(kelly_fraction(sess_g)),
+        kelly_session_net=float(kelly_fraction(sess_n)),
+        gross=sweep(sess_g), net=sweep(sess_n))
+
+
+def build_exit_results(out_dir: str) -> dict[str, Any]:
+    """Merge the exit files: the exit-rule table plus the sizing block."""
+    files = sorted(glob.glob(os.path.join(out_dir, '*.npz')))
+    if not files:
+        raise FileNotFoundError(f'no exit files under {out_dir}')
+    keys = [f'{r}_{f}' for r in EXIT_RULES for f in CAPTURE_FILLS]
+    ev = {k: [] for k in keys}
+    ct = {k: [] for k in keys}
+    dates, sig, rmult, mae = [], [], [], []
+    for fpath in files:
+        z = np.load(fpath, allow_pickle=False)
+        dates.append(z['dates'])
+        sig.append(z['sigma30'])
+        rmult.append(z['r_mult'])
+        mae.append(z['mae_r'])
+        for k in keys:
+            ev[k].append(z[f'ev_{k}'])
+            ct[k].append(z[f'ct_{k}'])
+    dates = np.concatenate(dates)
+    sig = np.concatenate(sig).astype(np.float64)
+    rmult = np.concatenate(rmult)
+    mae = np.concatenate(mae)
+    exits = []
+    for rule in EXIT_RULES:
+        for f in CAPTURE_FILLS:
+            e = np.concatenate(ev[f'{rule}_{f}'])
+            c = np.concatenate(ct[f'{rule}_{f}'])
+            ok = np.isfinite(e) & np.isfinite(c)
+            be = session_bootstrap(e[ok], dates[ok], 1500)
+            bd = session_bootstrap(e[ok] - c[ok], dates[ok], 1500)
+            exits.append(dict(
+                exit=rule, fill=f, n=int(ok.sum()),
+                event_bp=be['mean'] * 1e4,
+                control_bp=session_bootstrap(c[ok], dates[ok], 800)['mean'] * 1e4,
+                excess_bp=bd['mean'] * 1e4,
+                ci_bp=[bd['lo'] * 1e4, bd['hi'] * 1e4], p=bd['p']))
+    return dict(era=HEADLINE_START, entry_n=EXIT_ENTRY_N,
+                n_names=len(files), sessions=int(len(np.unique(dates))),
+                exits=exits, sizing=_sizing_block(rmult, mae, sig, dates))
+
+
 # -------------------------------------------------------------------- CLI
 
 def build_results(panel: dict[str, Any]) -> dict[str, Any]:
@@ -1001,18 +1269,26 @@ def main(argv: Sequence[str] | None = None) -> None:
                          'the archive; its own directory)')
     ap.add_argument('--write-capture', action='store_true',
                     help=f'refresh the committed data/{CAPTURE_RESULTS_FILE}')
+    ap.add_argument('--exit', dest='exit_scan', action='store_true',
+                    help='the exit-variant / sizing pass (re-reads the '
+                         'archive; its own directory)')
+    ap.add_argument('--write-exit', action='store_true',
+                    help=f'refresh the committed data/{EXIT_RESULTS_FILE}')
     ap.add_argument('--tickers', default=None,
                     help='comma-separated subset (default: the S&P 500 '
                          'universe plus SPY and QQQ)')
     ap.add_argument('--out', default=None, help=f'default: data/{SCAN_DIR}')
     ap.add_argument('--capture-out', default=None,
                     help=f'default: data/{CAPTURE_DIR}')
+    ap.add_argument('--exit-out', default=None,
+                    help=f'default: data/{EXIT_DIR}')
     ap.add_argument('--json', action='store_true')
     ap.add_argument('--write-results', action='store_true',
                     help=f'refresh the committed data/{RESULTS_FILE}')
     a = ap.parse_args(argv)
     out = a.out or data_path(SCAN_DIR)
     cap_out = a.capture_out or data_path(CAPTURE_DIR)
+    exit_out = a.exit_out or data_path(EXIT_DIR)
 
     tickers = (a.tickers.split(',') if a.tickers
                else sorted(set(universe()) | {'SPY', 'QQQ'}))
@@ -1032,6 +1308,21 @@ def main(argv: Sequence[str] | None = None) -> None:
         print(_fmt([c for c in cap['cells']],
                    ('bracket_n', 'fill', 'n', 'event_bp', 'control_bp',
                     'excess_bp', 'p')))
+    if a.exit_scan:
+        rows = run_exit_scan(tickers, exit_out)
+        print(f'exit-scanned {len(rows)} tickers -> {exit_out}')
+    if a.write_exit:
+        ex = build_exit_results(exit_out)
+        with open(data_path(EXIT_RESULTS_FILE), 'w') as f:
+            json.dump(ex, f, indent=1, sort_keys=True)
+            f.write('\n')
+        print(f'wrote data/{EXIT_RESULTS_FILE}')
+        print(_fmt(ex['exits'], ('exit', 'fill', 'n', 'event_bp',
+                                 'control_bp', 'excess_bp', 'p')))
+        s = ex['sizing']
+        print(f"\nsizing: mean R gross {s['mean_r_session_gross']:+.4f} "
+              f"net {s['mean_r_session_net']:+.4f}  kelly gross "
+              f"{s['kelly_session_gross']:.3f} net {s['kelly_session_net']:.3f}")
     if not (a.report or a.write_results):
         return
 
