@@ -29,14 +29,18 @@ def _noise_panel(seed: int = 99, T: int = 200, N: int = 30) -> pd.DataFrame:
 
 @pytest.fixture(scope='module')
 def planted() -> dict:
-    """One grammar search over a panel with a REAL planted momentum signal."""
-    return run_factor_search(GrammarFactorBackend('SYNTH', _panel(T=200), checksum='x'))
+    """One grammar search over a panel with a REAL planted momentum signal. Runs with the OPT-IN
+    foil-paper gate (require_mechanism=True) so the mechanism-defense pins below hold; the promotion-first
+    DEFAULT (gate off) is pinned by test_incoherent_factors_are_scored_by_default."""
+    return run_factor_search(GrammarFactorBackend('SYNTH', _panel(T=200), checksum='x',
+                                                  require_mechanism=True))
 
 
 @pytest.fixture(scope='module')
 def noise() -> dict:
-    """One grammar search over a no-signal random-walk panel."""
-    return run_factor_search(GrammarFactorBackend('NOISE', _noise_panel(), checksum='x'))
+    """One grammar search over a no-signal random-walk panel (opt-in gate on, as `planted`)."""
+    return run_factor_search(GrammarFactorBackend('NOISE', _noise_panel(), checksum='x',
+                                                  require_mechanism=True))
 
 
 class TestFactorSearch:
@@ -56,11 +60,20 @@ class TestFactorSearch:
         assert noise['survivors'] == 0 and noise['coherent'] > 0
 
     def test_incoherent_factors_never_survive(self, planted: dict) -> None:
-        # the foil-paper defense, live: a mechanism-incoherent factor (family None, p=None -> e=0) can
-        # never be a survivor, even amid a panel full of real signal.
+        # the OPT-IN foil-paper gate (the `planted` fixture runs require_mechanism=True): a
+        # mechanism-incoherent factor (family None, p=None -> e=0) can never be a survivor.
         incoherent = [r for r in planted['judged']
                       if not r['mechanism_ok'] and r['t_stat_newey_west'] is not None]
         assert incoherent and not any(r['elond_survivor'] for r in incoherent)
+
+    def test_incoherent_factors_are_scored_by_default(self) -> None:
+        # promotion-first DEFAULT (require_mechanism off, the config real runs use): a mechanism-incoherent
+        # factor is SCORED and flag-eligible, not gated out — the arbiter is the OOS holdout, not a family.
+        res = run_factor_search(GrammarFactorBackend('SYNTH', _panel(T=200), checksum='x'))  # default: gate off
+        incoh = [r for r in res['judged']
+                 if not r['mechanism_ok'] and r['t_stat_newey_west'] is not None]
+        assert incoh                                          # data-sufficient incoherent Exprs exist
+        assert all(not r['measurement_invalid'] and r['p_value'] is not None for r in incoh)
 
     def test_backend_generic_over_primitives(self) -> None:
         # the loop drives any Backend with enumerate + score — here the named primitives (fast, 9 cells)
