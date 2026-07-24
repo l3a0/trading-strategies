@@ -35,6 +35,8 @@ from engine.intraday_continuation import (
     CHART_SCREEN,
     EXIT_RULES,
     EXIT_RESULTS_FILE,
+    MULTIDAY_HORIZONS,
+    MULTIDAY_RESULTS_FILE,
     FIRST_BAR,
     HORIZONS,
     LAST_BAR,
@@ -62,7 +64,12 @@ from engine.intraday_continuation import (
     prior_median_columns,
     realized_vol,
     run_capture,
+    _moving_block_boot,
+    _rolling_beta,
+    build_multiday_results,
+    multiday_ticker,
     run_exit_scan,
+    run_multiday_scan,
     run_scan,
     session_bootstrap,
     two_way_excess,
@@ -926,3 +933,142 @@ class TestExitSizingResults:
         ruin = [c['p_ruin'] for c in sorted(s['gross'], key=lambda x: x['fraction'])]
         assert ruin == sorted(ruin)              # more size -> more ruin
         assert ruin[-1] > 0.9                    # the largest fraction ruins
+
+
+# ------------------------------------------------------ multi-day addendum
+
+class TestMultidayMechanics:
+    """Rolling beta and the family-wise block bootstrap, on synthetic data."""
+
+    def test_rolling_beta_recovers_a_planted_slope(self):
+        rng = np.random.default_rng(0)
+        spy = rng.normal(0, 0.01, 400)
+        name = 1.5 * spy + rng.normal(0, 0.001, 400)     # true beta 1.5
+        beta = _rolling_beta(name, spy, 60)
+        assert np.isnan(beta[:60]).all()                 # warm-up undefined
+        assert beta[200] == pytest.approx(1.5, abs=0.1)
+
+    def test_rolling_beta_is_causal(self):
+        # beta[i] must not move when a FUTURE return is changed
+        rng = np.random.default_rng(1)
+        spy = rng.normal(0, 0.01, 300)
+        name = rng.normal(0, 0.01, 300)
+        b0 = _rolling_beta(name, spy, 60)[150]
+        name2 = name.copy()
+        name2[200:] *= 5                                 # tamper the future
+        assert _rolling_beta(name2, spy, 60)[150] == pytest.approx(b0)
+
+    def test_block_boot_is_unbiased_on_a_null_matrix(self):
+        rng = np.random.default_rng(2)
+        mat = rng.normal(0, 1.0, (3000, len(MULTIDAY_HORIZONS)))
+        obs, lo, hi, p, t, se, joint = _moving_block_boot(mat, block=30, reps=800)
+        assert abs(obs.mean()) < 0.05                    # centred on zero
+        assert np.all((lo <= obs) & (obs <= hi))         # CI contains the point
+        # the family band for 7 correlated columns sits above the ~1.96
+        # single-comparison level and below a naive Bonferroni; per-column
+        # CIs are NOT asserted to straddle zero, since ~1-in-20 will not --
+        # which is exactly why the family band exists
+        assert 2.0 < joint < 4.0
+
+    def test_family_band_exceeds_every_single_t(self):
+        # the joint max-|t| band must be at least as strict as any per-horizon t
+        rng = np.random.default_rng(3)
+        mat = rng.normal(0.05, 1.0, (400, len(MULTIDAY_HORIZONS)))
+        *_, t, se, joint = _moving_block_boot(mat, block=30, reps=800)
+        assert joint >= np.max(np.abs(t)) - 1e-9
+
+    def test_block_boot_recovers_a_planted_mean(self):
+        mat = np.full((300, len(MULTIDAY_HORIZONS)), 0.01)
+        obs, *_ = _moving_block_boot(mat, block=30, reps=200)
+        assert np.all(np.abs(obs - 0.01) < 1e-9)
+
+
+@pytest.mark.skipif(
+    __import__('engine.intraday_continuation', fromlist=['archive_path'])
+    .archive_path('NVDA') is None,
+    reason='minute archive absent (personal, gitignored)')
+class TestMultidayArchiveRoundTrip:
+    """The multi-day path runs on real tape; the full-universe numbers live
+    in the committed results file."""
+
+    def test_scan_writes_and_merges(self, tmp_path):
+        out = str(tmp_path / 'md')
+        rows = run_multiday_scan(['NVDA', 'AAPL'], out)
+        assert {r['ticker'] for r in rows} == {'NVDA', 'AAPL'}
+        res = build_multiday_results(out)
+        assert res['n_names'] == 2
+        assert {h['days'] for h in res['horizons']} == set(MULTIDAY_HORIZONS)
+        assert 0.5 < res['mean_beta'] < 3.0
+        for h in res['horizons']:
+            assert h['n'] > 0 and 0 <= h['pct_positive'] <= 1
+
+    def test_per_ticker_files_are_deterministic(self, tmp_path):
+        from pipeline.minute_archive import load_splits
+        from engine.intraday_continuation import _spy_daily
+        sp = load_splits()
+        spy = _spy_daily(sp)
+        a, b = str(tmp_path / 'a'), str(tmp_path / 'b')
+        multiday_ticker('AAPL', a, sp, spy)
+        multiday_ticker('AAPL', b, sp, spy)
+        za, zb = np.load(os.path.join(a, 'AAPL.npz')), np.load(os.path.join(b, 'AAPL.npz'))
+        for k in za.files:
+            if za[k].dtype.kind == 'f':
+                assert np.allclose(za[k], zb[k], equal_nan=True)
+            else:
+                assert np.array_equal(za[k], zb[k])
+
+
+class TestMultidayResults:
+    """Pins the committed multi-day run. The verdict: RAW forward returns are
+    positive (the market carries high-beta names), but the beta-and-name-
+    adjusted alpha is NEGATIVE at every horizon, with fewer than half of
+    events beating baseline -- no multi-day continuation.
+    """
+
+    @pytest.fixture(scope='class')
+    def md(self):
+        p = data_path(MULTIDAY_RESULTS_FILE)
+        if not os.path.exists(p):
+            pytest.skip(f'{MULTIDAY_RESULTS_FILE} not committed yet')
+        with open(p) as f:
+            return json.load(f)
+
+    def _h(self, md):
+        return {h['days']: h for h in md['horizons']}
+
+    def test_full_universe(self, md):
+        assert md['n_names'] > 400 and md['event_dates'] > 1500
+
+    def test_breakout_names_are_high_beta(self, md):
+        assert md['mean_beta'] > 1.0
+
+    def test_the_market_keeps_rising_after_the_breakout(self, md):
+        # event-day forward SPY is positive and grows with horizon -> the
+        # raw multi-day return is market-driven, which is why beta matters
+        h = self._h(md)
+        assert h[30]['event_spy_fwd_bp'] > h[5]['event_spy_fwd_bp'] > 0
+
+    def test_the_alpha_is_negative_at_every_horizon(self, md):
+        # the median beta-adjusted excess is negative from +2d out, and the
+        # magnitude grows with horizon
+        h = self._h(md)
+        for N in MULTIDAY_HORIZONS:
+            if N >= 2:
+                assert h[N]['median_bp'] < 0
+        assert h[30]['median_bp'] < h[5]['median_bp']    # deepens with horizon
+
+    def test_fewer_than_half_beat_baseline(self, md):
+        for h in md['horizons']:
+            assert h['pct_positive'] < 0.5
+
+    def test_no_horizon_is_positive_significant(self, md):
+        # judged against the joint family-wise band, no horizon shows a
+        # positive continuation edge
+        band = md['family_band_t']
+        assert band > 0
+        for h in md['horizons']:
+            assert not (h['t'] > band)       # nothing clears the joint band up
+
+    def test_plus_one_day_is_overnight_up_then_intraday_fade(self, md):
+        assert md['overnight_bp'] > 0
+        assert md['next_day_intraday_bp'] < 0
