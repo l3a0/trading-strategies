@@ -78,15 +78,27 @@ prefix. Procedure (see [scripts/reader_helpers.js](scripts/reader_helpers.js) fo
 1. Open the book: navigate a tab to `https://read.amazon.com/?asin=<ASIN>`, then
    `Control_Chrome.switch_to_tab` so it's active. Wait ~5 s for the reader to initialize.
 2. Dismiss the "Most Recent Page Read" dialog (click its **No** button via JS).
-3. Open the in-reader notebook panel: click the element with `aria-label="Annotations"`.
-4. Map locations → reader positions: each highlight is `#notebook-grouped-item-<startPos>`, and the
+3. **Maximize text per page** (less paging): snapshot the display settings (snippet 7 — record
+   the JSON, it's your restore data), then apply smallest font + narrowest margins (snippet 8
+   with `FONT_IDX = 0`, `'Narrow'`) and confirm with a re-run of 7 (`fontSizeIndex: 0`,
+   `sideMarginsSize: "narrow"`). Leave the column mode alone: the reader re-paginates either
+   mode to fill the window (owner-verified), so columns don't change text density — only the
+   paging mechanics in step 6. Gotchas: the Aa panel
+   auto-closes between JS calls, so snippet 8 is a poll — repeat until it stops returning
+   `panel: 'opening'`. Settings live in **origin-wide localStorage** (`KWR_Display_Settings`),
+   shared by every read.amazon.com tab — never run two extraction sessions concurrently, and
+   restore the snapshot when the run is done (snippet 8 with the recorded values). Tiny glyphs
+   are fine — the zoom step below does the reading.
+4. Open the in-reader notebook panel: click the element with `aria-label="Annotations"`.
+5. Map locations → reader positions: each highlight is `#notebook-grouped-item-<startPos>`, and the
    start positions in DOM order line up **1:1** with the scraped highlights sorted by location. Click
    an item to jump the reader to that highlight.
-5. `computer-use` `screenshot` (read-only is fine) → `zoom` into the yellow span → transcribe the
+6. `computer-use` `screenshot` (read-only is fine) → `zoom` into the yellow span → transcribe the
    completion. Page forward with a **synthetic ArrowRight keydown** (the chevron button's `.click()`
-   does nothing; the key event works; note it advances a 2-page spread). Highlights that spill past a
-   page bottom continue at the next column/page top.
-6. **Boundary disambiguation** (adjacent highlights with no gap between them): add a red outline to the
+   does nothing; the key event works; it advances one viewport — a 2-page spread in two-column mode,
+   one full-width page in single-column). Highlights that spill past a page bottom continue at the
+   next column's top (two-column) or the next page (single-column).
+7. **Boundary disambiguation** (adjacent highlights with no gap between them): add a red outline to the
    `.kg-client-highlight` divs whose class token is `<startPos>/<endPos>` — those rectangles ARE the
    exact highlight extent. The token's end value also equals (next highlight's start − 1) when adjacent.
 
@@ -99,6 +111,8 @@ truncations cluster in densely-highlighted passages). Re-run Step 3 to fold them
 - Seam check: for each recovered loc, `full = prefix[:-1].rstrip() + " " + completion` has no double
   space, no doubled word at the join, no leftover `…`.
 - `### Location` section count == highlight count; file ends with exactly one newline.
+- Display settings restored to the snippet-7 snapshot (they're shared by every read.amazon.com
+  tab, so leaving the scan settings set pollutes normal reading).
 
 ## Verbatim judgment calls
 
