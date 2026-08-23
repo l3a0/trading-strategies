@@ -9,7 +9,10 @@
  * corrupting verbatim text. The download keeps the bytes exact.
  *
  * If the file doesn't appear in ~/Downloads, the tab was a background tab —
- * Control_Chrome.switch_to_tab to make it active, then re-run.
+ * Control_Chrome.switch_to_tab to make it active, then re-run. Chrome also blocks
+ * the SECOND automatic download from an origin: fallback is to stash the payload on
+ * window.__khl (this script does) and POST it to scripts/receiver.py:
+ *   fetch('http://127.0.0.1:8931/json?name=<asin>_highlights', {method:'POST', body: window.__khl})
  */
 (() => {
   const norm = s => s ? s.replace(/ /g, ' ').replace(/\s+/g, ' ').trim() : s;
@@ -23,8 +26,9 @@
     const text = hl ? norm(hl.textContent) : null;
     const note = norm(r.querySelector('#note')?.textContent) || '';
     const truncated = r.textContent.includes('hidden or truncated due to export limits');
-    return { loc: loc ? Number(loc) : null, color, text, note, truncated };
-  }).filter(d => d.text !== null);
+    const hidden = !hl;  // export limit can HIDE rows entirely: location present, no text at all
+    return { loc: loc ? Number(loc) : null, color, text, note, truncated, hidden };
+  }).filter(d => d.loc !== null);
 
   // Best-effort book metadata (fill edition/publisher/year by hand in the build step).
   const titleEl = document.querySelector('h3.kp-notebook-metadata, #kp-notebook-annotations h3, h3.a-spacing-top-small');
@@ -36,11 +40,14 @@
   const payload = {
     book: { title: norm(titleEl?.textContent) || document.title, author: norm(authorEl?.textContent) || null, asin },
     count: highlights.length,
-    truncated: highlights.filter(h => h.truncated).length,
+    withText: highlights.filter(h => h.text !== null).length,
+    truncated: highlights.filter(h => h.truncated && !h.hidden).length,
+    hidden: highlights.filter(h => h.hidden).length,
     highlights,
   };
 
-  const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+  window.__khl = JSON.stringify(payload);  // stash for the receiver fallback
+  const blob = new Blob([window.__khl], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = (asin || 'kindle') + '_highlights.json';
