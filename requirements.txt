@@ -12,6 +12,6 @@ pytest-xdist
 # clearing the new findings in the same commit, rather than have a linter
 # release fail an unrelated PR. numpy/pandas/etc. don't have this failure
 # mode, so they stay unpinned.
-ruff==0.15.16
+ruff==0.16.4
 pyright==1.1.411
 pandas-stubs
