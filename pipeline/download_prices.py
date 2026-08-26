@@ -1,12 +1,13 @@
 """Download historical stock prices from Yahoo Finance."""
 
 from __future__ import annotations
-from common.paths import data_path
 
 import argparse
 
 import pandas as pd
 import yfinance as yf  # type: ignore[import-untyped]
+
+from common.paths import data_path
 
 
 def download_prices(  # pyright: ignore[reportUnknownParameterType]

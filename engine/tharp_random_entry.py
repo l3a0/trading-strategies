@@ -28,7 +28,7 @@ from __future__ import annotations
 import csv
 import math
 import random
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 
@@ -53,8 +53,8 @@ def load_ohlc(ticker: str) -> dict[str, np.ndarray]:
     with open(data_path(f'{ticker.lower()}_daily_ohlc.csv'), newline='') as f:
         for row in csv.DictReader(f):
             dates.append(row['date'])
-            for k in cols:
-                cols[k].append(float(row[k]))
+            for k, col in cols.items():
+                col.append(float(row[k]))
     return {'dates': dates, **{k: np.asarray(v) for k, v in cols.items()}}
 
 
@@ -134,8 +134,7 @@ def run_career(
                 # close-marked excursion in R (negative when underwater)
                 adverse = (p['entry_px'] - px) if p['dir'] > 0 else (px - p['entry_px'])
                 r_now = -adverse / p['risk_ps']
-                if r_now < p['worst_r']:
-                    p['worst_r'] = r_now
+                p['worst_r'] = min(p['worst_r'], r_now)
                 hit = (px <= p['trail']) if p['dir'] > 0 else (px >= p['trail'])
                 if hit:
                     fill_cost = px * p['shares'] * cost_rate
@@ -210,7 +209,7 @@ def run_career(
 
 def run_ensemble(
     n_careers: int = N_CAREERS,
-    market: Optional[dict[str, Any]] = None,
+    market: dict[str, Any] | None = None,
     seed_base: int = CAREER_SEED_BASE,
     **kwargs: Any,
 ) -> list[dict[str, Any]]:

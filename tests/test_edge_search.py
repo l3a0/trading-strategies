@@ -22,22 +22,24 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from common.paths import DATA_DIR
 import sys
+from pathlib import Path
+from typing import ClassVar
 
 import numpy as np
 import pytest
+from test_real_cc_backtest import _HAVE_MSFT_DAILIES, _HAVE_SPY_DAILIES
 
+from common.paths import DATA_DIR
+from proposer.read_gate_wire import BANNED_RESULT_FIELDS, _parse_proposal_array
 from search.edge_search import (
     ALLOWED_GRID,
     COOLDOWN_NS,
     DEFAULT_CAMPAIGN,
-    PremiumFamily,
-    STRUCTURE_GRAMMAR,
     SEALED_TICKERS,
-    write_ledger,
     SEARCH_TICKERS,
     STRUCTURE_CAMPAIGN,
+    STRUCTURE_GRAMMAR,
     STRUCTURE_SEALED,
     STRUCTURE_SEARCH,
     STRUCTURE_TEMPLATES,
@@ -49,24 +51,24 @@ from search.edge_search import (
     ClaudeProposer,
     CycleData,
     OverlayGrammar,
+    PremiumFamily,
     ProposalBatch,
     StructureCandidate,
     StructureTemplate,
-    grid_universe_size,
-    main,
-    structure_family,
     _add_one_p,
     _assert_grammar_well_typed,
     _assert_llm_boundary,
     _asymptotic_p,
-    _cooldown_null,
     _cand_key,
+    _cooldown_null,
     _data_lineage_hash,
     _format_llm_round,
     _ledger_key,
+    _load_ticker_data,
     _render_grammar_menu,
     _resolve_llm_author,
     _vol_confound,
+    assert_numberless,
     benjamini_yekutieli,
     build_cycle_data,
     build_proposer_corpus,
@@ -74,30 +76,30 @@ from search.edge_search import (
     enumerate_candidates,
     enumerate_grammar_templates,
     enumerate_structure_candidates,
+    format_saturation,
+    grid_universe_size,
     judge_against_lifetime_stream,
     kill_gate,
-    propose_structure_candidates,
-    run_proposer_round,
-    score_and_record,
-    search_saturation,
-    format_saturation,
-    assert_numberless,
-    _load_ticker_data,
+    llm_propose_candidates,
     load_idea_ledger,
     load_proposer_corpus,
     load_search_runs,
-    llm_propose_candidates,
+    main,
+    propose_structure_candidates,
     record_trials,
     render_proposer_corpus,
     run_batch,
     run_campaign,
+    run_proposer_round,
     run_structure_campaign,
+    score_and_record,
     scrub_ledger_row,
+    search_saturation,
+    structure_family,
     structure_ledger_rows,
+    write_ledger,
 )
 from search.evalue_fdr import online_fdr_survivors
-from proposer.read_gate_wire import BANNED_RESULT_FIELDS, _parse_proposal_array
-from test_real_cc_backtest import _HAVE_MSFT_DAILIES, _HAVE_SPY_DAILIES
 
 _HAVE_SEARCH = _HAVE_MSFT_DAILIES and _HAVE_SPY_DAILIES
 
@@ -1144,7 +1146,7 @@ class TestLLMProposer:
         return author
 
     # a valid committed grid point (short_call_25); reused across tests
-    _CELL = {'overlay': 'short_vol', 'ticker': 'AAA',
+    _CELL: ClassVar[dict] = {'overlay': 'short_vol', 'ticker': 'AAA',
              'params': {'target_delta': 0.25, 'dte': 30}, 'predicted_sign': 1}
 
     def test_gate_rejects_off_menu_sealed_offcampaign_and_sign(self, monkeypatch) -> None:
@@ -1174,7 +1176,7 @@ class TestLLMProposer:
     def test_unonboarded_search_ticker_routes_to_needs_onboard(self, monkeypatch) -> None:
         monkeypatch.setattr('search.edge_search._is_onboarded', lambda tk: tk == 'AAA')
         camp = Campaign(search=('AAA', 'BBB'), sealed=('TLT',))
-        cands, need, rejected, _ = llm_propose_candidates(
+        cands, need, _rejected, _ = llm_propose_candidates(
             self._author([{**self._CELL, 'ticker': 'BBB'}]), camp, corpus=[], tried_keys=set())
         assert need == ['BBB'] and cands == []                                           # flagged, not run
 
@@ -1208,7 +1210,7 @@ class TestLLMProposer:
         assert len(ledger) == 1
         # the comparison row is MODEL-AGNOSTIC: no model/prompt field leaked in
         assert not ({'model_served', 'model_requested', 'prompt_sha'} & set(ledger[0]))
-        prov_rows = [json.loads(ln) for ln in open(prov)]
+        prov_rows = [json.loads(ln) for ln in Path(prov).read_text().splitlines()]
         assert len(prov_rows) == 1 and prov_rows[0]['model_served'] == 'A-snap'
         assert prov_rows[0]['round_id'] == 'r1'
 
@@ -1228,14 +1230,14 @@ class TestLLMProposer:
         # comparison rows identical regardless of model (model never touches _ledger_key /
         # _data_lineage_hash); provenance differs
         assert load_idea_ledger(a) == load_idea_ledger(b)
-        assert json.loads(open(pa).read())['model_served'] == 'A-snap'
-        assert json.loads(open(pb).read())['model_served'] == 'B-snap'
+        assert json.loads(Path(pa).read_text())['model_served'] == 'A-snap'
+        assert json.loads(Path(pb).read_text())['model_served'] == 'B-snap'
         # re-spend guard: model B proposing the SAME cell into A's ledger adds nothing
         res = run_proposer_round(camp, path=a, scorer=self._scorer, run=True, record=True,
                                  author=self._author([self._CELL], 'B'), round_id='r2', provenance_path=pa)
         assert res['proposed'] == 0 and res['recorded'] == 0                             # tried -> no new comparison
         assert len(load_idea_ledger(a)) == 1                                             # COMPARISON ledger unchanged (no re-spend)
-        prov_after = [json.loads(ln) for ln in open(pa)]
+        prov_after = [json.loads(ln) for ln in Path(pa).read_text().splitlines()]
         assert len(prov_after) == 2                                                      # the re-proposal IS audited ...
         assert prov_after[-1]['model_served'] == 'B-snap' and prov_after[-1]['accepted'] == []  # ... but accepted nothing
 
@@ -1252,9 +1254,9 @@ class TestReadGateOracleSeam:
                 'params': cand.params_dict(), 'predicted_sign': cand.predicted_sign,
                 't_stat_newey_west': 0.5, 'sign_ok': True, 'p_value': 0.3}
 
-    _MODEL = {'model_requested': 'claude-x', 'model_served': 'claude-x-snap',
+    _MODEL: ClassVar[dict] = {'model_requested': 'claude-x', 'model_served': 'claude-x-snap',
               'temperature': 0.0, 'prompt_sha': 'abc'}
-    _CELL = {'overlay': 'short_vol', 'ticker': 'AAA',
+    _CELL: ClassVar[dict] = {'overlay': 'short_vol', 'ticker': 'AAA',
              'params': {'target_delta': 0.25, 'dte': 30}, 'predicted_sign': 1}
 
     def test_records_and_returns_one_bit_view(self, monkeypatch, tmp_path) -> None:
@@ -1343,8 +1345,8 @@ class TestStructurePhase:
         carried into BY as p=None (counts toward n, never a survivor), and a genuinely
         tiny p among the scored cells survives BY."""
         def scorer(cand: StructureCandidate) -> dict:
-            base = dict(phase='structure', template=cand.template, ticker=cand.ticker,
-                        params=cand.params_dict(), predicted_sign=1)
+            base = {'phase': 'structure', 'template': cand.template, 'ticker': cand.ticker,
+                        'params': cand.params_dict(), 'predicted_sign': 1}
             if cand.ticker == 'BBB':   # a scale-broken ticker → measurement-invalid
                 return {**base, 'measurement_invalid': True, 'scale_ratio': 2.0,
                         't_stat_newey_west': None, 'sign_ok': False, 'p_value': None}
@@ -1388,8 +1390,8 @@ class TestStructurePhase:
 
         def make_scorer(flag_invalid: bool):
             def scorer(cand: StructureCandidate) -> dict:
-                base = dict(phase='structure', template=cand.template, ticker=cand.ticker,
-                            params=cand.params_dict(), predicted_sign=1)
+                base = {'phase': 'structure', 'template': cand.template, 'ticker': cand.ticker,
+                            'params': cand.params_dict(), 'predicted_sign': 1}
                 if flag_invalid and (cand.ticker, cand.template) == FLAGGED:
                     return {**base, 'measurement_invalid': True, 'scale_ratio': 2.0,
                             't_stat_newey_west': None, 'sign_ok': False, 'p_value': None}
@@ -1771,7 +1773,7 @@ class TestClaudeProposer:
     the owner activates it (EDGE_SEARCH_LLM_MODEL + a key)."""
 
     # a valid committed grid point (short_call_25), reused across tests
-    _CELL = {'overlay': 'short_vol', 'ticker': 'MSFT',
+    _CELL: ClassVar[dict] = {'overlay': 'short_vol', 'ticker': 'MSFT',
              'params': {'target_delta': 0.25, 'dte': 30}, 'predicted_sign': 1}
 
     @staticmethod
@@ -1874,7 +1876,7 @@ class TestClaudeProposer:
                                  run=True, record=True, author=author,
                                  round_id='r1', provenance_path=prov)
         assert res['proposed'] == 1 and res['recorded'] == 1
-        prov_rows = [json.loads(ln) for ln in open(prov)]
+        prov_rows = [json.loads(ln) for ln in Path(prov).read_text().splitlines()]
         assert len(prov_rows) == 1
         assert prov_rows[0]['model_served'] == 'claude-opus-4-8-snap'   # the served snapshot, audited
         assert prov_rows[0]['temperature'] == 0.0
@@ -1887,7 +1889,7 @@ class TestClaudeCodeProposer:
     SEAL-HARDENED invocation (api key scrubbed, ALL tools denied, single turn, never --bare) are
     pinned offline. The live `claude -p` call is exercised only when the owner activates it."""
 
-    _CELL = {'overlay': 'short_vol', 'ticker': 'MSFT',
+    _CELL: ClassVar[dict] = {'overlay': 'short_vol', 'ticker': 'MSFT',
              'params': {'target_delta': 0.25, 'dte': 30}, 'predicted_sign': 1}
 
     @staticmethod
@@ -1977,7 +1979,7 @@ class TestClaudeCodeProposer:
                                  run=True, record=True, author=author,
                                  round_id='r1', provenance_path=prov)
         assert res['proposed'] == 1 and res['recorded'] == 1
-        prov_rows = [json.loads(ln) for ln in open(prov)]
+        prov_rows = [json.loads(ln) for ln in Path(prov).read_text().splitlines()]
         assert prov_rows[0]['transport'] == 'claude_code'              # the transport, audited
         assert prov_rows[0]['model_served'] == 'claude-opus-4-8-snap'
 
@@ -2003,7 +2005,7 @@ class TestProposerReasoning:
                                  temperature=0.0, prompt_sha='s')
         return author
 
-    _CELL = {'overlay': 'short_vol', 'ticker': 'AAA',
+    _CELL: ClassVar[dict] = {'overlay': 'short_vol', 'ticker': 'AAA',
              'params': {'target_delta': 0.25, 'dte': 30}, 'predicted_sign': 1}
 
     def test_reasoning_audited_in_provenance_but_never_in_the_loop(self, monkeypatch, tmp_path) -> None:
@@ -2018,7 +2020,7 @@ class TestProposerReasoning:
         # it rides the raw batch (for display) ...
         assert res['batch'].proposals[0]['reasoning'].startswith('sell the rich')
         # ... and is AUDITED in the provenance log (coordinates + reasoning) ...
-        prov_row = json.loads(open(prov).read())
+        prov_row = json.loads(Path(prov).read_text())
         assert any(p.get('reasoning', '').startswith('sell the rich') for p in prov_row['proposals'])
         # ... but NEVER the comparison ledger or the scrubbed corpus (the loop a future proposer reads)
         led_row = load_idea_ledger(led)[0]
@@ -2096,7 +2098,7 @@ class TestSearchSaturation:
         # seam, and the two LLM authors' __call__.
         import inspect
 
-        import search.edge_search as edge_search
+        from search import edge_search
         proposer_surface = (
             edge_search.build_proposer_prompt, edge_search.build_proposer_corpus,
             edge_search.render_proposer_corpus, edge_search.scrub_ledger_row,
@@ -2109,8 +2111,12 @@ class TestSearchSaturation:
             assert 'search_saturation' not in src and 'format_saturation' not in src, fn
         # PRIMARY control: its keys sit outside the corpus / proposal allow-lists, so even a
         # mis-route would be dropped by the SAFE_FIELDS / PROPOSAL_FIELDS scrub.
+        from proposer.read_gate_wire import (
+            BANNED_RESULT_FIELDS,
+            PROPOSAL_FIELDS,
+            assert_numberless,
+        )
         from search.edge_search import SAFE_FIELDS
-        from proposer.read_gate_wire import BANNED_RESULT_FIELDS, PROPOSAL_FIELDS, assert_numberless
         keys = set(search_saturation(self._ledger([0.02])))
         assert not (keys & set(SAFE_FIELDS))
         assert not (keys & set(PROPOSAL_FIELDS))

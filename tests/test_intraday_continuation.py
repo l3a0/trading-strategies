@@ -33,14 +33,14 @@ from engine.intraday_continuation import (
     CAPTURE_FILLS,
     CAPTURE_RESULTS_FILE,
     CHART_SCREEN,
-    EXIT_RULES,
     EXIT_RESULTS_FILE,
-    MULTIDAY_HORIZONS,
-    MULTIDAY_RESULTS_FILE,
+    EXIT_RULES,
     FIRST_BAR,
     HORIZONS,
     LAST_BAR,
     MIN_SESSION_BARS,
+    MULTIDAY_HORIZONS,
+    MULTIDAY_RESULTS_FILE,
     N_CLOCK,
     RESULTS_FILE,
     SESSION_BARS,
@@ -50,24 +50,24 @@ from engine.intraday_continuation import (
     _bracket_to_close,
     _forward_extremes,
     _leave_one_out,
+    _moving_block_boot,
+    _rolling_beta,
     bar_features,
     breakout_mask,
     build_capture_results,
     build_exit_results,
+    build_multiday_results,
     capture_ticker,
     ema,
     exit_ticker,
     five_minute_bars,
     forward_paths,
     load_scan,
+    multiday_ticker,
     prior_mean,
     prior_median_columns,
     realized_vol,
     run_capture,
-    _moving_block_boot,
-    _rolling_beta,
-    build_multiday_results,
-    multiday_ticker,
     run_exit_scan,
     run_multiday_scan,
     run_scan,
@@ -85,8 +85,7 @@ def write_minutes(path, rows):
     """rows: (timestamp, open, high, low, close, volume)."""
     with open(path, 'w') as f:
         f.write('timestamp,open,high,low,close,volume\n')
-        for r in rows:
-            f.write(','.join(str(x) for x in r) + '\n')
+        f.writelines(','.join(str(x) for x in r) + '\n' for r in rows)
     return str(path)
 
 
@@ -413,9 +412,9 @@ def synthetic_panel(n_tickers=40, n_dates=180, n_clock=N_CLOCK, k=3,
     day_sum, day_n = cube.sum(axis=0), np.full(
         (n_dates, n_clock, k), n_tickers, np.int64)
     y = cube[ev_ticker, ev_date, ev_clock]
-    return dict(y=y, ticker=ev_ticker, date=ev_date,
-                clock=ev_clock + FIRST_BAR, name_sum=name_sum, name_n=name_n,
-                day_sum=day_sum, day_n=day_n)
+    return {'y': y, 'ticker': ev_ticker, 'date': ev_date,
+                'clock': ev_clock + FIRST_BAR, 'name_sum': name_sum, 'name_n': name_n,
+                'day_sum': day_sum, 'day_n': day_n}
 
 
 class TestTwoWayExcess:
@@ -528,7 +527,7 @@ class TestContinuationResults:
         assert s['p_close_up'] < s['p_peer_up']
 
     def test_the_placebo_is_flat(self, results):
-        mean, sd = results['placebo']
+        mean, _sd = results['placebo']
         assert abs(mean) < 1.0
 
     def test_the_decay_curve_is_negative_from_the_first_bar(self, results):
@@ -961,7 +960,7 @@ class TestMultidayMechanics:
     def test_block_boot_is_unbiased_on_a_null_matrix(self):
         rng = np.random.default_rng(2)
         mat = rng.normal(0, 1.0, (3000, len(MULTIDAY_HORIZONS)))
-        obs, lo, hi, p, t, se, joint = _moving_block_boot(mat, block=30, reps=800)
+        obs, lo, hi, _p, _t, _se, joint = _moving_block_boot(mat, block=30, reps=800)
         assert abs(obs.mean()) < 0.05                    # centred on zero
         assert np.all((lo <= obs) & (obs <= hi))         # CI contains the point
         # the family band for 7 correlated columns sits above the ~1.96
@@ -974,7 +973,7 @@ class TestMultidayMechanics:
         # the joint max-|t| band must be at least as strict as any per-horizon t
         rng = np.random.default_rng(3)
         mat = rng.normal(0.05, 1.0, (400, len(MULTIDAY_HORIZONS)))
-        *_, t, se, joint = _moving_block_boot(mat, block=30, reps=800)
+        *_, t, _se, joint = _moving_block_boot(mat, block=30, reps=800)
         assert joint >= np.max(np.abs(t)) - 1e-9
 
     def test_block_boot_recovers_a_planted_mean(self):
@@ -1003,8 +1002,8 @@ class TestMultidayArchiveRoundTrip:
             assert h['n'] > 0 and 0 <= h['pct_positive'] <= 1
 
     def test_per_ticker_files_are_deterministic(self, tmp_path):
-        from pipeline.minute_archive import load_splits
         from engine.intraday_continuation import _spy_daily
+        from pipeline.minute_archive import load_splits
         sp = load_splits()
         spy = _spy_daily(sp)
         a, b = str(tmp_path / 'a'), str(tmp_path / 'b')

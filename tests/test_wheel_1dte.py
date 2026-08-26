@@ -329,8 +329,7 @@ class TestGateSignals:
         p = tmp_path / 'intraday.csv'
         with open(p, 'w') as f:
             f.write('timestamp,open,high,low,close,volume\n')
-            for ts, close in rows:
-                f.write(f'{ts},0,0,0,{close},100\n')
+            f.writelines(f'{ts},0,0,0,{close},100\n' for ts, close in rows)
         return str(p)
 
     def test_normal_day_and_disagreement(self, tmp_path):

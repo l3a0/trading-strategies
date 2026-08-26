@@ -20,7 +20,7 @@ This was written as a **DESIGN document — a build spec, PLAN-level**, ahead of
 [docs/van_tharp_test_plan.md](van_tharp_test_plan.md): exit mechanics beyond hold-to-expiry for the
 structure engine. The parent plan sizes it Large and its sequencing table calls it "the heaviest lift"
 (docs/van_tharp_test_plan.md:200, :266): it is the first Van Tharp change that must enter the structure
-engine's hot loop — `run_real_structure_overlay` (realchains/vol_premium.py:770), the function every
+engine's hot loop — `run_real_structure_overlay` (realchains/vol_premium.py:771), the function every
 pinned structure number runs through — where Gaps C+B could land as a zero-engine replay layer
 ([docs/van_tharp_gap_cb.md](van_tharp_gap_cb.md), "The central design decision"). It enables
 **Experiment 4**: does varying the exit on a fixed entry change expectancy, and does a tail-stop convert
@@ -38,7 +38,7 @@ any size.
 
 **The honest prior is pre-stated.** The repo has already tested an exit of exactly this family once, on
 the real-chain covered call, and rejected it: `TestMsftStopLossRegression`
-(tests/test_real_cc_backtest.py:1150) pins a premium-multiple stop leaving the CC worse than the no-stop
+(tests/test_real_cc_backtest.py:1155) pins a premium-multiple stop leaving the CC worse than the no-stop
 baseline at every level swept, monotonically worse as it tightens — the same lesson blog post 6 narrates
 for the delta-hedge refinement (blog/06_real_chains_flip_the_268000.md). The expectation this design
 commits to before running anything: a daily-close stop should truncate the MAE tail — it bounds further
@@ -67,10 +67,10 @@ decide both whether a trade profits and by how much (Loc 6231).
 
 The engine currently tests almost none of that. Six of the seven `STRUCTURE_SPECS` entries carry
 `management='hold'` — straddle, iron_condor, strangle, risk_reversal, credit_spread, calendar
-(realchains/vol_premium.py:672-694; the six hold entries at :677, :680, :683, :686, :689, :692). The
+(realchains/vol_premium.py:673-695; the six hold entries at :677, :680, :683, :686, :689, :692). The
 seventh, short_vol, carries `management='early_close_single'` (:674), but that branch evaluates only
 `legs[0]` (:939) and never fires in the committed campaign anyway: the kill gate passes only grammar
-coordinates plus capital (`{**cand.params_dict(), 'capital': capital}`, search/edge_search.py:988-989),
+coordinates plus capital (`{**cand.params_dict(), 'capital': capital}`, search/edge_search.py:995-996),
 so `close_at_pct` stays at its `None` default (vol_premium.py:820) and `manage_deep_itm` stays `False`
 (:821), and both the profit-target test and the deep-ITM test are inert. No test or exploratory script
 passes `close_at_pct` to a structure overlay either — the knob's only callers in the repo are the CC
@@ -79,7 +79,7 @@ practice. Experiment 4 asks whether that omission matters: holding the pinned en
 only the exit, does the ledger's expectancy move, and does the MAE tail truncate?
 
 The one existing data point runs against the book, and it is pinned. `TestMsftStopLossRegression`
-(tests/test_real_cc_backtest.py:1150-1254) sweeps a premium-multiple stop on the real-chain MSFT covered
+(tests/test_real_cc_backtest.py:1155-1259) sweeps a premium-multiple stop on the real-chain MSFT covered
 call: the 10-year 2x stop turns the no-stop baseline's −$183,552.34 net overlay P&L into −$251,775.94
 (:1193; the ordering against the baseline is asserted at :1229), fires 118 stop closes in ten years
 (:1198) against the baseline's 54 deep-ITM closes, *raises* max drawdown to 50.74% (:1202 — the
@@ -104,10 +104,10 @@ expected, its net cost on these chains is the question, and the CC prior says th
 ## The central design constraint — default-off, byte-identical-when-off
 
 Every pinned number on the repo's most valuable surfaces runs through `run_real_structure_overlay`
-(realchains/vol_premium.py:770, called via `run_structure_via_spec` :697-711):
+(realchains/vol_premium.py:771, called via `run_structure_via_spec` :697-711):
 
 - The 56-cell campaign ledger and the lifetime e-LOND stream are pinned by `TestStructureCampaign`
-  (tests/test_edge_search.py:1426-1459, 0 of 56 flagged) and the always-run `TestStructurePhase`
+  (tests/test_edge_search.py:1428-1461, 0 of 56 flagged) and the always-run `TestStructurePhase`
   (:1311).
 - The registered and exploratory VRP/straddle regressions run through it: `TestSpyShortVolRegression`
   (tests/test_vol_premium.py:392; the frozen `REGISTERED_CLEAN_START` span is noted at :394-398),
@@ -116,11 +116,11 @@ Every pinned number on the repo's most valuable surfaces runs through `run_real_
   `TestIwmShortVolRegression` (:909), `TestMsftShortVolRegression` (:956), and
   `TestSpyIronCondorExploratory` (:1194).
 - The equivalence and spec-table pins cover every delegate: `TestGenericStructureEngineEquivalence`
-  (tests/test_vol_premium.py:1543-1581, one test per structure plus the NVDA iron condor at
+  (tests/test_vol_premium.py:1599-1637, one test per structure plus the NVDA iron condor at
   :1578-1581) and the always-run `TestGenericStructureEngineSpecs` (:1427), which pins the
   `management` values themselves (:1433-1447).
 - The grammar-signature cross-check `TestGrammarSignatureMatchesEngine`
-  (tests/test_vol_premium.py:1668-1686) re-derives each declared signature from engine greeks.
+  (tests/test_vol_premium.py:1724-1742) re-derives each declared signature from engine greeks.
 
 The exit machinery therefore lands as **new optional params that no pinned caller passes**, with a guard
 structure that makes the off path byte-identical. The precedent is already in the engine twice: the
@@ -133,8 +133,8 @@ Three hard rules follow:
 
 - **`early_close_single` is not touched or generalized in place.** The new general manage branch is
   parallel to it inside the same mark+manage arm, and short_vol's pinned spec keeps
-  `'management': 'early_close_single'` verbatim (realchains/vol_premium.py:673-675) — its pins protect
-  it, including the spec-table pin at tests/test_vol_premium.py:1433-1447.
+  `'management': 'early_close_single'` verbatim (realchains/vol_premium.py:674-676) — its pins protect
+  it, including the spec-table pin at tests/test_vol_premium.py:1481-1495.
 - **The dispatch rule is explicit, because `close_at_pct` already has a meaning.** The general branch
   arms iff `stop_loss_mult` or `exit_dte` is set (the two new knobs), or `close_at_pct` is set on a
   `management='hold'` structure — a combination that today is a silent no-op (the knob is read at :820
@@ -144,9 +144,9 @@ Three hard rules follow:
   double-fire. When it does not arm, every line of today's code runs verbatim, including
   `early_close_single`'s single-leg `close_at_pct` semantics. Byte-identity for every pinned run
   follows from recon, not hope: the campaign passes grammar coordinates plus capital only
-  (search/edge_search.py:771-785, :988-989), and no test or script passes `close_at_pct` to any
+  (search/edge_search.py:775-789, :988-989), and no test or script passes `close_at_pct` to any
   structure overlay, so no pinned caller can reach the armed path.
-- **`STRUCTURE_ENGINE_VERSION` stays `'v1'` for the landing change** (search/edge_search.py:554). The
+- **`STRUCTURE_ENGINE_VERSION` stays `'v1'` for the landing change** (search/edge_search.py:558). The
   bump rule (:548-553; docs/edge_search.md:180) targets changes that recompute a different t-stat for
   the same data at the frozen defaults. A default-off knob leaves every committed cell's result
   byte-identical, so no bump. An exit-variant *run* is a new measurement, not a re-scored old one.
@@ -164,16 +164,16 @@ close-triggers plus a roll convention, with two deliberate exclusions.
 
 Buy the whole structure back when the net close cost falls to `(1 - close_at_pct)` times the entry
 credit or below. This is the multi-leg generalization of two existing single-leg tests: the structure
-engine's own `short_buy <= leg['entry_net'] * (1 - close_at_pct)` (realchains/vol_premium.py:943-944)
+engine's own `short_buy <= leg['entry_net'] * (1 - close_at_pct)` (realchains/vol_premium.py:944-945)
 and the real CC's `hit_target` against `premium_collected * (1 - close_at_pct)`
-(realchains/real_cc_backtest.py:470; the CC's 0.75 default is set at :276). Tharp's frame: profit-taking
+(realchains/real_cc_backtest.py:471; the CC's 0.75 default is set at :276). Tharp's frame: profit-taking
 exits exist to raise the reward-to-risk ratio of the system (Loc 4147), with a take-or-tighten rule once
 a multiple-of-R objective is reached (Loc 6339).
 
 ### Stop loss — `stop_loss_mult`
 
 Close when the net close cost rises to `stop_loss_mult` times the entry credit or above — the CC's
-`hit_stop` (realchains/real_cc_backtest.py:472-473, `None`/absent = off per :287-288) generalized to
+`hit_stop` (realchains/real_cc_backtest.py:473-474, `None`/absent = off per :287-288) generalized to
 the whole structure. Tharp's frame: the protective stop is what defines the initial risk R and the
 benchmark against which gains are measured (Loc 5740, 5756, 5770; Chapter 10 summary at Loc 6177), and
 every system needs a disaster stop to preserve capital (Loc 4144). The CC pin's convention caveat
@@ -235,9 +235,9 @@ The close is the entry's mirror, leg by leg.
   long leg at the bid (`q[0]`) under `fill='bid_ask'`, mids (`q[2]`) for both under mid fill, with
   `COMMISSION_PER_SHARE` (0.0065, real_cc_backtest.py:59) charged per leg — so
   `close_cost = Σ_shorts(ask + commission) − Σ_longs(bid − commission)`. The marks tuple is
-  `(bid, ask, mid, delta)` keyed by contractID (realchains/real_cc_backtest.py:164, :216), and the side
+  `(bid, ask, mid, delta)` keyed by contractID (realchains/real_cc_backtest.py:165, :216), and the side
   convention mirrors the entry selectors — shorts fill at bid, longs at ask on the way in (the docstring
-  at realchains/vol_premium.py:433, fills at :442-445; per-leg commission is sign-dependent at entry,
+  at realchains/vol_premium.py:434, fills at :442-445; per-leg commission is sign-dependent at entry,
   :448-454) — flipped for the close. Triggers compare the *ex-commission* sum to the entry credit,
   mirroring both precedents: the CC's `close_ref` excludes commission (real_cc_backtest.py:452-466, the
   separate `close_commission` at :462-466), and `early_close_single` tests raw `short_buy` (:942-944)
@@ -281,9 +281,9 @@ The close is the entry's mirror, leg by leg.
 
 The recon check the parent plan asked for comes back clean: `close_at_pct` and `manage_deep_itm` are
 *not* grammar axes for short_vol or any overlay — short_vol's grid is `target_delta × dte` only
-(search/edge_search.py:618-621) — and both knobs already live in the engine-param tier, read via
+(search/edge_search.py:622-625) — and both knobs already live in the engine-param tier, read via
 `params.get` alongside `fill`, `capital`, `risk_free_rate`, and `hedge_cost_bps`
-(realchains/vol_premium.py:816-821). The new exit knobs (`stop_loss_mult`, `exit_dte`) join that tier.
+(realchains/vol_premium.py:817-822). The new exit knobs (`stop_loss_mult`, `exit_dte`) join that tier.
 The boundary is hard, not stylistic: `_validate_grammar` requires a candidate's params to match the
 overlay's grid knobs exactly — none missing, none extra, type-strict grid membership
 (edge_search.py:719-743, the exact-knob rule at :735-740) — so a campaign candidate carrying an exit
@@ -312,7 +312,7 @@ Consequences:
 ## Experiment 4 — the measurement plan
 
 **Fixed entry.** The pinned SPY short vol at `target_delta 0.25 / dte 30` — the committed
-`short_call_25` coordinates (search/edge_search.py:772) and the exact run behind the Gap A SPY ledger
+`short_call_25` coordinates (search/edge_search.py:776) and the exact run behind the Gap A SPY ledger
 (`run_real_short_vol_overlay` at tests/test_trade_ledger.py:102-104; the regression is
 `TestSpyShortVolRegression`, tests/test_vol_premium.py:392). Under the dispatch rule above, the stop and
 time variants arm the general branch; the `close_at_pct`-only variants ride the legacy single-leg path
@@ -327,7 +327,7 @@ to bound the look count):
 - `close_at_pct` in {0.50, 0.75} — 0.75 is the CC engine's own default (real_cc_backtest.py:276); 0.50
   is the half-decay convention.
 - `stop_loss_mult` in {2, 3} — these are the CC pin's central and loose levels
-  (tests/test_real_cc_backtest.py:1187-1229); 1.5 is omitted because the CC already pinned tightening as
+  (tests/test_real_cc_backtest.py:1192-1234); 1.5 is omitted because the CC already pinned tightening as
   monotonically worse.
 - `exit_dte` in {7, 14} — these cover the final week and the final half of a 30-DTE cycle.
 
@@ -362,7 +362,7 @@ campaign and belongs under the e-LOND stream like any other automated search.
 delta-hedged CC entry at :128 is the precedent for the second). The scout home
 (search/explorations.py + tests/test_explorations.py, the cooldown exemplar: `load_naked_run` at
 search/explorations.py:91, `cooldown_scout` at :167, module-scoped dataset-gated fixtures at
-tests/test_explorations.py:114-129, decisive pins at :145-191) fits re-tag measurements of pinned runs.
+tests/test_explorations.py:111-126, decisive pins at :145-191) fits re-tag measurements of pinned runs.
 Experiment 4 is an engine re-run, so it takes the other home, the stop-loss precedent's: a dataset-gated
 variant class (proposed name `TestSpyExitVariantExploration`) in tests/test_vol_premium.py next to the
 short-vol pins, with the `TestMsftStopLossRegression` docstring shape — verdict, mechanism, convention
@@ -398,7 +398,7 @@ hand-crafted chain days, no dataset:
   branch without the legacy block also firing.
 - A synthetic net-debit entry (booked `entry_credit <= 0`) never arms a trigger.
 - A `'close'` event carrying `'reason'` produces a `TradeRecord` identical to one without it (the
-  extra-key invariance of `build_trade_ledger`, common/trade_ledger.py:181-209).
+  extra-key invariance of `build_trade_ledger`, common/trade_ledger.py:180-208).
 - **Off-equivalence:** with every new knob at its default, trades and daily equity are byte-identical to
   a pre-change golden run on the same synthetic data.
 
@@ -417,7 +417,7 @@ PR. E2 adds the dataset-gated Experiment 4 pins.
 - Notebook: no regen expected — nothing here touches tutorial_covered_call_backtest.md or
   engine/make_figures.py. If either is somehow touched, the regen rule applies as usual.
 - `STRUCTURE_ENGINE_VERSION`: unchanged, with the reasoning stated in the PR — a default-off knob moves
-  no scored quantity at the frozen defaults, per the bump rule (search/edge_search.py:548-553).
+  no scored quantity at the frozen defaults, per the bump rule (search/edge_search.py:552-557).
 - ci.yml: no edit expected, provided the new tests ride existing test files already on the pytest line —
   verify at land time.
 

@@ -34,7 +34,8 @@ import hashlib
 import json
 import math
 import sys
-from typing import Any, Callable, Sequence
+from collections.abc import Callable, Sequence
+from typing import Any
 
 import numpy as np
 
@@ -64,8 +65,8 @@ def load_ohlc(ticker: str) -> dict[str, np.ndarray]:
     with open(data_path(f'{ticker.lower()}_daily_ohlc.csv')) as f:
         for row in csv.DictReader(f):
             dates.append(row['date'])
-            for k in cols:
-                cols[k].append(float(row[k]))
+            for k, col in cols.items():
+                col.append(float(row[k]))
     return {'dates': np.array(dates),
             **{k: np.array(v) for k, v in cols.items()}}
 
@@ -244,7 +245,7 @@ def _binom_two_sided(k: int, n: int, p0: float) -> float:
     def logpmf(j: int) -> float:
         return (math.lgamma(n + 1) - math.lgamma(j + 1) - math.lgamma(n - j + 1)
                 + j * logp + (n - j) * log1p)
-    lo = sum(math.exp(logpmf(j)) for j in range(0, k + 1))
+    lo = sum(math.exp(logpmf(j)) for j in range(k + 1))
     hi = sum(math.exp(logpmf(j)) for j in range(k, n + 1))
     return min(1.0, 2.0 * min(lo, hi))
 
@@ -417,7 +418,7 @@ def cell_run(d: dict[str, np.ndarray], signal: str, side: str, horizon: int,
         per_era.append({
             'era': j,
             'n_trades': int(np.sum(e_eras == j)) if len(e_eras) else 0,
-            'base_rate': (round(float(np.mean((ret_all[in_e] > 0))), 4)
+            'base_rate': (round(float(np.mean(ret_all[in_e] > 0)), 4)
                           if np.any(in_e) else None),
         })
     cell: dict[str, Any] = {

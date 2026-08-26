@@ -15,7 +15,7 @@ import math
 import os
 import random
 from collections import Counter
-from typing import Any, Optional
+from typing import Any, ClassVar
 
 import numpy as np
 import pandas as pd
@@ -44,7 +44,6 @@ from realchains.walk_forward_structure import (
     walk_forward_structure,
 )
 
-
 # --- synthetic fixtures ------------------------------------------------------
 
 def _spread_market() -> tuple[list[str], list[float], dict[str, Any]]:
@@ -72,8 +71,8 @@ def _stub_run_cell(specs: dict[str, tuple[int, float, float]]):
 
     def stub(
         dates: list[str], prices: list[float], store: dict, cell: Cell,
-        *, hedged: bool = True, select: Optional[Any] = None,
-        extra_params: Optional[dict] = None,
+        *, hedged: bool = True, select: Any | None = None,
+        extra_params: dict | None = None,
     ):
         spec = specs[cell.key()]
         if spec == 'raise-value':
@@ -145,7 +144,7 @@ class TestPutSpreadLattice:
 class TestSpreadWfSelection:
     DATES = _bdates('2020-01-01', '2022-06-30')
     PRICES = [100.0] * len(DATES)
-    CELLS = [Cell(30, 0.25, 0.20, 'hold'), Cell(30, 0.30, 0.25, 'hold'),
+    CELLS: ClassVar[list] = [Cell(30, 0.25, 0.20, 'hold'), Cell(30, 0.30, 0.25, 'hold'),
              Cell(45, 0.25, 0.20, 'hold')]
 
     def _run(self, specs):
@@ -222,13 +221,13 @@ class TestSpreadWfSelection:
 # --- stitching and seam accounting -------------------------------------------
 
 class TestSpreadWfStitching:
-    LEGS = [
+    LEGS: ClassVar[list] = [
         {'sign': -1, 'right': 'put', 'strike': 100.0, 'entry_net': 0.9935,
          'expiration': '2020-02-01'},
         {'sign': 1, 'right': 'put', 'strike': 95.0, 'entry_net': 0.7065,
          'expiration': '2020-02-01'},
     ]
-    STORE = {
+    STORE: ClassVar[dict] = {
         '2020-01-02': {
             'candidates': [
                 (30, -0.25, 1.0, 1.2, 1.1, '2020-02-01', 100.0, 'A'),
@@ -377,7 +376,7 @@ class TestHedgeOverrideEquivalence:
 
 class TestSpreadJitterMechanics:
     def test_k0_delegates_immediately(self):
-        dates, prices, store = _spread_market()
+        _dates, _prices, store = _spread_market()
         cell = Cell(30, 0.25, 0.20, 'hold')
         factory = jitter_select_factory(random.Random(1), k=0)
         sel = factory(cell)
@@ -404,7 +403,7 @@ class TestSpreadJitterMechanics:
             assert sel(day, cell.params()) is None
 
     def test_same_seed_same_career(self):
-        dates, prices, store = _spread_market()
+        _dates, _prices, store = _spread_market()
         cell = Cell(30, 0.25, 0.20, 'hold')
         outs = []
         for _ in range(2):
@@ -456,8 +455,8 @@ class TestStationaryBootstrap:
 
 class TestLoyoStream:
     def test_hand_computed_year_drop(self):
-        dates = (['2020-01-%02d' % d for d in range(1, 11)]
-                 + ['2021-01-%02d' % d for d in range(1, 11)])
+        dates = ([f'2020-01-{d:02d}' for d in range(1, 11)]
+                 + [f'2021-01-{d:02d}' for d in range(1, 11)])
         x = np.array([0.01] * 10 + [-0.01] * 10)
         out = loyo_nw(x, dates)
         assert set(out) == {'2020', '2021'}

@@ -131,7 +131,7 @@ def assert_numberless(obj: Any, _path: str = 'reply') -> None:
             if not isinstance(k, str):
                 # JSON object keys are strings; a non-str key (e.g. bytes) would slip the
                 # BANNED_RESULT_FIELDS set-intersection above, so a banned name could ride it.
-                raise ValueError(
+                raise ValueError(  # noqa: TRY004 — ValueError is the wire contract the read-gate tests assert on
                     f'read-gate numberless violation at {_path}: non-string key of type '
                     f'{type(k).__name__} (the wire is JSON; a banned name could hide on a non-str key)')
             assert_numberless(v, f'{_path}.{k}')
@@ -194,5 +194,5 @@ def _parse_proposal_array(text: str) -> list[dict[str, Any]]:
             raise ValueError(f'LLM proposer reply has no JSON array: {text[:200]!r}')
         data = json.loads(m.group(0))            # a still-malformed extract re-raises, loudly
     if not isinstance(data, list):
-        raise ValueError(f'LLM proposer reply is not a JSON array: got {type(data).__name__}')
+        raise ValueError(f'LLM proposer reply is not a JSON array: got {type(data).__name__}')  # noqa: TRY004 — ValueError is the wire contract the read-gate tests assert on
     return data

@@ -94,7 +94,7 @@ v1 randomizes the entry day and nothing else: **at the start of each flat stretc
 \~21-trading-day cycle — enough jitter to matter, without gutting the per-career trade count). The pick
 itself, once the wait expires, is the *deterministic* baseline logic unchanged: the band filter, the
 nearest-|dte−30| expiration, the nearest-0.25-delta strike
-(realchains/real_cc_backtest.py:220-229 — band at :224, nearest-DTE at :227, cohort at :228, the
+(realchains/real_cc_backtest.py:221-230 — band at :224, nearest-DTE at :227, cohort at :228, the
 nearest-delta pick at :229). Only the calendar moves.
 
 Held fixed across every career: the strike rule, the DTE rule, the daily delta hedge, the hold-to-expiry
@@ -103,7 +103,7 @@ exit, and the sizing.
 **Why not randomize the strike instead.** An earlier draft of this design did, and the choice was wrong
 for two reasons worth recording. First, the strike is not an entry-timing decision — it is a structural
 coordinate of the strategy: `target_delta` is literally a grammar axis (the short_vol campaign grid is
-`target_delta × dte`, search/edge_search.py:618-621), searched as committed cells under the e-LOND
+`target_delta × dte`, search/edge_search.py:622-625), searched as committed cells under the e-LOND
 stream. A randomized-delta ensemble would blur that governed hypothesis space with an ungoverned look —
 the exact boundary Gap E drew for exits. Second, different deltas are different risk objects: the vol
 smile prices them systematically differently, so a baseline sitting off-center in a random-strike band
@@ -113,7 +113,7 @@ is therefore a **named widening carrying both caveats**, not a v1 axis.
 Two further widenings, also out of v1's look count:
 
 - **The CC-path selector override** — `run_real_cc_overlay` has no selector seam: its signature carries
-  no `select` parameter (realchains/real_cc_backtest.py:260-266; the only entry seam is
+  no `select` parameter (realchains/real_cc_backtest.py:261-267; the only entry seam is
   `suspended_dates`, an on/off gate that cannot change which contract is picked, :267-274), and the
   selectors are hardwired module-level calls (`select_entry` at :345, `select_cap_leg` at :354-355).
   Making the CC entry pluggable requires an engine signature change, so it is its own widening, not a
@@ -129,7 +129,7 @@ enter-immediately rule adds or costs anything against random timing, nothing mor
 ## Zero engine changes — the seam evidence
 
 The seam is already general. `run_real_structure_overlay` takes the selector as a keyword-only callable
-— `select: Callable[[dict, dict], list[dict] | None]` (realchains/vol_premium.py:777; the bare `*` at
+— `select: Callable[[dict, dict], list[dict] | None]` (realchains/vol_premium.py:778; the bare `*` at
 :776 forces keyword passing) — calls it exactly once per flat chain-day as `picked = select(day, params)`
 (:870), treats a `None` return as a no-entry day (:871), and applies the entry guard to whatever comes
 back (:872-876). The leg contract is stated in the docstring: each leg is
@@ -137,15 +137,15 @@ back (:872-876). The leg contract is stated in the docstring: each leg is
 the seam at :785/:869; Gap E's build inserted lines, so the anchors above are the current tree's.)
 
 Custom selectors already flow through it in two ways. The spec path binds the built-in `_legs_*`
-wrappers via `select=spec['select']` (realchains/vol_premium.py:708-711). And Gap E's mechanics tests
+wrappers via `select=spec['select']` (realchains/vol_premium.py:709-712). And Gap E's mechanics tests
 drive the seam with hand-built selectors: `_two_leg_scenario` defines an inline `def select(day,
-params)` returning hand-built leg dicts (tests/test_vol_premium.py:1715-1743, the closure at
+params)` returning hand-built leg dicts (tests/test_vol_premium.py:1771-1799, the closure at
 :1733-1739), and every `TestExitMechanics` case passes it straight in as `select=select`
 (:1771-1776, :1802-1807, :1829-1834, :1849-1853, :1875-1880, :1914-1918). A seeded random selector is
 one more callable through a proven seam.
 
 The measurement side needs nothing new either. `run_real_short_vol_overlay` is itself a thin delegate
-to this same generic engine (realchains/vol_premium.py:125, the delegate return at :138), so the
+to this same generic engine (realchains/vol_premium.py:126, the delegate return at :138), so the
 baseline and the random careers run literally one code path. `short_vol_statistics` consumes only the
 returned `daily_equity` — reading its `rf_credit` column — plus the capital and rf (:141, the column
 read at :185-189). `build_trade_ledger` consumes the returned trades list plus
@@ -169,7 +169,7 @@ def random_entry_selector(seed, k=10):
 
 **The wait.** The closure carries one stdlib `random.Random(seed)` and an invocation counter. The engine
 invokes the selector exactly once per flat day that has a chain (`if legs is None: if day is not None:
-picked = select(day, params)` — realchains/vol_premium.py:870, so chainless days never reach it). At the
+picked = select(day, params)` — realchains/vol_premium.py:871, so chainless days never reach it). At the
 start of each flat stretch — the career's first invocation, and the first invocation after each
 non-`None` emission (the closure cannot observe the engine's acceptance, so emission, not acceptance, is
 the boundary it keys on; the guard paragraph below records why the two coincide) — the closure draws
@@ -180,11 +180,11 @@ same career RNG, so a career is deterministic in (seed, day sequence).
 
 **The pick, once the wait expires, is the baseline's own.** The closure delegates to the deterministic
 `select_entry` logic — the band filter (`bid > 0`, `0.05 < delta < 0.60`,
-realchains/real_cc_backtest.py:224; the same band pipeline/validate_dailies.py names, constants at
+realchains/real_cc_backtest.py:225; the same band pipeline/validate_dailies.py names, constants at
 :49-50), the nearest-|dte−30| expiration (:227), the cohort restriction (:228), the nearest-0.25-delta
 pick (:229) — and emits the leg exactly as `_legs_short_vol` would, reading `dte`, `target_delta`, and `fill` from
 `params` at call time so no knob is duplicated in the factory, all eight documented keys with
-`entry_net = fill − COMMISSION_PER_SHARE` (realchains/vol_premium.py:393-407 — the dispatch at :400,
+`entry_net = fill − COMMISSION_PER_SHARE` (realchains/vol_premium.py:394-408 — the dispatch at :400,
 the leg dict at :405-407). The strike choice is **byte-identical to the baseline's for the same day**;
 the careers differ from the baseline only in *which days* they enter. Everything downstream — marking,
 settlement, hedging, the ledger — runs identical machinery on genuine chain rows.
@@ -195,17 +195,17 @@ pins that equivalence, and the dataset-gated scout re-runs the baseline through 
 assert the published pins before any percentile is computed.
 
 Two no-entry paths are inherited rather than invented. A post-wait day whose band filter comes up empty
-returns `None`, exactly as `select_entry` does (realchains/real_cc_backtest.py:225-226) — the career
+returns `None`, exactly as `select_entry` does (realchains/real_cc_backtest.py:226-227) — the career
 simply tries the next chain day, with the wait already spent. And the entry guard still applies after
 the selector returns: the short-vol spec's `each_short_positive` requires every short leg's
-`entry_net > 0` (realchains/vol_premium.py:872-876), so a pick whose fill minus commission is
+`entry_net > 0` (realchains/vol_premium.py:873-877), so a pick whose fill minus commission is
 non-positive skips that day. The closure cannot see that rejection — it keys stretch boundaries off its
 own emissions — so its next invocation would open a new stretch and draw a fresh `J` while the engine is
 still flat in the same stretch: a bounded, seed-deterministic desync, not a silent redraw of the same
 wait. In practice the band makes that path unreachable: a
 penny-quoted in-band bid (at least $0.01) clears the $0.0065 per-share commission
-(realchains/real_cc_backtest.py:59), so only a sub-penny bid could ever trip it — recorded as a
-convention, not patched. The put-side mirror (`select_put_entry`, realchains/vol_premium.py:74-95, band
+(realchains/real_cc_backtest.py:60), so only a sub-penny bid could ever trip it — recorded as a
+convention, not patched. The put-side mirror (`select_put_entry`, realchains/vol_premium.py:75-96, band
 at :90) gives a future widening the sign-flipped analog for free; v1 is the call wing only.
 
 RNG: one stdlib `random.Random(seed)` per career, per the engine-adjacent precedent (open question 1
@@ -214,25 +214,25 @@ records the alternative and the reasoning).
 ## The measurement plan — Experiment 2 as an ensemble null
 
 **Coordinates.** The pinned SPY short-vol registered coordinates, unchanged: target_delta 0.25, dte 30,
-capital $100,000, rf 0.045 (tests/test_vol_premium.py:427-431), the span frozen at
+capital $100,000, rf 0.045 (tests/test_vol_premium.py:431-435), the span frozen at
 `REGISTERED_CLEAN_START['SPY']` (:420-421), and the frictionless hedge (`hedge_cost_bps=0.0`, :450) so
 the hedged statistic shares the +2.54 pin's basis (:451). Each career calls
 `run_real_structure_overlay` with the short_vol spec's non-select knobs passed verbatim —
 `entry_guard='each_short_positive'`, `hedge_mode='per_leg_sign'`, `management='early_close_single'`
-(realchains/vol_premium.py:674-676) — so the selector is the only coordinate that moves.
+(realchains/vol_premium.py:675-677) — so the selector is the only coordinate that moves.
 
 **The pre-committed ensemble.** N = 20 random-entry careers. The seed constant is committed here, before
 any run: `RANDOM_ENTRY_SEED = 20260714`, following the scouts' design-date convention
 (`PERMUTATION_SEED = 20260613`, search/explorations.py:74; `CAMPAIGN_SEED = 20260613`,
-search/edge_search.py:104). Career *i* uses seed `RANDOM_ENTRY_SEED + i` for *i* in 0..19, recorded per
-row — the edge-search per-candidate idiom (search/edge_search.py:447, :449).
+search/edge_search.py:109). Career *i* uses seed `RANDOM_ENTRY_SEED + i` for *i* in 0..19, recorded per
+row — the edge-search per-candidate idiom (search/edge_search.py:452, :449).
 
 **Per-career measures.** Each career's events feed the Gap A ledger (`build_trade_ledger` →
 `ledger_statistics`: expectancy_r, win rate, worst MAE-R) and `short_vol_statistics` (the hedged
 Newey-West t). One additional baseline pass runs the deterministic selector through the same harness —
 \~21 engine passes total — and the scout asserts it reproduces the pins (expectancy_r −0.5407 on n = 174
 closed cycles, the 175th being an open dangler the ledger drops, tests/test_trade_ledger.py:381-382;
-hedged NW t +2.54, tests/test_vol_premium.py:451), so drift raises an alarm instead of skewing the
+hedged NW t +2.54, tests/test_vol_premium.py:455), so drift raises an alarm instead of skewing the
 percentile.
 
 **The verdict statistic.** Where the pinned baseline sits in its own random band: the percentile of the
@@ -248,7 +248,7 @@ order of weight: Tharp's thesis that entry is the least important component (Loc
 registered trend gate killed at Stage 1 (D_A measured +$439.44/cycle against a predicted negative, p_A
 0.736; D_B −3.07 pp against a predicted positive, p_B 0.763; fails all three gate conditions —
 docs/trend_gate_results.md:3, :125-126, :129-131); the post-rip cooldown scout killed with D_A
-wrong-signed at every horizon (docs/explorations.md:30, pinned at tests/test_explorations.py:151-183);
+wrong-signed at every horizon (docs/explorations.md:30, pinned at tests/test_explorations.py:148-180);
 and the IV-richness gate killed (docs/explorations.md:89). All three kills were *conditional*-timing
 tests, so they ground the weaker unconditional claim only indirectly — which is exactly why this
 measurement is worth running.
@@ -300,7 +300,7 @@ against the stream either. The look count is one.
 The v1 axis choice reinforces the boundary rather than straining it: the jitter varies a quantity no
 grammar coordinate touches (the entry calendar), while the rejected strike-randomization would have
 varied `target_delta` — a governed grammar axis whose committed cells the campaign already searches
-under e-LOND (search/edge_search.py:618-621). Keeping v1 off that axis is what lets the
+under e-LOND (search/edge_search.py:622-625). Keeping v1 off that axis is what lets the
 null-distribution argument stand without an asterisk.
 
 One deviation from the parent plan is named rather than papered over: the plan's honesty rails list "the
@@ -319,17 +319,17 @@ points at a dataset-gated class in tests/test_vol_premium.py beside the short-vo
 E's six variant cells, an ensemble needs an orchestrator — the seed derivation, the N careers, the
 percentile aggregation — and the repo's only precedent for orchestration code is the scout module:
 `cooldown_scout`'s logic lives in search/explorations.py (:167) and its test pins only the decisive
-outputs (tests/test_explorations.py:136-191). So the code goes where scout code goes, and the pins live
+outputs (tests/test_explorations.py:133-188). So the code goes where scout code goes, and the pins live
 beside the code:
 
 - `random_entry_selector(seed, ...)` and `random_entry_scout(...)` in search/explorations.py, the scout
   reusing the module's loading conventions and returning the pinned summary dict.
 - A dataset-gated class in tests/test_explorations.py, on the module-fixture pattern the cooldown class
-  models (the dataset-gated fixtures at tests/test_explorations.py:115 and :123).
+  models (the dataset-gated fixtures at tests/test_explorations.py:112 and :123).
 - A docs/explorations.md entry in the idea / how-tested / verdict / trap shape.
 
 The cost is named: the ensemble pin sits one file away from the +2.54 baseline
-(tests/test_vol_premium.py:451). The scout's baseline re-run assertion is the mitigation — the
+(tests/test_vol_premium.py:455). The scout's baseline re-run assertion is the mitigation — the
 comparison is recomputed and cross-checked against the pin inside the scout, not assumed across files.
 The offsetting benefit: tests/test_trade_ledger.py, the other half of the baseline (−0.5407, n = 174),
 is already co-bucketed with tests/test_explorations.py in CI.
@@ -354,15 +354,15 @@ Always-run synthetic tests (a crafted day sequence, no dataset):
   identical trades and equity (the off-equivalence anchor).
 - The wait is honored and chain-day-counted: a career with `J = 2` drawn enters on its third flat
   chain-day, and a chainless calendar day mid-wait consumes none of the wait (the selector is never
-  invoked, realchains/vol_premium.py:870).
+  invoked, realchains/vol_premium.py:871).
 - A new flat stretch draws a new `J`: two cycles under one seed can wait different lengths, and the
   sequence is deterministic in (seed, day sequence) — the same seed reproduces it, a different seed
   breaks it.
 - The post-wait pick equals `select_entry`'s pick field for field — the eight-key leg contract
-  (realchains/vol_premium.py:783-785) with a genuine contractID, the band and DTE cohort logic
+  (realchains/vol_premium.py:784-786) with a genuine contractID, the band and DTE cohort logic
   delegated, not reimplemented divergently.
 - A post-wait day with no band candidates yields `None`, exactly as `select_entry` does
-  (realchains/real_cc_backtest.py:225-226), and the engine records a plain no-entry day with the wait
+  (realchains/real_cc_backtest.py:226-227), and the engine records a plain no-entry day with the wait
   already spent.
 - A guard-rejected emission (a crafted sub-penny-bid day) re-arms a fresh `J` on the next invocation —
   the emission-keyed desync convention, pinned synthetically since the real-chain band cannot reach it.
@@ -423,7 +423,7 @@ career seeds `RANDOM_ENTRY_SEED + i` for i in 0..19.
 ## Open questions
 
 1. **RNG convention — stdlib `random.Random` versus `np.random.default_rng`.** The scout side uses
-   `default_rng` exclusively (search/explorations.py:187, :323; search/edge_search.py:447); the
+   `default_rng` exclusively (search/explorations.py:187, :323; search/edge_search.py:452); the
    engine-adjacent side uses one `random.Random(seed)` per call, documented as the `monte_carlo_shuffle`
    precedent (common/position_sizing.py:31, :102). Leaning: **stdlib for the selector** — it rides the
    engine seam and is engine-adjacent code, the draw is a single uniform choice with no need for numpy's

@@ -39,7 +39,8 @@ from __future__ import annotations
 
 import math
 import random
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 # Same-package reuse — one definition, per the NW-hoist lesson (common/stats.py).
 from common.trade_ledger import _percentile

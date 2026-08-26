@@ -171,9 +171,8 @@ def build_trade_ledger(
     """
     if risk_basis not in RISK_BASES:
         raise ValueError(f'unknown risk_basis {risk_basis!r} — one of {sorted(RISK_BASES)}')
-    if risk_basis == 'stop_distance':
-        if stop_loss_mult is None or stop_loss_mult <= 1.0:
-            raise ValueError('stop_distance needs stop_loss_mult > 1.0 (the engine stop trigger)')
+    if risk_basis == 'stop_distance' and (stop_loss_mult is None or stop_loss_mult <= 1.0):
+        raise ValueError('stop_distance needs stop_loss_mult > 1.0 (the engine stop trigger)')
 
     records: list[TradeRecord] = []
     entry: dict[str, Any] | None = None
@@ -222,7 +221,7 @@ def _percentile(sorted_vals: list[float], q: float) -> float:
     if not sorted_vals:
         return 0.0
     pos = q * (len(sorted_vals) - 1)
-    lo, hi = int(math.floor(pos)), int(math.ceil(pos))
+    lo, hi = math.floor(pos), math.ceil(pos)
     if lo == hi:
         return sorted_vals[lo]
     return sorted_vals[lo] + (sorted_vals[hi] - sorted_vals[lo]) * (pos - lo)

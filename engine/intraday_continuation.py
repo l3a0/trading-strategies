@@ -64,7 +64,8 @@ import glob
 import json
 import os
 import zlib
-from typing import Any, Iterable, Sequence
+from collections.abc import Iterable, Sequence
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -259,10 +260,10 @@ def five_minute_bars(path: str, start: str = SCAN_START,
     filled = np.where(idx >= 0, C[rows, np.maximum(idx, 0)], np.nan)
     seed = C[rows, np.argmax(real, axis=1)[:, None]]     # a leading hole
     C = np.where(np.isnan(filled), seed, filled)
-    return dict(dates=dates, open=np.where(real, Op, C),
-                high=np.where(np.isfinite(Hi), Hi, C),
-                low=np.where(np.isfinite(Lo), Lo, C),
-                close=C, volume=V, n_bars=n_bars)
+    return {'dates': dates, 'open': np.where(real, Op, C),
+                'high': np.where(np.isfinite(Hi), Hi, C),
+                'low': np.where(np.isfinite(Lo), Lo, C),
+                'close': C, 'volume': V, 'n_bars': n_bars}
 
 
 def wilder_rsi(x: np.ndarray, n: int = 14) -> np.ndarray:
@@ -354,19 +355,19 @@ def bar_features(bars: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
     mom6 = np.full((nd, SESSION_BARS), np.nan)
     mom6[:, 6:] = C[:, 6:] / C[:, :-6] - 1
     col = np.ones((1, SESSION_BARS))
-    return dict(
-        mom6=mom6, mom_open=C / Op[:, [0]] - 1,
-        brk2h=C / hi2h - 1, brkday=C / hiday - 1,
-        rvol=rvol, ext50=(C - e50) / C, rsi=rsi,
-        sigma=sigma[:, None] * col,
+    return {
+        'mom6': mom6, 'mom_open': C / Op[:, [0]] - 1,
+        'brk2h': C / hi2h - 1, 'brkday': C / hiday - 1,
+        'rvol': rvol, 'ext50': (C - e50) / C, 'rsi': rsi,
+        'sigma': sigma[:, None] * col,
         # a name with no measured movement across the trailing sample has
         # no scale to normalize by, so z6 is undefined there for the same
         # reason rvol is
-        z6=np.divide(mom6, sigma[:, None] * np.sqrt(6),
+        'z6': np.divide(mom6, sigma[:, None] * np.sqrt(6),
                      out=np.full_like(mom6, np.nan),
                      where=sigma[:, None] > 0),
-        dollar_volume=prior_mean(V.sum(1) * C[:, -1], SIGMA_SESSIONS)[:, None] * col,
-    )
+        'dollar_volume': prior_mean(V.sum(1) * C[:, -1], SIGMA_SESSIONS)[:, None] * col,
+    }
 
 
 def breakout_mask(feat: dict[str, np.ndarray],
@@ -478,24 +479,24 @@ def scan_ticker(ticker: str) -> dict[str, Any] | None:
             bars['high'], bars['low'], close, sess, bar)
         first = np.zeros(len(sess), np.int8)
         first[np.unique(sess, return_index=True)[1]] = 1
-        events = dict(
-            session=sess.astype(np.int32), clock=bar.astype(np.int8),
-            first=first, n_bars=n_bars[sess].astype(np.int8),
-            close=close[sess, bar].astype(np.float32),
-            next_open=bars['open'][
+        events = {
+            'session': sess.astype(np.int32), 'clock': bar.astype(np.int8),
+            'first': first, 'n_bars': n_bars[sess].astype(np.int8),
+            'close': close[sess, bar].astype(np.float32),
+            'next_open': bars['open'][
                 sess, np.minimum(bar + 1, SESSION_BARS - 1)].astype(np.float32),
-            ret_eod=eod[sess, bar - FIRST_BAR].astype(np.float32),
-            mfe=mfe.astype(np.float32), mae=mae.astype(np.float32),
-            h_mfe=h_mfe, h_mae=h_mae,
-            touch50=touch[0.005], touch100=touch[0.010],
-            path=paths[sess, bar - FIRST_BAR].astype(np.float32),
-            vol_path=vols[sess, bar - FIRST_BAR].astype(np.float32),
-        )
+            'ret_eod': eod[sess, bar - FIRST_BAR].astype(np.float32),
+            'mfe': mfe.astype(np.float32), 'mae': mae.astype(np.float32),
+            'h_mfe': h_mfe, 'h_mae': h_mae,
+            'touch50': touch[0.005], 'touch100': touch[0.010],
+            'path': paths[sess, bar - FIRST_BAR].astype(np.float32),
+            'vol_path': vols[sess, bar - FIRST_BAR].astype(np.float32),
+        }
         for k in EVENT_FEATURES:
             events[k] = feat[k][sess, bar].astype(np.float32)
-    return dict(ticker=ticker, dates=bars['dates'], events=events,
-                paths=paths, vols=vols, eod=eod.astype(np.float32),
-                n_sessions=len(bars['dates']))
+    return {'ticker': ticker, 'dates': bars['dates'], 'events': events,
+                'paths': paths, 'vols': vols, 'eod': eod.astype(np.float32),
+                'n_sessions': len(bars['dates'])}
 
 
 def run_scan(tickers: Iterable[str], out_dir: str) -> list[dict[str, Any]]:
@@ -549,18 +550,18 @@ def run_scan(tickers: Iterable[str], out_dir: str) -> list[dict[str, Any]]:
             good = np.isfinite(cube)
             np.add.at(tot, rows, np.where(good, cube, 0.0))
             np.add.at(cnt, rows, good.astype(np.int64))
-        payload: dict[str, Any] = dict(
-            ticker=t, dates=s['dates'], eod=s['eod'],
-            name_path_sum=np.nansum(s['paths'], axis=0),
-            name_path_n=np.isfinite(s['paths']).sum(axis=0).astype(np.int64),
-            name_vol_sum=np.nansum(s['vols'], axis=0),
-            name_vol_n=np.isfinite(s['vols']).sum(axis=0).astype(np.int64),
-        )
+        payload: dict[str, Any] = {
+            'ticker': t, 'dates': s['dates'], 'eod': s['eod'],
+            'name_path_sum': np.nansum(s['paths'], axis=0),
+            'name_path_n': np.isfinite(s['paths']).sum(axis=0).astype(np.int64),
+            'name_vol_sum': np.nansum(s['vols'], axis=0),
+            'name_vol_n': np.isfinite(s['vols']).sum(axis=0).astype(np.int64),
+        }
         payload.update({'ev_' + k: v for k, v in s['events'].items()})
         np.savez_compressed(os.path.join(out_dir, f'{t}.npz'), **payload)
         scanned.append(t)
-        summary.append(dict(ticker=t, sessions=s['n_sessions'],
-                            events=int(len(s['events'].get('session', ())))))
+        summary.append({'ticker': t, 'sessions': s['n_sessions'],
+                            'events': len(s['events'].get('session', ()))})
     if not scanned:
         raise FileNotFoundError('no ticker in the request had a usable archive')
 
@@ -612,13 +613,13 @@ def load_scan(out_dir: str) -> dict[str, Any]:
     if not events:
         raise ValueError('the scan produced no events')
     E = {k: np.concatenate([e[k] for e in events]) for k in events[0]}
-    return dict(dates=dates, tickers=np.array(tickers), events=E, eod=eod,
-                name_path_sum=np.array(name_path_sum),
-                name_path_n=np.array(name_path_n),
-                name_vol_sum=np.array(name_vol_sum),
-                name_vol_n=np.array(name_vol_n),
-                day_path_sum=m['day_path_sum'], day_path_n=m['day_path_n'],
-                day_vol_sum=m['day_vol_sum'], day_vol_n=m['day_vol_n'])
+    return {'dates': dates, 'tickers': np.array(tickers), 'events': E, 'eod': eod,
+                'name_path_sum': np.array(name_path_sum),
+                'name_path_n': np.array(name_path_n),
+                'name_vol_sum': np.array(name_vol_sum),
+                'name_vol_n': np.array(name_vol_n),
+                'day_path_sum': m['day_path_sum'], 'day_path_n': m['day_path_n'],
+                'day_vol_sum': m['day_vol_sum'], 'day_vol_n': m['day_vol_n']}
 
 
 # --------------------------------------------------------------- estimator
@@ -666,8 +667,8 @@ def session_bootstrap(values: np.ndarray, sessions: np.ndarray,
     ok = np.isfinite(values)
     values, sessions = np.asarray(values)[ok], np.asarray(sessions)[ok]
     if len(values) == 0:
-        return dict(mean=float('nan'), lo=float('nan'), hi=float('nan'),
-                    p=float('nan'), n=0, n_sessions=0)
+        return {'mean': float('nan'), 'lo': float('nan'), 'hi': float('nan'),
+                    'p': float('nan'), 'n': 0, 'n_sessions': 0}
     uniq, inv = np.unique(sessions, return_inverse=True)
     order = np.argsort(inv, kind='stable')
     counts = np.bincount(inv, minlength=len(uniq))
@@ -678,10 +679,10 @@ def session_bootstrap(values: np.ndarray, sessions: np.ndarray,
     for b in range(reps):
         pick = rng.integers(0, len(uniq), len(uniq))
         draws[b] = sums[pick].sum() / max(counts[pick].sum(), 1)
-    return dict(mean=float(values.mean()), lo=float(np.percentile(draws, 2.5)),
-                hi=float(np.percentile(draws, 97.5)),
-                p=float((draws <= 0).mean()), n=int(len(values)),
-                n_sessions=int(len(uniq)))
+    return {'mean': float(values.mean()), 'lo': float(np.percentile(draws, 2.5)),
+                'hi': float(np.percentile(draws, 97.5)),
+                'p': float((draws <= 0).mean()), 'n': len(values),
+                'n_sessions': len(uniq)}
 
 
 def placebo_excess(panel: dict[str, Any], mask: np.ndarray, reps: int = 20,
@@ -740,10 +741,10 @@ def horizon_table(panel: dict[str, Any], mask: np.ndarray,
         b = session_bootstrap(ex[:, k], E['date'][mask], reps)
         if not b['n']:
             continue
-        rows.append(dict(minutes=h * 5, n=b['n'], sessions=b['n_sessions'],
-                         raw_bp=float(np.nanmean(raw[:, k]) * 1e4),
-                         excess_bp=b['mean'] * 1e4,
-                         ci_bp=[b['lo'] * 1e4, b['hi'] * 1e4], p=b['p']))
+        rows.append({'minutes': h * 5, 'n': b['n'], 'sessions': b['n_sessions'],
+                         'raw_bp': float(np.nanmean(raw[:, k]) * 1e4),
+                         'excess_bp': b['mean'] * 1e4,
+                         'ci_bp': [b['lo'] * 1e4, b['hi'] * 1e4], 'p': b['p']})
     return rows
 
 
@@ -766,11 +767,11 @@ def volatility_table(panel: dict[str, Any], mask: np.ndarray,
         b = session_bootstrap(y[ok, w] / mu_name[ok, w], di[ok], reps)
         d = session_bootstrap(
             y[ok, w] / np.maximum(mu_day[ok, w], 1e-9), di[ok], reps)
-        rows.append(dict(window=label, n=int(ok.sum()),
-                         realized_bp=float(np.nanmean(y[ok, w])),
-                         own_normal_bp=float(np.nanmean(mu_name[ok, w])),
-                         ratio_own=b['mean'], ci_own=[b['lo'], b['hi']],
-                         ratio_day=d['mean'], ci_day=[d['lo'], d['hi']]))
+        rows.append({'window': label, 'n': int(ok.sum()),
+                         'realized_bp': float(np.nanmean(y[ok, w])),
+                         'own_normal_bp': float(np.nanmean(mu_name[ok, w])),
+                         'ratio_own': b['mean'], 'ci_own': [b['lo'], b['hi']],
+                         'ratio_day': d['mean'], 'ci_day': [d['lo'], d['hi']]})
     return rows
 
 
@@ -792,22 +793,22 @@ def continuation_summary(panel: dict[str, Any], mask: np.ndarray,
     mu_clock = (day_tot.sum(axis=0) / np.maximum(gn, 1))[ci]
     b = session_bootstrap(y - mu_name - mu_day + mu_clock, di, reps)
     peer_up = _leave_one_out(peer_up_tot[di, ci], day_cnt[di, ci], up)
-    return dict(
-        n=int(mask.sum()), sessions=b['n_sessions'],
-        names=int(len(np.unique(ti))),
-        p_close_up=float(np.mean(y > 0)),
-        p_peer_up=float(np.nanmean(peer_up)),
-        excess_bp=b['mean'] * 1e4, ci_bp=[b['lo'] * 1e4, b['hi'] * 1e4],
-        p=b['p'],
-        mfe_bp=float(np.nanmean(E['mfe'][mask]) * 1e4),
-        mae_bp=float(np.nanmean(E['mae'][mask]) * 1e4),
-        sd_bp=float(np.nanstd(y) * 1e4),
-        touch_up=float(np.mean(E['touch50'][mask] == 1)),
-        touch_down=float(np.mean(E['touch50'][mask] == -1)),
-        median_bars_to_high=float(np.median(E['h_mfe'][mask])),
-        slippage_bp=float(np.nanmean(
+    return {
+        'n': int(mask.sum()), 'sessions': b['n_sessions'],
+        'names': len(np.unique(ti)),
+        'p_close_up': float(np.mean(y > 0)),
+        'p_peer_up': float(np.nanmean(peer_up)),
+        'excess_bp': b['mean'] * 1e4, 'ci_bp': [b['lo'] * 1e4, b['hi'] * 1e4],
+        'p': b['p'],
+        'mfe_bp': float(np.nanmean(E['mfe'][mask]) * 1e4),
+        'mae_bp': float(np.nanmean(E['mae'][mask]) * 1e4),
+        'sd_bp': float(np.nanstd(y) * 1e4),
+        'touch_up': float(np.mean(E['touch50'][mask] == 1)),
+        'touch_down': float(np.mean(E['touch50'][mask] == -1)),
+        'median_bars_to_high': float(np.median(E['h_mfe'][mask])),
+        'slippage_bp': float(np.nanmean(
             E['next_open'][mask] / E['close'][mask] - 1) * 1e4),
-    )
+    }
 
 
 def breadth(panel: dict[str, Any], mask: np.ndarray) -> np.ndarray:
@@ -927,15 +928,15 @@ def capture_ticker(ticker: str, out_dir: str) -> dict[str, Any] | None:
         ev_sig.append(s30)
     if not ev_dates:
         return None
-    payload: dict[str, Any] = dict(ticker=ticker,
-                                   dates=np.array(ev_dates),
-                                   sigma30=np.array(ev_sig, dtype=np.float32))
+    payload: dict[str, Any] = {'ticker': ticker,
+                                   'dates': np.array(ev_dates),
+                                   'sigma30': np.array(ev_sig, dtype=np.float32)}
     for k in keys:
         payload[f'ev_{k}'] = np.array(ev[k], dtype=np.float64)
         payload[f'ct_{k}'] = np.array(ct[k], dtype=np.float64)
     os.makedirs(out_dir, exist_ok=True)
     np.savez_compressed(os.path.join(out_dir, f'{ticker}.npz'), **payload)
-    return dict(ticker=ticker, events=len(ev_dates))
+    return {'ticker': ticker, 'events': len(ev_dates)}
 
 
 def run_capture(tickers: Iterable[str], out_dir: str,
@@ -984,16 +985,16 @@ def build_capture_results(out_dir: str) -> dict[str, Any]:
             be = session_bootstrap(e[ok], dates[ok], 2000)
             bc = session_bootstrap(c[ok], dates[ok], 2000)
             bd = session_bootstrap(e[ok] - c[ok], dates[ok], 2000)
-            cells.append(dict(
-                bracket_n=k, fill=f, n=int(ok.sum()),
-                sessions=bd['n_sessions'], trigger_rate=float(ok.mean()),
-                event_bp=be['mean'] * 1e4, control_bp=bc['mean'] * 1e4,
-                excess_bp=bd['mean'] * 1e4,
-                ci_bp=[bd['lo'] * 1e4, bd['hi'] * 1e4], p=bd['p']))
-    return dict(era=HEADLINE_START, screen=CHART_SCREEN,
-                controls=CAPTURE_CONTROLS, n_names=len(files),
-                sessions=int(len(np.unique(dates))),
-                sigma30_median_bp=float(np.median(sig) * 1e4), cells=cells)
+            cells.append({
+                'bracket_n': k, 'fill': f, 'n': int(ok.sum()),
+                'sessions': bd['n_sessions'], 'trigger_rate': float(ok.mean()),
+                'event_bp': be['mean'] * 1e4, 'control_bp': bc['mean'] * 1e4,
+                'excess_bp': bd['mean'] * 1e4,
+                'ci_bp': [bd['lo'] * 1e4, bd['hi'] * 1e4], 'p': bd['p']})
+    return {'era': HEADLINE_START, 'screen': CHART_SCREEN,
+                'controls': CAPTURE_CONTROLS, 'n_names': len(files),
+                'sessions': len(np.unique(dates)),
+                'sigma30_median_bp': float(np.median(sig) * 1e4), 'cells': cells}
 
 
 # --------------------------------------------------------- exits + sizing
@@ -1137,17 +1138,17 @@ def exit_ticker(ticker: str, out_dir: str) -> dict[str, Any] | None:
         ev_dates.append(dates[d])
     if not ev_dates:
         return None
-    payload: dict[str, Any] = dict(
-        ticker=ticker, dates=np.array(ev_dates),
-        sigma30=np.array(ev_sig, dtype=np.float32),
-        r_mult=np.array(ev_r, dtype=np.float64),
-        mae_r=np.array(ev_mae, dtype=np.float64))
+    payload: dict[str, Any] = {
+        'ticker': ticker, 'dates': np.array(ev_dates),
+        'sigma30': np.array(ev_sig, dtype=np.float32),
+        'r_mult': np.array(ev_r, dtype=np.float64),
+        'mae_r': np.array(ev_mae, dtype=np.float64)}
     for k in keys:
         payload[f'ev_{k}'] = np.array(ev[k], dtype=np.float64)
         payload[f'ct_{k}'] = np.array(ct[k], dtype=np.float64)
     os.makedirs(out_dir, exist_ok=True)
     np.savez_compressed(os.path.join(out_dir, f'{ticker}.npz'), **payload)
-    return dict(ticker=ticker, events=len(ev_dates))
+    return {'ticker': ticker, 'events': len(ev_dates)}
 
 
 def run_exit_scan(tickers: Iterable[str], out_dir: str,
@@ -1183,21 +1184,21 @@ def _sizing_block(r_mult, mae_r, sigma30, dates):
     def sweep(bag):
         sw = sizing_sweep(bag, fractions=SIZING_FRACTIONS, n_paths=3000,
                           seed=CONTINUATION_SEED)
-        return [dict(fraction=f, median_terminal=s['terminal']['median'],
-                     max_dd_median=s['max_drawdown']['median'],
-                     p_ruin=s['p_ruin'],
-                     p_below_start=s['p_negative_terminal'])
+        return [{'fraction': f, 'median_terminal': s['terminal']['median'],
+                     'max_dd_median': s['max_drawdown']['median'],
+                     'p_ruin': s['p_ruin'],
+                     'p_below_start': s['p_negative_terminal']}
                 for f, s in sw.items()]
-    return dict(
-        n_trades=int(len(r_mult)), n_sessions=int(len(ud)),
-        sigma30_median_bp=float(np.median(sigma30) * 1e4),
-        mean_r_trade_gross=float(r_mult.mean()),
-        mean_r_trade_net=float(r_net.mean()),
-        mean_r_session_gross=float(sess_g.mean()),
-        mean_r_session_net=float(sess_n.mean()),
-        kelly_session_gross=float(kelly_fraction(sess_g)),
-        kelly_session_net=float(kelly_fraction(sess_n)),
-        gross=sweep(sess_g), net=sweep(sess_n))
+    return {
+        'n_trades': len(r_mult), 'n_sessions': len(ud),
+        'sigma30_median_bp': float(np.median(sigma30) * 1e4),
+        'mean_r_trade_gross': float(r_mult.mean()),
+        'mean_r_trade_net': float(r_net.mean()),
+        'mean_r_session_gross': float(sess_g.mean()),
+        'mean_r_session_net': float(sess_n.mean()),
+        'kelly_session_gross': float(kelly_fraction(sess_g)),
+        'kelly_session_net': float(kelly_fraction(sess_n)),
+        'gross': sweep(sess_g), 'net': sweep(sess_n)}
 
 
 def build_exit_results(out_dir: str) -> dict[str, Any]:
@@ -1230,15 +1231,15 @@ def build_exit_results(out_dir: str) -> dict[str, Any]:
             ok = np.isfinite(e) & np.isfinite(c)
             be = session_bootstrap(e[ok], dates[ok], 1500)
             bd = session_bootstrap(e[ok] - c[ok], dates[ok], 1500)
-            exits.append(dict(
-                exit=rule, fill=f, n=int(ok.sum()),
-                event_bp=be['mean'] * 1e4,
-                control_bp=session_bootstrap(c[ok], dates[ok], 800)['mean'] * 1e4,
-                excess_bp=bd['mean'] * 1e4,
-                ci_bp=[bd['lo'] * 1e4, bd['hi'] * 1e4], p=bd['p']))
-    return dict(era=HEADLINE_START, entry_n=EXIT_ENTRY_N,
-                n_names=len(files), sessions=int(len(np.unique(dates))),
-                exits=exits, sizing=_sizing_block(rmult, mae, sig, dates))
+            exits.append({
+                'exit': rule, 'fill': f, 'n': int(ok.sum()),
+                'event_bp': be['mean'] * 1e4,
+                'control_bp': session_bootstrap(c[ok], dates[ok], 800)['mean'] * 1e4,
+                'excess_bp': bd['mean'] * 1e4,
+                'ci_bp': [bd['lo'] * 1e4, bd['hi'] * 1e4], 'p': bd['p']})
+    return {'era': HEADLINE_START, 'entry_n': EXIT_ENTRY_N,
+                'n_names': len(files), 'sessions': len(np.unique(dates)),
+                'exits': exits, 'sizing': _sizing_block(rmult, mae, sig, dates)}
 
 
 # ------------------------------------------------------------- multi-day
@@ -1357,16 +1358,16 @@ def multiday_ticker(ticker: str, out_dir: str, splits=None,
         ev_dates.append(day)
     if not ev_dates:
         return None
-    payload: dict[str, Any] = dict(
-        ticker=ticker, dates=np.array(ev_dates),
-        beta=np.array(ev_beta, dtype=np.float32),
-        overnight=np.array(on, dtype=np.float64),
-        intraday=np.array(intr, dtype=np.float64),
-        excess=np.array([ex[N] for N in MULTIDAY_HORIZONS], dtype=np.float64).T,
-        spy_fwd=np.array([spyf_ev[N] for N in MULTIDAY_HORIZONS], dtype=np.float64).T)
+    payload: dict[str, Any] = {
+        'ticker': ticker, 'dates': np.array(ev_dates),
+        'beta': np.array(ev_beta, dtype=np.float32),
+        'overnight': np.array(on, dtype=np.float64),
+        'intraday': np.array(intr, dtype=np.float64),
+        'excess': np.array([ex[N] for N in MULTIDAY_HORIZONS], dtype=np.float64).T,
+        'spy_fwd': np.array([spyf_ev[N] for N in MULTIDAY_HORIZONS], dtype=np.float64).T}
     os.makedirs(out_dir, exist_ok=True)
     np.savez_compressed(os.path.join(out_dir, f'{ticker}.npz'), **payload)
-    return dict(ticker=ticker, events=len(ev_dates), nH=nH)
+    return {'ticker': ticker, 'events': len(ev_dates), 'nH': nH}
 
 
 def run_multiday_scan(tickers: Iterable[str], out_dir: str,
@@ -1454,26 +1455,26 @@ def build_multiday_results(out_dir: str) -> dict[str, Any]:
         cnt[k] += 1
     mat = acc / np.maximum(cnt[:, None], 1)
 
-    obs, lo, hi, p, t, se, joint = _moving_block_boot(mat, block=max(MULTIDAY_HORIZONS))
+    obs, lo, hi, p, t, _se, joint = _moving_block_boot(mat, block=max(MULTIDAY_HORIZONS))
     horizons = []
     for j, N in enumerate(MULTIDAY_HORIZONS):
         col = excess[:, j]
         col = col[np.isfinite(col)]
         frac_pos = float(np.mean(col > 0))
-        horizons.append(dict(
-            days=N, n=int(len(col)),
-            mean_bp=float(obs[j] * 1e4), ci_bp=[float(lo[j] * 1e4), float(hi[j] * 1e4)],
-            p=float(p[j]), t=float(t[j]),
-            median_bp=float(np.median(col) * 1e4),
-            pct_positive=frac_pos,
-            event_spy_fwd_bp=float(np.nanmean(spyf[:, j]) * 1e4)))
-    return dict(
-        era=HEADLINE_START, n_names=len(files),
-        events=int(len(dates)), event_dates=int(len(ud)),
-        mean_beta=float(np.nanmean(betas)), family_band_t=joint,
-        overnight_bp=float(np.nanmean(on) * 1e4),
-        next_day_intraday_bp=float(np.nanmean(intr) * 1e4),
-        horizons=horizons)
+        horizons.append({
+            'days': N, 'n': len(col),
+            'mean_bp': float(obs[j] * 1e4), 'ci_bp': [float(lo[j] * 1e4), float(hi[j] * 1e4)],
+            'p': float(p[j]), 't': float(t[j]),
+            'median_bp': float(np.median(col) * 1e4),
+            'pct_positive': frac_pos,
+            'event_spy_fwd_bp': float(np.nanmean(spyf[:, j]) * 1e4)})
+    return {
+        'era': HEADLINE_START, 'n_names': len(files),
+        'events': len(dates), 'event_dates': len(ud),
+        'mean_beta': float(np.nanmean(betas)), 'family_band_t': joint,
+        'overnight_bp': float(np.nanmean(on) * 1e4),
+        'next_day_intraday_bp': float(np.nanmean(intr) * 1e4),
+        'horizons': horizons}
 
 
 # -------------------------------------------------------------------- CLI
@@ -1493,18 +1494,18 @@ def build_results(panel: dict[str, Any]) -> dict[str, Any]:
             continue
         s = continuation_summary(panel, m)
         by_breadth.append(dict(band=label, **s))
-    return dict(
-        era=HEADLINE_START, screen=CHART_SCREEN,
-        summary=continuation_summary(panel, mask),
-        horizons=horizon_table(panel, mask),
-        volatility=volatility_table(panel, mask),
-        breadth=by_breadth, placebo=[pm, ps])
+    return {
+        'era': HEADLINE_START, 'screen': CHART_SCREEN,
+        'summary': continuation_summary(panel, mask),
+        'horizons': horizon_table(panel, mask),
+        'volatility': volatility_table(panel, mask),
+        'breadth': by_breadth, 'placebo': [pm, ps]}
 
 
 def _fmt(rows: list[dict[str, Any]], cols: Sequence[str]) -> str:
     head = ''.join(f'{c:>14}' for c in cols)
     body = [''.join(f'{r[c]:>14.2f}' if isinstance(r[c], float)
-                    else f'{str(r[c]):>14}' for c in cols) for r in rows]
+                    else f'{r[c]!s:>14}' for c in cols) for r in rows]
     return '\n'.join([head, '-' * len(head), *body])
 
 

@@ -33,7 +33,6 @@ Usage:
     python validate_dailies.py MSFT --dailies msft_option_dailies_2008_2016.csv
 """
 from __future__ import annotations
-from common.paths import data_path
 
 import argparse
 import csv
@@ -43,6 +42,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
+from common.paths import data_path
 from engine.cc_backtest import bs_delta
 
 # --- entry band and placeholder signatures (mirror the documented battery) ---

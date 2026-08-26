@@ -17,9 +17,10 @@ from __future__ import annotations
 
 import json
 import os
-from common.paths import DATA_DIR, data_path
 
 import pytest
+
+from common.paths import DATA_DIR, data_path
 
 GEN_LEDGER = data_path('gen_ledger.jsonl')
 

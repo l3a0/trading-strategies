@@ -26,7 +26,6 @@ from engine.cup_handle_scan import (
     stratum_of,
 )
 
-
 # ------------------------------------------------------- the textbook cup
 
 def textbook(depth_frac=0.20, handle_drop=4.0, handle_len=10, v_shape=None,
@@ -232,7 +231,7 @@ class TestQuadraticVariant:
         # whole pass — the ticker is skipped and reported for next time
         import engine.cup_handle_scan as chs
         monkeypatch.setattr(chs, 'failed_tickers', lambda: set())
-        monkeypatch.setattr(chs, 'load_splits', lambda: {})
+        monkeypatch.setattr(chs, 'load_splits', dict)
 
         def boom(ticker, splits):
             raise EOFError('compressed file ended early')
@@ -316,7 +315,7 @@ class TestEvaluation:
     def test_run_scan_without_evaluate_computes_no_returns(self, monkeypatch):
         import engine.cup_handle_scan as chs
         monkeypatch.setattr(chs, 'failed_tickers', lambda: set())
-        monkeypatch.setattr(chs, 'load_splits', lambda: {})
+        monkeypatch.setattr(chs, 'load_splits', dict)
         monkeypatch.setattr(chs, 'archive_path', lambda t: None)
         out = chs.run_scan(['ZZZ'], evaluate=False)
         assert 'evaluation' not in out and 'survives' not in out
@@ -378,8 +377,7 @@ class TestReturnBreakGuard:
         assert clusters[0]['ret'] == pytest.approx(0.10)
 
     def test_real_table_indices_resolve_against_a_real_series(self):
-        from pipeline.minute_archive import (RETURN_BREAKS,
-                                             return_break_indices)
+        from pipeline.minute_archive import RETURN_BREAKS, return_break_indices
         # every listed date must be findable, and a ticker with no entry
         # must yield nothing — the table is keyed on the retained series
         dates = np.array(['2010-07-19', '2010-07-20', '2010-07-21'])
@@ -399,6 +397,7 @@ class TestEyeballFigureClip:
 
     def test_panel_never_plots_past_the_breakout(self):
         import numpy as np
+
         from engine.cup_handle_figure import _panel
 
         class RecAx:
@@ -423,6 +422,7 @@ class TestEyeballFigureClip:
 
     def test_surge_is_trigger_over_trailing_average(self):
         import numpy as np
+
         from engine.cup_handle_figure import _surge
         from engine.cup_handle_scan import VOL_AVG_WINDOW
         v = np.ones(VOL_AVG_WINDOW + 5)

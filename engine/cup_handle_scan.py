@@ -40,7 +40,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 
@@ -309,7 +310,7 @@ def cluster_null_p(clusters: list[dict[str, Any]],
     for cl in clusters:
         strata.setdefault(cl['stratum'], []).append(cl)
     all_days: dict[str, set[str]] = {}
-    for t, v in data.items():
+    for v in data.values():
         for d in v['dates']:
             all_days.setdefault(stratum_of(str(d), horizon), set()).add(str(d))
 

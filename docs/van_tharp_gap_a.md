@@ -23,17 +23,17 @@ measurement backed by new tests.
 
 Today the overlays log an **event stream**, not a trade ledger. Both engines append action-keyed event
 dicts with a different payload shape per action — the simulated CC engine emits `sell`
-(engine/cc_backtest.py:355), `expiration` (engine/cc_backtest.py:407), `close` (engine/cc_backtest.py:432),
-and `close_itm` (engine/cc_backtest.py:456); the structure engine emits `enter`
-(realchains/vol_premium.py:890), `settle_leg` (realchains/vol_premium.py:908), `settle`
-(realchains/vol_premium.py:925), and `close` (realchains/vol_premium.py:949). The only per-trade economic
+(engine/cc_backtest.py:356), `expiration` (engine/cc_backtest.py:408), `close` (engine/cc_backtest.py:433),
+and `close_itm` (engine/cc_backtest.py:457); the structure engine emits `enter`
+(realchains/vol_premium.py:891), `settle_leg` (realchains/vol_premium.py:909), `settle`
+(realchains/vol_premium.py:926), and `close` (realchains/vol_premium.py:950). The only per-trade economic
 field recorded is realized dollar P&L. No trade carries an initial-risk basis, and max adverse excursion
 (MAE) is tracked nowhere — the structure mark loop refreshes `leg['mid']` every day
-(realchains/vol_premium.py:934) but never keeps a running low-water mark. Both statistics functions then
+(realchains/vol_premium.py:935) but never keeps a running low-water mark. Both statistics functions then
 discard the trade list and rebuild everything from the daily equity curve: `compute_statistics`
 reconstructs its return series from `daily_equity['equity']` and `daily_equity['price']`
-(engine/cc_backtest.py:656-668), and `short_vol_statistics` does `np.diff(eq)/capital` on
-`daily_equity['equity']` (realchains/vol_premium.py:181-187). Neither ever sees `trades`.
+(engine/cc_backtest.py:657-669), and `short_vol_statistics` does `np.diff(eq)/capital` on
+`daily_equity['equity']` (realchains/vol_premium.py:182-188). Neither ever sees `trades`.
 
 Gap A supplies the missing substrate: a uniform per-trade record carrying dollar P&L, an initial-risk basis
 `R`, the R-multiple, and MAE. From that one substrate the downstream Van Tharp measurements follow:
@@ -49,7 +49,7 @@ Gap A supplies the missing substrate: a uniform per-trade record carrying dollar
 
 A uniform dataclass, `TradeRecord`, is the single columnar shape every overlay reduces to. It keeps
 `(entry_date, close_date, pnl)` so it is drop-in compatible with `regime_analysis`, which reads a trade
-list as `list[dict]` and projects it to `['date', 'pnl']` (engine/cc_backtest.py:839-847). The added fields
+list as `list[dict]` and projects it to `['date', 'pnl']` (engine/cc_backtest.py:840-848). The added fields
 carry the risk basis, R, the R-multiple, MAE, and the win/loss outcome. The block below is the as-built
 class, verbatim from `common/trade_ledger.py`:
 
@@ -84,8 +84,8 @@ class TradeRecord:
 ```
 
 The `pnl` field is the same rounded dollar P&L the engines already compute at every settle/close site
-(`round((entry_credit + structure_flow) * shares, 2)` at realchains/vol_premium.py:926; the CC assignment
-and close P&L at engine/cc_backtest.py:407-413 and :432-440). The ledger never recomputes P&L — it reads
+(`round((entry_credit + structure_flow) * shares, 2)` at realchains/vol_premium.py:927; the CC assignment
+and close P&L at engine/cc_backtest.py:408-414 and :432-440). The ledger never recomputes P&L — it reads
 what the engine already booked.
 
 ## Initial-risk (R) derivation
@@ -100,7 +100,7 @@ the fat left tail), with `avg_loss_1R` offered as a labelled ex-post cross-check
 
 Note on units: `entry_net` and the derived `entry_credit` are **per-share** quantities, and leg `strike` is
 in price points, so every dollar R below scales the per-share basis by the loop-level `shares`
-(= `100 * num_contracts`, realchains/vol_premium.py:837). `shares` is not a leg-dict field — it is a scalar
+(= `100 * num_contracts`, realchains/vol_premium.py:838). `shares` is not a leg-dict field — it is a scalar
 each overlay already holds — so it must be threaded to the ledger alongside the per-share leg data.
 
 | Family | Overlays | `risk_basis` | R formula | Source fields |
@@ -112,19 +112,19 @@ each overlay already holds — so it must be threaded to the ledger alongside th
 **Defined-risk — `defined_max_loss`.** Both wing width and net credit are computable from the leg dicts at
 entry, and the dollar figure scales them by `shares`. Each leg carries `strike` and `sign`, so
 `width = abs(short_strike − long_strike)` is direct; the credit-spread selector returns a short put and a
-long put wing (realchains/vol_premium.py:586-593) and the iron-condor selector returns four legs with two
-call and two put strikes (realchains/vol_premium.py:455-464). The net credit per share is the same quantity
-the engine already sums, `sum(-leg['sign'] * leg['entry_net'])` (realchains/vol_premium.py:876), and
-`entry_net` already bakes in per-leg commission (realchains/vol_premium.py:413-415). Both families use the
-`net_positive` entry guard (realchains/vol_premium.py:874), so the net credit is guaranteed positive at
+long put wing (realchains/vol_premium.py:587-594) and the iron-condor selector returns four legs with two
+call and two put strikes (realchains/vol_premium.py:456-465). The net credit per share is the same quantity
+the engine already sums, `sum(-leg['sign'] * leg['entry_net'])` (realchains/vol_premium.py:877), and
+`entry_net` already bakes in per-leg commission (realchains/vol_premium.py:414-416). Both families use the
+`net_positive` entry guard (realchains/vol_premium.py:875), so the net credit is guaranteed positive at
 entry. The max-loss basis is exact and entry-time; it is reconstructable from the leg strikes and
 `entry_net` plus the loop-level `shares`, so the ledger must receive the leg strikes/signs (not just the
 scalar credit the `enter` event carries today — see A1 below).
 
 **Stopped seller — `stop_distance`.** The real covered-call stop is a multiple of the net premium collected,
 keyed on the buyback cost: `hit_stop = close_ref >= premium_collected * float(stop_loss_mult)`
-(realchains/real_cc_backtest.py:469-470), with `stop_loss_mult` read from params
-(realchains/real_cc_backtest.py:288). So the overlay's initial risk is the credit given back when the
+(realchains/real_cc_backtest.py:470-471), with `stop_loss_mult` read from params
+(realchains/real_cc_backtest.py:289). So the overlay's initial risk is the credit given back when the
 buyback reaches the stop level: `R = (stop_loss_mult − 1) × premium_collected × shares`. For the classic
 2×-entry stop this is exactly one premium's worth. The stock notional
 (`shares × entry_price`) is **not** the overlay's R — it is the buy-and-hold capital base, whose downside the
@@ -132,12 +132,12 @@ covered call barely caps; using it as R would conflate the equity position with 
 
 **Undefined-risk — `premium_collected`.** For undefined-risk sellers the only entry-time premium quantity is
 `entry_credit` — the net per-share premium recorded to the `enter` event as `credit`
-(realchains/vol_premium.py:890-891) and scaled to dollars by `shares` (= `100 * num_contracts`,
-realchains/vol_premium.py:837). For all-short structures (straddle, strangle — two short legs each) this is
+(realchains/vol_premium.py:891-892) and scaled to dollars by `shares` (= `100 * num_contracts`,
+realchains/vol_premium.py:838). For all-short structures (straddle, strangle — two short legs each) this is
 an unambiguous positive credit. The mixed-sign risk reversal (short put + long call,
-realchains/vol_premium.py:557-563) and the calendar (short near + long far,
-realchains/vol_premium.py:653-660) use the `each_short_positive` guard
-(realchains/vol_premium.py:872), which only checks each short leg — so their `entry_credit` is signed and can
+realchains/vol_premium.py:558-564) and the calendar (short near + long far,
+realchains/vol_premium.py:654-661) use the `each_short_positive` guard
+(realchains/vol_premium.py:873), which only checks each short leg — so their `entry_credit` is signed and can
 be a net debit. **The R basis for those two is floored at the gross short-leg premium —
 `max(|net credit|, Σ short-leg entry_net)` — the resolved form of the deferred floor choice** (the premium at
 risk is never less than what the short legs collected; for an all-short structure the two coincide, so the
@@ -161,26 +161,26 @@ in-flight position through the daily mark loop. At entry it is 0; on each markin
 engines, so no new mark is fetched — only a running min is stored and read off at the exit sites.
 
 **Simulated CC engine.** The daily-equity open-position block recomputes the call value with `bs_price` each
-day (engine/cc_backtest.py:504) and forms the open-overlay unrealized P&L as
-`(position['premium_collected'] - call_value) * shares` (engine/cc_backtest.py:506). Track
-`min` of that expression, reset at entry (engine/cc_backtest.py:345), read at each exit/append site. Because
+day (engine/cc_backtest.py:505) and forms the open-overlay unrealized P&L as
+`(position['premium_collected'] - call_value) * shares` (engine/cc_backtest.py:507). Track
+`min` of that expression, reset at entry (engine/cc_backtest.py:346), read at each exit/append site. Because
 the proxy engine recomputes the mark fresh every day, its MAE has no stale-mark issue.
 
 **Real CC engine.** The same shape holds: `spread_mark` is the current close cost
-(realchains/real_cc_backtest.py:510-512) and the open-overlay unrealized P&L is
-`(position['premium_collected'] - spread_mark) * shares` (realchains/real_cc_backtest.py:513). Reset at entry
-(realchains/real_cc_backtest.py:362), min-track daily.
+(realchains/real_cc_backtest.py:511-513) and the open-overlay unrealized P&L is
+`(position['premium_collected'] - spread_mark) * shares` (realchains/real_cc_backtest.py:514). Reset at entry
+(realchains/real_cc_backtest.py:363), min-track daily.
 
-**Structure engine.** Thread MAE at the mark step (realchains/vol_premium.py:976-981), after per-leg
-`mid` is refreshed (realchains/vol_premium.py:934). The running unrealized P&L is
+**Structure engine.** Thread MAE at the mark step (realchains/vol_premium.py:977-982), after per-leg
+`mid` is refreshed (realchains/vol_premium.py:935). The running unrealized P&L is
 `(entry_credit + realized_settle_flow + sum(leg['sign'] * leg['mid'])) * shares` — the credit collected,
 plus any near-leg settle flow already booked (a calendar's staggered branch; 0.0 for single-expiration
 cycles), plus the current position mark (the same `sign * mid` sum the equity line uses) — using only
-stable loop scalars and the current mids, all already in hand. Reset MAE at entry (realchains/vol_premium.py:879) and finalize it at the
-settle/close sites (realchains/vol_premium.py:925-929, :949-952).
+stable loop scalars and the current mids, all already in hand. Reset MAE at entry (realchains/vol_premium.py:880) and finalize it at the
+settle/close sites (realchains/vol_premium.py:926-930, :949-952).
 
 **Do entry marks need retaining?** No. The structure engine mutates `leg['mid']` in place each day
-(realchains/vol_premium.py:934), so the original entry mid is not preserved — but the running unrealized P&L
+(realchains/vol_premium.py:935), so the original entry mid is not preserved — but the running unrealized P&L
 needs only `entry_credit` plus the current mids, never the entry mid, so MAE threads cleanly with existing
 state. A per-leg MAE (as opposed to per-structure) would require a new `leg['entry_mid']` field in the
 selectors, which is out of scope for Gap A; the leg schema stays unchanged.
@@ -188,7 +188,7 @@ selectors, which is out of scope for Gap A; the leg schema stays unchanged.
 **Two conventions to document, not fix.** (1) MAE is a **daily-bar** measure — it uses closing marks, not
 intraday extremes, so it understates the true worst excursion. (2) On the real path, missing-quote days
 carry the prior mark forward (`last_mid`/`real_delta` refresh only when a quote prints,
-realchains/real_cc_backtest.py:445-448; carry-forward noted at realchains/real_cc_backtest.py:482), so
+realchains/real_cc_backtest.py:446-449; carry-forward noted at realchains/real_cc_backtest.py:483), so
 real-engine MAE only updates on real-quote days and inherits the same stale-mark convention as its daily
 equity. Both are stated plainly in the record and the doc; neither is silently repaired.
 
@@ -198,9 +198,9 @@ The reduction lives in **one testable place**: a new dependency-light module, `c
 importable by both `engine/` and `realchains/`.
 
 `common/` is the single shared seam both packages already depend on — engine imports it at
-engine/cc_backtest.py:2 and engine/make_figures.py:44, realchains at
-realchains/real_cc_backtest.py:45, realchains/run_registered_vrp.py:16, and
-realchains/walk_forward_real.py:38, all via `from common.paths import data_path`. `common/` today holds only
+engine/cc_backtest.py:11 and engine/make_figures.py:59, realchains at
+realchains/real_cc_backtest.py:57, realchains/run_registered_vrp.py:19, and
+realchains/walk_forward_real.py:49, all via `from common.paths import data_path`. `common/` today holds only
 `__init__.py` and `paths.py`, and `paths.py` imports nothing beyond `pathlib` — so `common/` is a leaf
 module with no import into `engine/` or `realchains/`. Placing the ledger there keeps the dependency
 direction clean (no cycle) and lets both engines feed it the same trades list they already return.
@@ -220,12 +220,12 @@ The module exposes three public symbols:
 **The `(summary, trades, daily_equity)` tuple is the universal overlay return shape across both engines**, so
 `build_trade_ledger` reads the same `trades` list `regime_analysis` already consumes, keying only off the
 fields it needs and ignoring the rest — exactly as `regime_analysis` projects to `['date', 'pnl']`
-(engine/cc_backtest.py:839-847). One caveat the reducer must handle: the `enter` event carries only `credit`
+(engine/cc_backtest.py:840-848). One caveat the reducer must handle: the `enter` event carries only `credit`
 (per-share net) and `legs` (an integer count), not the leg strikes/signs
-(realchains/vol_premium.py:890-891), so the defined-risk width is **not** recoverable from the event stream
+(realchains/vol_premium.py:891-892), so the defined-risk width is **not** recoverable from the event stream
 as it stands — the A1 payload add must surface the leg strikes/signs (or a precomputed R) on entry. Wins and
-losses are counted today per-trade inside the overlay loops (engine/cc_backtest.py:588-590;
-realchains/vol_premium.py:923-924, :947-948) and surfaced in the summary; the ledger recomputes `outcome`
+losses are counted today per-trade inside the overlay loops (engine/cc_backtest.py:589-591;
+realchains/vol_premium.py:924-925, :947-948) and surfaced in the summary; the ledger recomputes `outcome`
 from the sign of `pnl` so the ledger is self-contained and does not depend on the loop-level counters.
 
 **Three statistics, one judge.** `ledger_statistics` reports the trade-level significance family as three
@@ -287,7 +287,7 @@ The phasing lands the cheap expectancy/SQN part before touching the MAE hot loop
   precomputed per-trade R) to the entry payload. Both are one-time entry-event additions, so this phase
   touches no daily loop.
 - **A2 — thread MAE.** Add the running `worst_unrealized` min to the three daily mark loops
-  (engine/cc_backtest.py:504-506, realchains/real_cc_backtest.py:510-513, realchains/vol_premium.py:976-981)
+  (engine/cc_backtest.py:505-507, realchains/real_cc_backtest.py:511-514, realchains/vol_premium.py:977-982)
   and emit it on the settle/close events. This is the one hot-loop touch.
 - **A3 — wire and pin.** Wire `ledger_statistics` into the reports and pin the tests.
 
@@ -300,14 +300,14 @@ classes at :99/:148/:184, dataset-gated `*Regression` classes with `@pytest.mark
 
 - **Always-run synthetic layer.** A plain `class TestTradeLedgerMechanics:` (no `skipif`, no fixture) builds
   a small hand-computable event stream plus marks inline — the idiom used by the literal trade-event list at
-  tests/test_explorations.py:52-63 — and asserts that `build_trade_ledger` produces the right records, the
+  tests/test_explorations.py:54-65 — and asserts that `build_trade_ledger` produces the right records, the
   right `initial_risk` per basis, the right MAE, and that `ledger_statistics` computes expectancy, the SQN,
   and `r_newey_west_t` correctly (the last against a hand-computed Bartlett-weighted value). Deterministic,
   no data, `pytest.approx` against hand-derived values, one invariant per method.
 - **Dataset-gated regression class.** A `class TestTradeLedgerRegression:` gated by
   `@pytest.mark.skipif(not _HAVE_*, ...)` with a module- or class-scoped fixture that loads and runs each
-  overlay once (the `_HAVE_*` probe at tests/test_vol_premium.py:49-60, the `scope='class'` fixture at
-  :416-423, the run-once `data`/`result` fixtures at tests/test_cc_backtest.py:1345-1360). It pins
+  overlay once (the `_HAVE_*` probe at tests/test_vol_premium.py:48-60, the `scope='class'` fixture at
+  :416-423, the run-once `data`/`result` fixtures at tests/test_cc_backtest.py:1344-1359). It pins
   expectancy, the SQN, `r_newey_west_t`, and the MAE-R distribution for one real overlay per engine — an
   MSFT covered call and a SPY short straddle. Skip-not-fail is the rule: real-chain tests skip when datasets are absent.
 

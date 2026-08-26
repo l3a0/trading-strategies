@@ -18,12 +18,10 @@ Two layers, mirroring test_real_cc_backtest.py:
 from __future__ import annotations
 
 import hashlib
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 import pytest
-
-from realchains.real_cc_backtest import run_real_cc_overlay
 from test_real_cc_backtest import (
     _HAVE_DAILIES,
     _HAVE_MSFT_BACKFILL,
@@ -32,6 +30,8 @@ from test_real_cc_backtest import (
     _HAVE_SPY_DAILIES,
     _PARAMS,
 )
+
+from realchains.real_cc_backtest import run_real_cc_overlay
 from trendgate.trend_gate import (
     ACCEPT_HI,
     ACCEPT_LO,
@@ -173,7 +173,7 @@ class TestPlaceboReplacement:
 # ---- pure logic: §5.2 / §5.3 statistics ----
 
 class TestStage1Statistics:
-    TRADES = [
+    TRADES: ClassVar[list] = [
         {'action': 'sell', 'date': '2024-01-02', 'pnl': 0},
         {'action': 'close', 'date': '2024-01-05', 'pnl': 100.0},
         {'action': 'sell', 'date': '2024-01-08', 'pnl': 0},
@@ -233,7 +233,7 @@ class TestStage1Statistics:
 # ---- pure logic: §6.1 / §6.4 ----
 
 class TestStage2Arithmetic:
-    SPAN = [f'2024-01-{d:02d}' for d in range(2, 12)]  # 10 trading days
+    SPAN: ClassVar[list] = [f'2024-01-{d:02d}' for d in range(2, 12)]  # 10 trading days
 
     def test_short_call_days(self) -> None:
         trades = [
@@ -301,8 +301,8 @@ def _c(cid: str, strike: float, bid: float, ask: float, mid: float,
 
 
 class TestSuspensionSeam:
-    DATES = ['2024-01-02', '2024-01-03', '2024-01-04']
-    PRICES = [100.0, 102.0, 101.0]
+    DATES: ClassVar[list] = ['2024-01-02', '2024-01-03', '2024-01-04']
+    PRICES: ClassVar[list] = [100.0, 102.0, 101.0]
 
     @staticmethod
     def _store() -> dict[str, dict[str, Any]]:
@@ -316,10 +316,10 @@ class TestSuspensionSeam:
                                     'C2': (0.10, 0.30, 0.20, 0.05)}),
         }
 
-    PARAMS = {**_PARAMS, 'capital': 10_000}
+    PARAMS: ClassVar[dict] = {**_PARAMS, 'capital': 10_000}
 
     def test_suspended_day_defers_entry(self) -> None:
-        s, trades, eq = run_real_cc_overlay(
+        _s, trades, eq = run_real_cc_overlay(
             self.DATES, self.PRICES, self._store(), self.PARAMS,
             suspended_dates={'2024-01-02'})
         sells = [t for t in trades if t['action'] == 'sell']

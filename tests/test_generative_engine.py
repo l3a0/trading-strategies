@@ -7,22 +7,10 @@ overlay is BYTE-IDENTICAL to its hand-written form on real SPY chains.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 import pytest
-
-from search.edge_search import STRUCTURE_GRAMMAR, PremiumFamily, load_idea_ledger
-from generative.generative_engine import (
-    _published_cell_keys,
-    _row_overlay,
-    derive_family,
-    judge_compositions_against_published,
-    record_compositions,
-    run_composition,
-    run_composition_round,
-    score_composition,
-)
-from generative.generative_grammar import canonical_key, composition_of
-from realchains.vol_premium import STRUCTURE_SPECS, short_vol_statistics
 
 # Reuse the named-overlay equivalence fixtures (the SPY calls+puts merge, the named runners, the
 # committed per-overlay params) so the composer is checked against the SAME data path + config.
@@ -35,6 +23,20 @@ from test_vol_premium import (
     _STRUCT_PARAMS,
     _equiv_market,
 )
+
+from generative.generative_engine import (
+    _published_cell_keys,
+    _row_overlay,
+    derive_family,
+    judge_compositions_against_published,
+    record_compositions,
+    run_composition,
+    run_composition_round,
+    score_composition,
+)
+from generative.generative_grammar import canonical_key, composition_of
+from realchains.vol_premium import STRUCTURE_SPECS, short_vol_statistics
+from search.edge_search import STRUCTURE_GRAMMAR, PremiumFamily, load_idea_ledger
 
 
 class TestDeriveFamily:
@@ -202,7 +204,7 @@ class TestRecordCompositions:
         assert record_compositions(rows, gen) == 2
         assert record_compositions(rows, gen) == 0                 # idempotent: same cells re-add nothing
         assert record_compositions([{'key': 'abc', 'ticker': 'Z', 'p_value': 0.1}], gen) == 1
-        assert sum(1 for line in open(gen) if line.strip()) == 3
+        assert sum(1 for line in Path(gen).read_text().splitlines() if line.strip()) == 3
 
 
 @pytest.mark.skipif(not (_HAVE_SPY and _HAVE_SPY_PUTS),

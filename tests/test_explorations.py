@@ -22,13 +22,18 @@ dead ends are not re-explored. See docs/explorations.md.
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import numpy as np
 import pytest
+from test_real_cc_backtest import (
+    _HAVE_DAILIES,
+    _HAVE_MSFT_DAILIES,
+    _HAVE_SPY_DAILIES,
+    _SPY_DAILIES,
+)
 
 from search.explorations import (
-    portfolio_scout,
-    random_entry_scout,
-    random_entry_selector,
     SCOUT_TICKERS,
     _ann_vol,
     _d_a,
@@ -37,14 +42,11 @@ from search.explorations import (
     iv_richness_scout,
     load_entry_ivs,
     load_naked_run,
+    portfolio_scout,
     post_rip_mask,
+    random_entry_scout,
+    random_entry_selector,
     reconstruct_cycles,
-)
-from test_real_cc_backtest import (
-    _HAVE_DAILIES,
-    _HAVE_MSFT_DAILIES,
-    _HAVE_SPY_DAILIES,
-    _SPY_DAILIES,
 )
 
 _HAVE_ALL = _HAVE_MSFT_DAILIES and _HAVE_DAILIES and _HAVE_SPY_DAILIES
@@ -102,12 +104,7 @@ class TestCooldownScoutMechanics:
         header = ('date,expiration,dte,strike,bid,ask,mark,last,volume,'
                   'open_interest,implied_volatility,delta,contractID')
         p = tmp_path / 'xyz_option_dailies.csv'
-        p.write_text('\n'.join([
-            header,
-            '2024-01-02,2024-02-02,31,110,2.0,2.2,2.1,0,0,0,0.2150,0.25,WANT',
-            '2024-01-02,2024-02-02,31,120,0.4,0.6,0.5,0,0,0,0.1800,0.10,SKIP',
-            '2024-01-03,2024-02-02,30,110,1.0,1.2,1.1,0,0,0,,0.25,BLANK',
-        ]) + '\n')
+        p.write_text(f'{header}\n2024-01-02,2024-02-02,31,110,2.0,2.2,2.1,0,0,0,0.2150,0.25,WANT\n2024-01-02,2024-02-02,31,120,0.4,0.6,0.5,0,0,0,0.1800,0.10,SKIP\n2024-01-03,2024-02-02,30,110,1.0,1.2,1.1,0,0,0,,0.25,BLANK' + '\n')
         out = load_entry_ivs('XYZ', {('2024-01-02', 'WANT'),
                                      ('2024-01-03', 'BLANK')}, path=str(p))
         assert out == {('2024-01-02', 'WANT'): pytest.approx(0.2150)}
@@ -252,7 +249,8 @@ def _jitter_scenario(n_days: int, first: str = '2021-01-04',
     indices get NO chain (the day never invokes the selector). The candidate
     tuple order is load_chain_store's: (dte, delta, bid, ask, mid,
     expiration, strike, contractID)."""
-    from datetime import date as _date, timedelta
+    from datetime import date as _date
+    from datetime import timedelta
     d0 = _date.fromisoformat(first)
     dates = [(d0 + timedelta(days=i)).isoformat() for i in range(n_days)]
     exp = dates[-1]
@@ -287,9 +285,9 @@ class TestRandomEntryMechanics:
         """k=0 => J=0 always: the career IS the deterministic baseline."""
         from realchains.vol_premium import STRUCTURE_SPECS
         dates, prices, store = _jitter_scenario(12)
-        s_base, t_base, eq_base = _run_jitter(dates, prices, store,
+        _s_base, t_base, eq_base = _run_jitter(dates, prices, store,
                                               STRUCTURE_SPECS['short_vol']['select'])
-        s_rand, t_rand, eq_rand = _run_jitter(dates, prices, store,
+        _s_rand, t_rand, eq_rand = _run_jitter(dates, prices, store,
                                               random_entry_selector(seed=1, k=0))
         assert t_rand == t_base
         assert eq_rand.equals(eq_base)
@@ -314,7 +312,7 @@ class TestRandomEntryMechanics:
         rng_probe = __import__('random').Random
         # pick a seed whose first two draws differ
         seed = next(s for s in range(1000)
-                    if (lambda r: r.randint(0, 5) != r.randint(0, 5))(rng_probe(s)))
+                    if (r := rng_probe(s)).randint(0, 5) != r.randint(0, 5))
         dates, prices, store = _jitter_scenario(10, first='2021-02-01')
         run1 = _run_jitter(dates, prices, store, random_entry_selector(seed=seed, k=5))
         run2 = _run_jitter(dates, prices, store, random_entry_selector(seed=seed, k=5))
@@ -327,7 +325,7 @@ class TestRandomEntryMechanics:
         """After the wait expires the emitted leg equals the baseline
         selector's leg field for field (delegation, not reimplementation)."""
         from realchains.vol_premium import STRUCTURE_SPECS
-        dates, prices, store = _jitter_scenario(8)
+        dates, _prices, store = _jitter_scenario(8)
         params = {'target_delta': 0.25, 'dte': 30, 'fill': 'bid_ask'}
         day = store[dates[0]]
         base_leg = STRUCTURE_SPECS['short_vol']['select'](day, params)
@@ -342,8 +340,7 @@ class TestRandomEntryMechanics:
         # seed whose draws are J1=0 then J2>=1: emission day 0 (rejected),
         # re-armed wait pushes the real entry past day 1.
         seed = next(s for s in range(1000)
-                    if (lambda r: r.randint(0, 3) == 0 and r.randint(0, 3) >= 1)(
-                        rng_probe(s)))
+                    if (r := rng_probe(s)).randint(0, 3) == 0 and r.randint(0, 3) >= 1)
         dates, prices, store = _jitter_scenario(10, bid=0.005)   # sub-penny: entry_net < 0
         # make later days quotable so the career can eventually enter
         good = _jitter_scenario(10)[2]
@@ -442,7 +439,7 @@ class TestPortfolioMechanics:
     switch, correlation exactness, combination arithmetic, and the
     drawdown-subadditivity fixture, all hand-computable."""
 
-    D = ['2021-01-04', '2021-01-05', '2021-01-06', '2021-01-07', '2021-01-08']
+    D: ClassVar[list] = ['2021-01-04', '2021-01-05', '2021-01-06', '2021-01-07', '2021-01-08']
 
     def test_alignment_inner_join_and_missing_day(self) -> None:
         """Mismatched spans join to their overlap; a leg-specific missing
@@ -533,6 +530,7 @@ _GAP_G_FILES = [
 
 def _have_gap_g() -> bool:
     import os
+
     from common.paths import data_path
     return all(os.path.exists(str(data_path(f))) or os.path.exists(str(data_path(f)) + '.gz')
                for f in _GAP_G_FILES)

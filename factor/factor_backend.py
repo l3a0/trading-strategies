@@ -40,9 +40,13 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from common.stats import newey_west_t        # the shared Bartlett-weighted HAC t (one definition, leaf-homed)
-from search.evalue_fdr import _asymptotic_p   # the shared asymptotic-p convention (one definition; option-independent)
+from common.stats import (
+    newey_west_t,  # the shared Bartlett-weighted HAC t (one definition, leaf-homed)
+)
 from factor.factor_mechanism import loading_family
+from search.evalue_fdr import (
+    _asymptotic_p,  # the shared asymptotic-p convention (one definition; option-independent)
+)
 
 # the F2 primitive slice (a small fixed menu; F3 generalizes to a bounded formula grammar)
 FACTOR_NAMES: tuple[str, ...] = ('momentum', 'reversal', 'lowvol')
@@ -85,7 +89,7 @@ def validate_factor(f: Factor) -> Factor:
 def factor_key(f: Factor) -> str:
     """A content-addressed, sign-excluded identity — sha256 of (name, window). A factor and its
     sign-flipped twin share one key and cannot re-spend the FDR budget (the composition pattern)."""
-    return hashlib.sha256(f'{f.name}/w{f.window}'.encode('utf-8')).hexdigest()[:16]
+    return hashlib.sha256(f'{f.name}/w{f.window}'.encode()).hexdigest()[:16]
 
 
 def evaluate_factor(f: Factor, prices: pd.DataFrame) -> pd.DataFrame:

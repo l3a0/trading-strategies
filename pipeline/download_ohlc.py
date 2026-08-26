@@ -33,9 +33,8 @@ def fetch_one(ticker: str) -> str:
     out = data_path(f'{ticker.lower()}_daily_ohlc.csv')
     with open(out, 'w') as f:
         f.write('date,open,high,low,close\n')
-        for idx, row in df.iterrows():
-            f.write(f"{idx.date().isoformat()},{row['Open']:.6f},"
-                    f"{row['High']:.6f},{row['Low']:.6f},{row['Close']:.6f}\n")
+        f.writelines(f"{idx.date().isoformat()},{row['Open']:.6f},"
+                    f"{row['High']:.6f},{row['Low']:.6f},{row['Close']:.6f}\n" for idx, row in df.iterrows())
     print(f'{ticker}: {len(df)} rows -> {out}', flush=True)
     return out
 

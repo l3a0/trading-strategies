@@ -15,16 +15,22 @@ at a later expiry). A composed NAMED overlay is byte-identical to its hand-writt
 dataset-gated equivalence proof (docs/generative_grammar_plan.md, Phase 2).
 """
 from __future__ import annotations
-from common.paths import data_path
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import pandas as pd
 
-from search.edge_search import STRUCTURE_CAPITAL, PremiumFamily
-from generative.generative_grammar import Composition, Leg, canonical_key, composition_of
+from common.paths import data_path
+from generative.generative_grammar import (
+    Composition,
+    Leg,
+    canonical_key,
+    composition_of,
+)
 from realchains.real_cc_backtest import COMMISSION_PER_SHARE, select_entry
 from realchains.vol_premium import run_real_structure_overlay, select_put_entry
+from search.edge_search import STRUCTURE_CAPITAL, PremiumFamily
 
 # candidate tuple = (dte, delta, bid, ask, mid, expiration, strike, contractID)
 _BAND = {'call': (0.05, 0.60), 'put': (-0.60, -0.05)}      # the entry bands select_entry/put use
@@ -218,8 +224,8 @@ def score_composition(composition: Composition, ticker: str, dates: list[str], p
     name (a structure can't survive on a lucky t-stat alone if its mechanism is incoherent). A non-trading
     composition is `measurement_invalid` (p=None -> e=0), the campaign analog of the equivalence test's
     must-trade guard. Phase 3b/3c — the per-cell scorer the menu-walker and the Phase-4 author feed into."""
-    from search.edge_search import _asymptotic_p
     from realchains.vol_premium import short_vol_statistics
+    from search.edge_search import _asymptotic_p
     p = {**(params or {}), 'capital': capital}
     summary, trades, eq = run_composition(composition, dates, prices, store, p,
                                           hedge_mode=hedge_mode, entry_guard=entry_guard,

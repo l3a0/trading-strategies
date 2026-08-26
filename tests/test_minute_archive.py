@@ -11,6 +11,8 @@ All synthetic — no archive and no network required, so these run in CI.
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import numpy as np
 import pytest
 
@@ -94,11 +96,11 @@ class TestAggregation:
         monkeypatch.setattr(ma, 'archive_path', lambda t: '/synthetic')
         monkeypatch.setattr(ma, 'aggregate_daily', lambda p, cache_dir=None: d)
         # unresolved cliff -> no detections attempted (excluded)
-        adj, cov = ma.load_clean_daily('XXX', {})
+        _adj, cov = ma.load_clean_daily('XXX', {})
         assert cov['cliff_flags'] == ['2024-01-03']
         # owner-signed resolution -> the flag clears and the scan proceeds
         monkeypatch.setitem(ma.RESOLVED_CLIFFS, ('XXX', '2024-01-03'), 'test')
-        adj, cov = ma.load_clean_daily('XXX', {})
+        _adj, cov = ma.load_clean_daily('XXX', {})
         assert cov['cliff_flags'] == []
         assert cov['resolved_cliffs'] == ['2024-01-03']
 
@@ -376,7 +378,7 @@ class TestValueDetachments:
     # dividends (SPG, MAR, HST, IRM's REIT distribution), Lennar's Class B
     # stock dividend, and Google's 2015 Class C adjustment payment. Listed
     # rather than pattern-matched, so adding a tenth is a deliberate act.
-    RESEARCHED_INEXACT = {
+    RESEARCHED_INEXACT: ClassVar[dict] = {
         ('GOOG', '2015-04-27'), ('HST', '2009-11-04'), ('IRM', '2014-09-26'),
         ('LEN', '2017-11-09'), ('MAR', '2009-06-23'), ('MAR', '2009-08-18'),
         ('MAR', '2009-11-17'), ('SPG', '2009-08-13'), ('SPG', '2009-11-12'),
@@ -384,6 +386,7 @@ class TestValueDetachments:
 
     def test_split_table_holds_no_unvetted_market_derived_factors(self):
         from fractions import Fraction
+
         import pipeline.minute_archive as ma
         bad = [(t, d, r) for t, rows in ma.load_splits().items()
                for d, r in rows
@@ -478,8 +481,9 @@ class TestHygieneRulingsDataFile:
 
     def test_every_row_has_a_reason_and_a_valid_kind(self):
         import csv as _csv
-        from pipeline.minute_archive import HYGIENE_RULINGS_PATH
+
         from common.paths import data_path
+        from pipeline.minute_archive import HYGIENE_RULINGS_PATH
         kinds = {'resolved_cliff', 'start_clip', 'drop_window', 'return_break'}
         with open(data_path(HYGIENE_RULINGS_PATH)) as f:
             rows = list(_csv.DictReader(f))

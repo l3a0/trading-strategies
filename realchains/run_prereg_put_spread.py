@@ -31,7 +31,7 @@ import csv
 import random
 import sys
 from collections import Counter
-from typing import Any, Optional
+from typing import Any
 
 from common.paths import data_path
 from realchains.real_cc_backtest import (
@@ -186,7 +186,7 @@ def _axis_stability(records: list) -> dict[str, Counter]:
         'dte': Counter(), 'short_delta': Counter(), 'exit': Counter(),
     }
     for r in records:
-        w: Optional[Cell] = r['winner']
+        w: Cell | None = r['winner']
         if w is None:
             axes['dte']['SKIPPED'] += 1
             axes['short_delta']['SKIPPED'] += 1

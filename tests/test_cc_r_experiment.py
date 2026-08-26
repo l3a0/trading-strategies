@@ -101,7 +101,7 @@ class TestAttributeCycles:
         not gap_drift, and completes the conservation identity."""
         excess = [0., 0., 25., 25., 25., 25., 25., 25., 20., 12.]
         records = [_rec(DATES[1], DATES[2], 25.0, 100.0)]
-        adj, gap_drift, tail, raw_sum = attribute_cycles(
+        _adj, gap_drift, tail, raw_sum = attribute_cycles(
             records, DATES, excess, open_entry_date=DATES[8])
         assert gap_drift == 0.0
         assert tail == pytest.approx(-13.0)        # 12 - 25
@@ -517,14 +517,19 @@ class TestNvdaGldTrueHoldExploration:
 
     @pytest.fixture(scope='class')
     def books(self) -> dict:
-        from common.trade_ledger import ledger_statistics
+        from common.trade_ledger import build_trade_ledger, ledger_statistics
         from engine.cc_backtest import compute_statistics
         from realchains.cc_r_experiment import (
-            attribute_cycles, open_tail_entry, overlay_excess)
+            attribute_cycles,
+            open_tail_entry,
+            overlay_excess,
+        )
         from realchains.real_cc_backtest import (
-            CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices,
-            run_real_cc_overlay)
-        from common.trade_ledger import build_trade_ledger
+            CHAIN_CLEAN_START,
+            load_chain_store,
+            load_unadjusted_prices,
+            run_real_cc_overlay,
+        )
         out = {}
         for t in ('NVDA', 'GLD'):
             store = load_chain_store(data_path(f'{t.lower()}_option_dailies.csv'),

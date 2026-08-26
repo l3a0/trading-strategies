@@ -13,11 +13,15 @@ measure are frozen at their TestSpyShortVolRegression (call-wing) form — the o
 change is the wing (target_delta -0.25, option_type='put'), per §2.3.
 """
 from __future__ import annotations
-from common.paths import data_path
 
 from typing import Any
 
-from realchains.real_cc_backtest import REGISTERED_CLEAN_START, load_chain_store, load_unadjusted_prices
+from common.paths import data_path
+from realchains.real_cc_backtest import (
+    REGISTERED_CLEAN_START,
+    load_chain_store,
+    load_unadjusted_prices,
+)
 from realchains.vol_premium import (
     run_real_short_vol_overlay,
     run_real_straddle_overlay,
@@ -59,7 +63,7 @@ def report(ticker: str, days: list[str], out: dict[float, tuple[Any, Any]]) -> N
         print(f"  {bps:>5.1f} {st['t_stat_newey_west']:>7.2f} {st['sharpe']:>8.3f} "
               f"{st['ann_excess_return_pct']:>7.2f} {s['alpha_vs_cash']:>11.0f} {s['net_pnl']:>11.0f} "
               f"{s.get('total_hedge_cost', 0.0):>9.0f} {s['max_drawdown_pct']:>7.2f} {st['nw_lag']:>4} "
-              f"{str(st['passes_t_2']):>5}   t={CALL_WING_T[bps]}")
+              f"{st['passes_t_2']!s:>5}   t={CALL_WING_T[bps]}")
     # full dicts for the 0.5 bp headline (so the results test can pin every field)
     s5, st5 = out[0.5]
     print(f"  -- {ticker} 0.5bp summary: " + ", ".join(f"{k}={v}" for k, v in sorted(s5.items())))
@@ -95,7 +99,7 @@ def report_straddle(ticker: str, days: list[str], out: dict[float, tuple[Any, An
         s, st = out[bps]
         print(f"  {bps:>5.1f} {st['t_stat_newey_west']:>7.2f} {st['sharpe']:>8.3f} "
               f"{s['alpha_vs_cash']:>11.0f} {s['net_pnl']:>11.0f} {s['total_hedge_cost']:>9.0f} "
-              f"{s['max_drawdown_pct']:>7.2f} {str(st['passes_t_2']):>5}")
+              f"{s['max_drawdown_pct']:>7.2f} {st['passes_t_2']!s:>5}")
 
 
 def main() -> None:

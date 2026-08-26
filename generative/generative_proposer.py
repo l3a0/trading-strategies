@@ -15,16 +15,9 @@ until the Phase-C time-axis holdout exists (docs/llm_proposer_plan.md, docs/read
 """
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
-from search.edge_search import (
-    STRUCTURE_CAMPAIGN,
-    Campaign,
-    PremiumFamily,
-    ProposalBatch,
-    _is_onboarded,
-    render_proposer_corpus,
-)
 from generative.generative_grammar import (
     DELTAS,
     DTES,
@@ -39,6 +32,14 @@ from generative.generative_grammar import (
     validate_composition,
 )
 from proposer.read_gate_wire import assert_numberless
+from search.edge_search import (
+    STRUCTURE_CAMPAIGN,
+    Campaign,
+    PremiumFamily,
+    ProposalBatch,
+    _is_onboarded,
+    render_proposer_corpus,
+)
 
 # (scrubbed_corpus, onboarded_search_tickers) -> ProposalBatch. The author builds its own NUMBERLESS
 # prompt from these two inputs (via build_composition_prompt); the grammar primitives are static, so —

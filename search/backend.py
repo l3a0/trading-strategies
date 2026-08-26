@@ -31,10 +31,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
+from generative.generative_engine import (
+    _entry_signature,
+    derive_family,
+    score_composition,
+)
+from generative.generative_grammar import (
+    Composition,
+    canonical_key,
+    enumerate_compositions,
+    validate_composition,
+)
 from search.edge_search import STRUCTURE_CAPITAL, STRUCTURE_END, _data_lineage_hash
-from generative.generative_engine import _entry_signature, derive_family, score_composition
-from generative.generative_grammar import (Composition, canonical_key, enumerate_compositions,
-                                 validate_composition)
 
 
 @runtime_checkable

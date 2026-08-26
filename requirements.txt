@@ -12,6 +12,12 @@ pytest-xdist
 # clearing the new findings in the same commit, rather than have a linter
 # release fail an unrelated PR. numpy/pandas/etc. don't have this failure
 # mode, so they stay unpinned.
-ruff==0.15.16
+#
+# ruff.toml now pins the rule SELECTION too, which is the durable half of this
+# fix. Ruff 0.16.0 expanded its defaults from 59 rules to 413, so the 0.16.x
+# bump raised 337 findings here with no code change. The repo's standard is
+# written down now, so a ruff release can change its defaults without changing
+# ours. Widening the rule set is a separate, deliberate change.
+ruff==0.16.4
 pyright==1.1.411
 pandas-stubs

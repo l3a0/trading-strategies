@@ -8,8 +8,15 @@ from __future__ import annotations
 
 import pytest
 
-from factor.factor_grammar import (MAX_DEPTH, Expr, ExprGrammarError, canonical_expr_key, enumerate_exprs,
-                            leaf, validate_expr)
+from factor.factor_grammar import (
+    MAX_DEPTH,
+    Expr,
+    ExprGrammarError,
+    canonical_expr_key,
+    enumerate_exprs,
+    leaf,
+    validate_expr,
+)
 
 
 class TestFactorGrammarValidate:

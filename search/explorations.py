@@ -39,17 +39,17 @@ Usage:
 
 from __future__ import annotations
 
-from common.paths import data_path
-
 import csv
 import json
 import random
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Any, Sequence
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
+from common.paths import data_path
 from realchains.real_cc_backtest import (
     CHAIN_CLEAN_START,
     load_chain_store,
@@ -574,7 +574,7 @@ def portfolio_scout() -> dict[str, Any]:
         leg_dds = [legs[n]['max_dd_pct'] for n in names]
         return {
             'span': [str(panel.index[0]), str(panel.index[-1])],
-            'n_days': int(len(panel)),
+            'n_days': len(panel),
             'correlations': {f'{a}~{b}': round(float(corr.loc[a, b]), 4)
                              for i, a in enumerate(names) for b in names[i + 1:]},
             'legs': legs,

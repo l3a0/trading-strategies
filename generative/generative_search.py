@@ -23,9 +23,10 @@ the structure campaign records its exploratory 56-cell batch too, and the lifeti
 honest if every look is recorded. The committed `gen_ledger.jsonl` IS the pinned artifact.
 """
 from __future__ import annotations
-from common.paths import data_path
 
 from typing import Any
+
+from common.paths import data_path
 
 GEN_LEDGER_PATH = data_path('gen_ledger.jsonl')
 
@@ -60,10 +61,20 @@ def run_generative_search(tickers: tuple[str, ...] | None = None, *,
     `record=True` the judged cells are appended to the committed `gen_path` (the audit log) — deduped on
     the (canonical_key, ticker) cell, e-LOND verdict and all. Returns the decisive-outputs bundle. Slow:
     one engine pass per cell."""
-    from search.edge_search import (STRUCTURE_CAPITAL, STRUCTURE_END, STRUCTURE_SEARCH, _data_lineage_hash,
-                             _load_ticker_data, load_idea_ledger, search_saturation)
-    from generative.generative_engine import (judge_compositions_against_published, record_compositions,
-                                   score_composition)
+    from generative.generative_engine import (
+        judge_compositions_against_published,
+        record_compositions,
+        score_composition,
+    )
+    from search.edge_search import (
+        STRUCTURE_CAPITAL,
+        STRUCTURE_END,
+        STRUCTURE_SEARCH,
+        _data_lineage_hash,
+        _load_ticker_data,
+        load_idea_ledger,
+        search_saturation,
+    )
 
     tickers = tuple(tickers) if tickers else STRUCTURE_SEARCH
     slice_ = _composition_slice(n_singles, n_doubles)
@@ -98,6 +109,7 @@ def run_generative_search(tickers: tuple[str, ...] | None = None, *,
 
 def main() -> None:
     import sys
+
     from search.edge_search import format_saturation
     record = '--record' in sys.argv
     b = run_generative_search(record=record)

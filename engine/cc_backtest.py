@@ -1,6 +1,4 @@
 from __future__ import annotations
-from common.paths import data_path
-from common.stats import newey_west_summary
 
 import itertools
 import math
@@ -9,6 +7,9 @@ from typing import Any, cast
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
+
+from common.paths import data_path
+from common.stats import newey_west_summary
 
 # ====================
 # 1. Black-Scholes
@@ -483,7 +484,7 @@ def run_cc_overlay(
                 call_delta_today = bs_delta(
                     price, position['strike'], T_remaining_h, r, iv_estimate, option_type='call'
                 )
-                target_hedge_shares = int(round(call_delta_today * shares))
+                target_hedge_shares = round(call_delta_today * shares)
             else:
                 # Position settled this iteration (expiration branch zeroed `position` only on
                 # the close path — but if we got here, `position is not None`, so days_left_h
@@ -998,7 +999,7 @@ def walk_forward_optimization(
                     np.asarray(train_df['price'].values, dtype=float),
                     params,
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001, S112 — a failing parameter combination is skipped so the grid completes
                 continue
 
             # Daily simple returns on the in-sample equity curve. pct_change
@@ -1237,7 +1238,7 @@ def monte_carlo_shuffle(
                 dates, np.array(synthetic, dtype=np.float64), params
             )
             mc_returns.append(float(mc_summary['total_return_pct']))
-        except Exception:
+        except Exception:  # noqa: BLE001, S112 — a failing shuffle is skipped so the Monte Carlo completes
             continue
 
     # Percentile: how many shuffles did the real path beat? Count the
@@ -1443,8 +1444,8 @@ if __name__ == '__main__':
     print(f"    Sharpe of Excess Return:     {stats['sharpe_excess']:>+12.3f}")
     print(f"    t-stat (naive, IID):         {stats['t_stat_naive']:>+12.2f}    (assumes independence — inflated for overlays)")
     print(f"    t-stat (Newey-West, L={stats['nw_lag']:<2}):   {stats['t_stat_newey_west']:>+12.2f}    (correct: accounts for position autocorrelation)")
-    print(f"    Clears t=2 bar?              {str(stats['passes_t_2']):>12}    (conventional significance)")
-    print(f"    Clears t=3 bar (HLZ 2016)?   {str(stats['passes_t_3']):>12}    (multiple-testing adjusted)")
+    print(f"    Clears t=2 bar?              {stats['passes_t_2']!s:>12}    (conventional significance)")
+    print(f"    Clears t=3 bar (HLZ 2016)?   {stats['passes_t_3']!s:>12}    (multiple-testing adjusted)")
     print()
 
     # Risk-managed (delta-hedged) variant: Israelov & Nielsen (2015). Same params, but each
@@ -1467,8 +1468,8 @@ if __name__ == '__main__':
     print(f"    {'Excess Vol / yr':<32}{stats['ann_excess_vol_pct']:>14.2f}%{hedge_stats['ann_excess_vol_pct']:>14.2f}%")
     print(f"    {'Sharpe of Excess':<32}{stats['sharpe_excess']:>+15.3f}{hedge_stats['sharpe_excess']:>+15.3f}")
     print(f"    {'t-stat (Newey-West)':<32}{stats['t_stat_newey_west']:>+15.2f}{hedge_stats['t_stat_newey_west']:>+15.2f}")
-    print(f"    {'Clears t=2 bar?':<32}{str(stats['passes_t_2']):>15}{str(hedge_stats['passes_t_2']):>15}")
-    print(f"    {'Clears t=3 bar?':<32}{str(stats['passes_t_3']):>15}{str(hedge_stats['passes_t_3']):>15}")
+    print(f"    {'Clears t=2 bar?':<32}{stats['passes_t_2']!s:>15}{hedge_stats['passes_t_2']!s:>15}")
+    print(f"    {'Clears t=3 bar?':<32}{stats['passes_t_3']!s:>15}{hedge_stats['passes_t_3']!s:>15}")
     print()
 
     # Degrees of Freedom (Pardo 2008): is ONE in-sample window big enough to
@@ -1498,6 +1499,6 @@ if __name__ == '__main__':
     print(f"    Observations (trading days): {dof['n_observations']:>12}")
     print(f"    Consumed (3 params + 30 LB): {dof['consumed']:>12}")
     print(f"    Remaining (free):            {dof['remaining']:>12}    ({dof['pct_remaining'] * 100:.1f}% — Pardo floor 90%)")
-    print(f"    Bar-level DOF adequate?      {str(dof['passes_dof']):>12}    (necessary, not sufficient)")
+    print(f"    Bar-level DOF adequate?      {dof['passes_dof']!s:>12}    (necessary, not sufficient)")
     print(f"    Independent trades (median): {dof['n_trades']:>12}    (grid range {is_trade_counts[0]}-{is_trade_counts[-1]})")
-    print(f"    >= 30 trades for inference?  {str(dof['passes_trades']):>12}    (clears it; 2-year window would not)")
+    print(f"    >= 30 trades for inference?  {dof['passes_trades']!s:>12}    (clears it; 2-year window would not)")

@@ -9,6 +9,7 @@ runtime (port, don't depend). `TestOnlineFdrParity` re-derives them live IF
 """
 from __future__ import annotations
 
+import itertools
 import math
 
 import pytest
@@ -16,8 +17,8 @@ import pytest
 from search.evalue_fdr import (
     CALIBRATOR_KAPPA,
     ELOND_GAMMA_C,
-    FlagThreshold,
     ONLINE_FDR_ALPHA,
+    FlagThreshold,
     _assert_calibrator_admissible,
     _calibrator_integral,
     calibrate_p_to_e,
@@ -28,7 +29,6 @@ from search.evalue_fdr import (
     registered_gamma,
     z_from_p_one_sided,
 )
-
 
 # online-fdr's DefaultLondGamma (Javanmard-Montanari), with its alpha factored OUT
 # to match this module's alpha_t = alpha * gamma_t * (R+1) convention. Used only to
@@ -174,11 +174,15 @@ class TestOnlineFdrParity:
 
     def test_live_parity(self) -> None:
         try:   # skip unless online-fdr's e-value module is importable (GitHub-main, 3.10+)
-            from online_fdr.e_values.batch import e_bh as ref_e_bh  # type: ignore[import]
+            from online_fdr.e_values.batch import (
+                e_bh as ref_e_bh,  # type: ignore[import]
+            )
             from online_fdr.e_values.sequential import (  # type: ignore[import]
-                DefaultLondGammaSequence, ELond)
+                DefaultLondGammaSequence,
+                ELond,
+            )
             from online_fdr.e_values.toolbox import p_to_e_power  # type: ignore[import]
-        except Exception as exc:  # not installed / wrong version / wrong Python / no e_values
+        except Exception as exc:  # not installed / wrong version / wrong Python / no e_values  # noqa: BLE001 — optional dependency probe: any import failure means skip
             pytest.skip(f'online-fdr e-value module unavailable: {exc}')
 
         for p in (0.5, 0.25, 0.01, 0.0001):
@@ -215,7 +219,7 @@ class TestFlagThreshold:
 
     def test_bar_rises_monotonically_with_no_discoveries(self) -> None:
         ts = [next_flag_threshold(n, 0).t_required for n in (1, 10, 65, 100, 500)]
-        assert all(a < b for a, b in zip(ts, ts[1:]))      # strictly increasing as gamma shrinks
+        assert all(a < b for a, b in itertools.pairwise(ts))      # strictly increasing as gamma shrinks
 
     def test_a_discovery_loosens_the_bar(self) -> None:
         # the (R + 1) reward: R 0 -> 1 doubles the level, lowering the required strength

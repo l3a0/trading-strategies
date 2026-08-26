@@ -11,3 +11,24 @@
 # pressure us to distort teaching code, so it's excluded here. All
 # hand-authored .py files across the packages are still linted by `ruff check .`.
 extend-exclude = ["covered_call_backtest.ipynb"]
+
+# CI runs Python 3.12 in every job, and the local venv matches it. Declaring
+# the floor keeps ruff's suggestions inside what the project actually runs.
+# Left undeclared, ruff guesses, and the guess is not always the truth.
+target-version = "py312"
+
+[lint]
+# Ruff 0.16 expanded the default rule set from 59 rules to 413. This repo
+# adopted the wider set. Two date rules are switched off repo-wide below.
+# Everything else in the new set is enforced, and the handful of individual
+# exceptions carry a `# noqa: RULE — reason` at the site, as this repo
+# already does elsewhere.
+ignore = [
+    # Market dates are naive on purpose, everywhere. Every strptime here
+    # parses an ISO trading date to do calendar-day arithmetic: DTE,
+    # expiration gaps, roll steps. These are exchange dates, not instants.
+    # Attaching a timezone would shift dates and silently re-pin results.
+    "DTZ007",
+    # Same reason, for the run stamps written to the regenerable ledgers.
+    "DTZ005",
+]

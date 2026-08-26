@@ -26,13 +26,13 @@ H2a builds the gate + the seal + the loop, STUB-author tested (no real LLM). H2b
 clients (the option `ClaudeProposer`/`ClaudeCodeProposer` mechanics, with this module's prompt + parse).
 """
 from __future__ import annotations
-from common.paths import data_path
 
 import json
 import os
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
-from search.evalue_fdr import online_fdr_survivors
+from common.paths import data_path
 from factor.factor_engine import ExprFactor
 from factor.factor_grammar import (
     BINARY_OPS,
@@ -48,8 +48,10 @@ from factor.factor_grammar import (
     validate_expr,
 )
 from factor.factor_search import FACTOR_LEDGER_PATH, _record_factor_cells
-from proposer.proposer_clients import (   # the domain-agnostic Claude transports (H2b-pre, shared w/ the option author)
+from proposer.proposer_clients import (  # the domain-agnostic Claude transports (H2b-pre, shared w/ the option author)
     ClaudeCodeProposer as _ClaudeCodeBase,
+)
+from proposer.proposer_clients import (
     ClaudeProposer as _ClaudeApiBase,
 )
 from proposer.read_gate_wire import (
@@ -60,6 +62,7 @@ from proposer.read_gate_wire import (
     _parse_proposal_array,
     assert_numberless,
 )
+from search.evalue_fdr import online_fdr_survivors
 
 FACTOR_PROVENANCE_PATH = data_path('factor_proposal_provenance.jsonl')
 

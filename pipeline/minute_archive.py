@@ -46,7 +46,8 @@ import csv
 import gzip
 import json
 import os
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 
@@ -269,7 +270,7 @@ def failed_tickers() -> set[str]:
 
 
 def aggregate_daily(path: str, cache_dir: str | None = None) -> dict[str, np.ndarray]:
-    """§2: regular-session daily bars from the minute archive. Bars with
+    r"""§2: regular-session daily bars from the minute archive. Bars with
     timestamps 09:30:00–16:00:00 inclusive; minute rows sorted, exact-
     duplicate timestamps collapsed to the LAST row; a session with zero
     regular bars contributes no daily bar.
@@ -379,10 +380,10 @@ def coverage_diagnostic(ticker: str, d: dict[str, np.ndarray],
     expected = missing = None
     if calendar is not None and first is not None:
         expected = sum(1 for day in calendar if first <= day <= last)
-        missing = expected - int(len(d['dates']))
+        missing = expected - len(d['dates'])
     return {
         'ticker': ticker, 'first': first, 'last': last,
-        'sessions': int(len(d['dates'])),
+        'sessions': len(d['dates']),
         'expected_sessions': expected,
         'missing_sessions': missing,
         'late_start': bool(first and first > LATE_START_FLAG),

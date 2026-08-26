@@ -220,7 +220,9 @@ def main() -> None:
     csv_path = f'{ticker.lower()}_10yr_prices.csv'
 
     if args.download or not os.path.exists(csv_path):
-        from pipeline.download_prices import download_prices  # lazy: only import yfinance when needed
+        from pipeline.download_prices import (
+            download_prices,  # lazy: only import yfinance when needed
+        )
         print(f"Downloading {ticker} (10y) -> {csv_path} ...")
         download_prices(ticker, '10y', csv_path)
 

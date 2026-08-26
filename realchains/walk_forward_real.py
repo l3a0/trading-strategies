@@ -35,7 +35,6 @@ Usage:
 """
 
 from __future__ import annotations
-from common.paths import data_path
 
 import argparse
 import math
@@ -47,6 +46,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from common.paths import data_path
 from engine.cc_backtest import _param_combinations, run_cc_overlay
 from realchains.real_cc_backtest import (
     CHAIN_CLEAN_START,
@@ -148,7 +148,7 @@ def walk_forward_real(
             try:
                 summary, _trades, daily_eq = run(
                     train_dates, train_prices, {**fixed_params, **combo})
-            except Exception:
+            except Exception:  # noqa: BLE001, S112 — a failing combo is skipped so the walk-forward completes
                 continue
             n_trades = int(summary['num_calls_sold'])
             grid_trades.append(n_trades)
