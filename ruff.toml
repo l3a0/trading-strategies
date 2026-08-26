@@ -11,3 +11,19 @@
 # pressure us to distort teaching code, so it's excluded here. All
 # hand-authored .py files across the packages are still linted by `ruff check .`.
 extend-exclude = ["covered_call_backtest.ipynb"]
+
+[lint]
+# Rule selection is pinned, not inherited.
+#
+# Ruff 0.16.0 expanded its default rule set from 59 rules to 413. That turned
+# a linter bump into 337 findings across this repo with no code change: isort,
+# pyupgrade, pylint, bandit, and more, none of which this repo had opted into.
+#
+# E4, E7, E9, and F are ruff's classic default set. That is the standard this
+# repo has always been linted against, so pinning it here preserves the exact
+# behaviour while making the choice explicit. A future ruff release can now
+# change its defaults without silently changing this repo's standard.
+#
+# Adopting more rules stays available and is a separate, deliberate change:
+# widen this list, clear the findings it raises, and commit both together.
+select = ["E4", "E7", "E9", "F"]
