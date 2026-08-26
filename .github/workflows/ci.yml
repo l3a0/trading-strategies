@@ -34,8 +34,8 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -55,8 +55,8 @@ jobs:
     # runs off the real-chain critical path.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -125,8 +125,8 @@ jobs:
     # failing (see the skipif markers in tests/test_real_cc_backtest.py).
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -134,7 +134,7 @@ jobs:
         run: pip install -r requirements.txt
       - name: Restore chain-data cache
         id: chain-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             data/qqq_option_dailies.csv.gz
@@ -210,8 +210,8 @@ jobs:
           - {bucket: cc-r,          files: "tests/test_cc_r_experiment.py", args: ""}
           - {bucket: wing,          files: "tests/test_wing_premium.py", args: ""}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -219,7 +219,7 @@ jobs:
         run: pip install -r requirements.txt
       - name: Restore chain-data cache
         id: chain-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             data/qqq_option_dailies.csv.gz
