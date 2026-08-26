@@ -1,0 +1,31 @@
+# Dependabot version updates.
+version: 2
+
+updates:
+  # requirements.txt floats most packages on purpose, so Dependabot has no
+  # version to bump for those. It bumps the pinned entries: ruff and pyright.
+  # That is exactly the mechanism requirements.txt asks for. A linter release
+  # adds rules that flag previously-clean code, so the bump arrives in its own
+  # PR where CI shows the new findings. It no longer breaks an unrelated PR.
+  # These stay ungrouped so each linter's findings are read on their own.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore(deps)
+
+  # Actions pinned in ci.yml: checkout, cache, setup-python. These move
+  # together and are low-risk, so one grouped PR is enough.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore(ci)
+    groups:
+      actions:
+        patterns:
+          - "*"
