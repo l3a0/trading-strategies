@@ -12,9 +12,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from factor.factor_backend import (
+    FACTOR_NAMES,
+    WINDOWS,
+    Factor,
+    FactorBackend,
+    FactorPrimitiveError,
+    factor_key,
+)
 from search.backend import Backend
-from factor.factor_backend import (FACTOR_NAMES, WINDOWS, Factor, FactorBackend, FactorPrimitiveError,
-                            factor_key)
 
 # the honest-core-facing contract a valid factor row emits (the same keys the option path emits)
 CONTRACT = {'ticker', 'predicted_sign', 't_stat_newey_west', 'p_value', 'n_days', 'sign_ok',

@@ -13,7 +13,6 @@ import math
 import pytest
 
 import generative.generative_grammar as g
-from search.edge_search import enumerate_grammar_templates, grid_universe_size
 from generative.generative_grammar import (
     DELTAS,
     DTES,
@@ -29,6 +28,7 @@ from generative.generative_grammar import (
     reachable_upper_bound,
     validate_composition,
 )
+from search.edge_search import enumerate_grammar_templates, grid_universe_size
 
 
 def _comp(*legs, sign=1):

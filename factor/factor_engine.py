@@ -30,7 +30,13 @@ from factor.factor_backend import (
     ic_to_row,
     information_coefficient,
 )
-from factor.factor_grammar import (Expr, ExprGrammarError, canonical_expr_key, enumerate_exprs, validate_expr)
+from factor.factor_grammar import (
+    Expr,
+    ExprGrammarError,
+    canonical_expr_key,
+    enumerate_exprs,
+    validate_expr,
+)
 from factor.factor_mechanism import loading_family
 
 

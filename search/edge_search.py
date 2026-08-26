@@ -61,15 +61,31 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from enum import Enum
 from datetime import datetime
-from typing import Any, Callable, Sequence
+from enum import Enum
+from typing import Any
 
 import numpy as np
 
 from common.paths import data_path
-from search.evalue_fdr import _asymptotic_p   # the shared asymptotic-p convention (also used by factors/generative)
+from proposer.proposer_clients import (  # the domain-agnostic Claude transports (shared w/ the factor author)
+    ClaudeCodeProposer as _ClaudeCodeBase,
+)
+from proposer.proposer_clients import (
+    ClaudeProposer as _ClaudeApiBase,
+)
+from proposer.read_gate_wire import (  # the dependency-free read-gate contract (shared w/ the proposer)
+    PROPOSAL_FIELDS,
+    REQUIRED_MODEL_FIELDS,
+    WIRE_VERSION,
+    ProposalBatch,  # the proposer's output container — domain-agnostic, lives in the wire
+    assert_numberless,
+)
+from search.evalue_fdr import (
+    _asymptotic_p,  # the shared asymptotic-p convention (also used by factors/generative)
+)
 from search.explorations import (
     IV_FLOOR,
     RV_WINDOW,
@@ -79,17 +95,6 @@ from search.explorations import (
     load_entry_ivs,
     load_naked_run,
     post_rip_mask,
-)
-from proposer.read_gate_wire import (   # the dependency-free read-gate contract (shared w/ the proposer)
-    PROPOSAL_FIELDS,
-    REQUIRED_MODEL_FIELDS,
-    WIRE_VERSION,
-    ProposalBatch,            # the proposer's output container — domain-agnostic, lives in the wire
-    assert_numberless,
-)
-from proposer.proposer_clients import (   # the domain-agnostic Claude transports (shared w/ the factor author)
-    ClaudeCodeProposer as _ClaudeCodeBase,
-    ClaudeProposer as _ClaudeApiBase,
 )
 
 # --- campaign configuration (committed before the numbers are read) ---------
@@ -470,8 +475,7 @@ def write_ledger(rows: Sequence[dict[str, Any]], path: str | None = None) -> Non
         path = data_path('edge_ledger.jsonl')
     stamp = datetime.now().isoformat(timespec='seconds')
     with open(path, 'a', encoding='utf-8') as f:
-        for r in rows:
-            f.write(json.dumps({**r, 'run_at': stamp}) + '\n')
+        f.writelines(json.dumps({**r, 'run_at': stamp}) + '\n' for r in rows)
 
 
 def load_search_runs(
@@ -503,10 +507,10 @@ def run_batch(
 def _format_summary(rows: Sequence[dict[str, Any]],
                     campaign: Campaign = DEFAULT_CAMPAIGN) -> str:
     lines = [
-        f'Campaign: search={list(campaign.search)} sealed={list(campaign.sealed)} '
-        f'q={FDR_Q} n_perm={N_PERM}',
-        f'{"template":<10} {"params":<14} {"D_A":>9} {"sign":>4} '
-        f'{"p":>7} {"vol_conf":>9} {"BY":>3} {"clean":>5}',
+        (f'Campaign: search={list(campaign.search)} sealed={list(campaign.sealed)} '
+        f'q={FDR_Q} n_perm={N_PERM}'),
+        (f'{"template":<10} {"params":<14} {"D_A":>9} {"sign":>4} '
+        f'{"p":>7} {"vol_conf":>9} {"BY":>3} {"clean":>5}'),
     ]
     for r in rows:
         params = ','.join(f'{k}={v}' for k, v in r['params'].items()) or '-'
@@ -693,7 +697,7 @@ def _assert_grammar_well_typed() -> None:
     always-run TestClosedGrammar."""
     for name, og in STRUCTURE_GRAMMAR.items():
         if not isinstance(og.family, PremiumFamily):
-            raise ValueError(f'{name}: {og.family!r} is not a registered PremiumFamily')
+            raise ValueError(f'{name}: {og.family!r} is not a registered PremiumFamily')  # noqa: TRY004 — ValueError is the grammar contract the tests assert on
         missing = {'expirations', 'legs', 'net_vega', 'net_delta', 'net_skew'} - set(og.signature)
         if missing:
             raise ValueError(f'{name}: net-greek signature missing {sorted(missing)}')
@@ -713,7 +717,7 @@ def grid_universe_size() -> int:
                for grid in ALLOWED_GRID.values())
 
 
-def max_proposals_per_round(campaign: 'Campaign') -> int:
+def max_proposals_per_round(campaign: Campaign) -> int:
     """The e-LOND budget ceiling for one proposer round = the CLOSED GRAMMAR'S REACH:
     every closed-grammar template (`grid_universe_size()`) crossed with every committed
     search ticker. The INHERENT bound on the online-FDR budget is interlock #1, the closed
@@ -937,8 +941,11 @@ def _load_ticker_data(ticker: str, end: str = STRUCTURE_END,
     legs added, never an extra day. Same hygiene as the canonical path: the era clip
     (CHAIN_CLEAN_START start), the call-day window restriction, and unadjusted-price alignment;
     the campaign's scale guard runs on the loaded store afterward."""
-    from realchains.real_cc_backtest import (CHAIN_CLEAN_START, load_chain_store,
-                                   load_unadjusted_prices)
+    from realchains.real_cc_backtest import (
+        CHAIN_CLEAN_START,
+        load_chain_store,
+        load_unadjusted_prices,
+    )
     start = CHAIN_CLEAN_START.get(ticker)
     extra = _put_chain_paths(ticker)
     store = load_chain_store(data_path(f'{ticker.lower()}_option_dailies.csv'),
@@ -989,14 +996,17 @@ def structure_kill_gate(cand: StructureCandidate,
     (store, dates, prices). Runs the overlay and scores the daily vol-P&L by the
     HAC t-stat's asymptotic null — no RNG, closed-form p (the only mechanical
     difference from the re-tag gate)."""
-    from realchains.vol_premium import (run_real_calendar_overlay,
-                             run_real_call_credit_spread_overlay,
-                             run_real_credit_spread_overlay,
-                             run_real_iron_condor_overlay,
-                             run_real_risk_reversal_overlay,
-                             run_real_short_vol_overlay,
-                             run_real_straddle_overlay, run_real_strangle_overlay,
-                             short_vol_statistics)
+    from realchains.vol_premium import (
+        run_real_calendar_overlay,
+        run_real_call_credit_spread_overlay,
+        run_real_credit_spread_overlay,
+        run_real_iron_condor_overlay,
+        run_real_risk_reversal_overlay,
+        run_real_short_vol_overlay,
+        run_real_straddle_overlay,
+        run_real_strangle_overlay,
+        short_vol_statistics,
+    )
     overlays = {'short_vol': run_real_short_vol_overlay,
                 'straddle': run_real_straddle_overlay,
                 'iron_condor': run_real_iron_condor_overlay,
@@ -1138,11 +1148,11 @@ def _format_structure_summary(rows: Sequence[dict[str, Any]],
                               campaign: Campaign = STRUCTURE_CAMPAIGN) -> str:
     from search.evalue_fdr import ONLINE_FDR_ALPHA
     lines = [
-        f'Structure campaign: search={list(campaign.search)} '
+        (f'Structure campaign: search={list(campaign.search)} '
         f'sealed={list(campaign.sealed)} alpha={ONLINE_FDR_ALPHA} '
-        f'(e-LOND control; BY q={FDR_Q} diagnostic)',
-        f'{"template":<15} {"ticker":<6} {"t_NW":>6} {"p":>7} '
-        f'{"exc%":>6} {"shrp":>6} {"eL":>3} {"BY":>3}',
+        f'(e-LOND control; BY q={FDR_Q} diagnostic)'),
+        (f'{"template":<15} {"ticker":<6} {"t_NW":>6} {"p":>7} '
+        f'{"exc%":>6} {"shrp":>6} {"eL":>3} {"BY":>3}'),
     ]
     for r in rows:
         if r.get('measurement_invalid'):
@@ -2067,7 +2077,11 @@ def search_saturation(ledger_rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
     be routed into a proposer input (the numberless prompt, the scrubbed corpus, or the oracle
     reply). Its keys sit deliberately outside SAFE_FIELDS / PROPOSAL_FIELDS, and no
     proposer-path function references it (pinned by `TestSearchSaturation`)."""
-    from search.evalue_fdr import next_flag_threshold, online_fdr_survivors, z_from_p_one_sided
+    from search.evalue_fdr import (
+        next_flag_threshold,
+        online_fdr_survivors,
+        z_from_p_one_sided,
+    )
     n = len(ledger_rows)
     survivors = sum(1 for r in online_fdr_survivors(ledger_rows) if r.get('elond_survivor'))
     valid = [r['p_value'] for r in ledger_rows if r.get('p_value') is not None]

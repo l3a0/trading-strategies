@@ -43,9 +43,9 @@ def _bars_from(prices, volumes, dates):
     """A bars dict (open=high=low=close=price per bar) for detector tests."""
     P = np.asarray(prices, dtype=float)
     V = np.asarray(volumes, dtype=float)
-    return dict(dates=np.asarray(dates), open=P.copy(), high=P.copy(),
-                low=P.copy(), close=P.copy(), volume=V.copy(),
-                n_bars=np.full(P.shape[0], SESSION_BARS))
+    return {'dates': np.asarray(dates), 'open': P.copy(), 'high': P.copy(),
+                'low': P.copy(), 'close': P.copy(), 'volume': V.copy(),
+                'n_bars': np.full(P.shape[0], SESSION_BARS)}
 
 
 # ----------------------------------------------------------- profile math
@@ -84,7 +84,7 @@ class TestVolumeProfileMath:
         # a grid smaller than the requested fraction must still return, not spin
         vol = np.array([1.0, 5.0, 1.0])
         edges = np.linspace(0, 3, 4)
-        poc, vah, val = vp._value_area(vol, edges, 0.99)
+        _poc, vah, val = vp._value_area(vol, edges, 0.99)
         assert val <= vah and 0 <= val and vah <= 3
 
 
@@ -162,7 +162,7 @@ class TestLookAhead:
         prices = np.array([[100.0] * 40 + [999.0] + [100.0] * 37])
         vols = np.array([[1.0] * 40 + [0.0] + [1.0] * 37])
         bars = _bars_from(prices, vols, ['2020-01-01'])
-        typ, vol = vp._window_typical_volume(bars, slice(0, 1), 0, SESSION_BARS)
+        typ, _vol = vp._window_typical_volume(bars, slice(0, 1), 0, SESSION_BARS)
         assert 999.0 not in typ      # the no-print level is dropped
 
 
@@ -283,14 +283,14 @@ class TestForwardPath:
     def test_intraday_forward_is_rest_of_session(self):
         bars = self._bars()
         daily = vp._daily_hlc(bars)
-        fh, fl, fc, final = vp._forward(bars, daily, 2, 10, 'close')
+        _fh, _fl, fc, final = vp._forward(bars, daily, 2, 10, 'close')
         assert len(fc) == SESSION_BARS - 11        # bars 11..77
         assert final == pytest.approx(bars['close'][2, -1])
 
     def test_multiday_forward_stitches_entry_tail_then_daily(self):
         bars = self._bars()
         daily = vp._daily_hlc(bars)
-        fh, fl, fc, final = vp._forward(bars, daily, 1, 30, 3)  # 3 trading days
+        _fh, _fl, fc, final = vp._forward(bars, daily, 1, 30, 3)  # 3 trading days
         # the entry session's remaining bars (31..77) PLUS 3 daily bars
         assert len(fc) == (SESSION_BARS - 31) + 3
         assert final == pytest.approx(daily[2][1 + 3])          # close of day s+3
@@ -308,7 +308,7 @@ class TestForwardPath:
         bars = self._bars()               # 8 sessions
         daily = vp._daily_hlc(bars)
         # last session, no following days -> falls back to the entry-day tail
-        fh, fl, fc, final = vp._forward(bars, daily, 7, 30, 10)
+        _fh, _fl, fc, final = vp._forward(bars, daily, 7, 30, 10)
         assert len(fc) == SESSION_BARS - 31
         assert final == pytest.approx(bars['close'][7, -1])
         # a bar with no remaining tail returns None
@@ -409,7 +409,7 @@ class TestNvdaVolumeProfileReversal:
         # the event reaches POC before its stop slightly MORE than the control
         # (a real reversion signature) yet loses money — high hit-rate, negative
         # expectancy
-        dev = [c for c in full['cells'] if c['cell'].startswith('developing')][0]
+        dev = next(c for c in full['cells'] if c['cell'].startswith('developing'))
         assert dev['poc_first_rate'] > dev['control_poc_first_rate']
         assert dev['excess_bp'] < 0
 

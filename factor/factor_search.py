@@ -20,12 +20,12 @@ a synthetic null is not a real exploration). The future LLM author (H2) plugs in
 coordinate output for the enumerator while the score/judge/record stay identical (the option-domain pattern).
 """
 from __future__ import annotations
-from common.paths import data_path
 
 import json
 import os
 from typing import Any
 
+from common.paths import data_path
 from search.evalue_fdr import online_fdr_survivors
 
 FACTOR_LEDGER_PATH = data_path('factor_ledger.jsonl')

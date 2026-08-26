@@ -94,8 +94,8 @@ gate was never even run through the simulator, :52-59). The module carries only 
 definitions (:210, :423, :536) — and a repo-wide grep finds no trend-following overlay function.
 
 The pair claim (b) gets, chosen for return drivers that differ by construction: the **MSFT real
-covered call** (the full stream carries the stock leg — realchains/real_cc_backtest.py:510 — so it is
-beta-dominated, with a pinned 41.00% max drawdown, tests/test_real_cc_backtest.py:753-755) versus the
+covered call** (the full stream carries the stock leg — realchains/real_cc_backtest.py:511 — so it is
+beta-dominated, with a pinned 41.00% max drawdown, tests/test_real_cc_backtest.py:758-760) versus the
 **SPY delta-hedged short vol** (market-neutral by construction; its pinned correlation to SPY is +0.26,
 tests/test_vol_premium.py:413-414). The drivers differ by construction — equity beta against a hedged
 vol premium — and the cross-overlay correlation between them is TO BE MEASURED, not assumed; no such
@@ -104,25 +104,25 @@ pairs this repo owns, not on his trend-plus-consolidation exemplar.**
 
 No harness exists to run either test. The repo-wide sweep for correlation machinery finds four
 correlation-adjacent sites, none of which aligns two overlay streams: the factor IC is per-date
-cross-sectional Spearman across names (factor/factor_backend.py:101-120), the IV-richness scout's
+cross-sectional Spearman across names (factor/factor_backend.py:105-124), the IV-richness scout's
 Spearman pools cycles within one stream (search/explorations.py:344-346), the ACF figure computes
-single-series autocovariances (engine/make_figures.py:275), and the closest align-two-series precedent
+single-series autocovariances (engine/make_figures.py:274), and the closest align-two-series precedent
 joins a factor's long-short returns to the registered premia, never overlay equity
 (factor/factor_mechanism.py:102-103). The walk-forward's concat chains OOS windows of one strategy
-(engine/cc_backtest.py:930). The parent plan's Gap G claim is thereby confirmed — with one stale anchor
+(engine/cc_backtest.py:931). The parent plan's Gap G claim is thereby confirmed — with one stale anchor
 noted for the build PR: docs/van_tharp_test_plan.md:230 cites the explorations Spearman at
 search/explorations.py:335, and it now sits at :346.
 
 ## The harness — three pure functions over existing streams
 
 **Inputs.** The three engines' daily streams, taken as they are. The structure engine emits
-`['date', 'equity', 'price', 'rf_credit']` (realchains/vol_premium.py:1053; the row append at
+`['date', 'equity', 'price', 'rf_credit']` (realchains/vol_premium.py:1054; the row append at
 :1049-1050); the real CC engine emits `['date', 'equity', 'price']`
-(realchains/real_cc_backtest.py:526; the append at :523); the simulated CC engine emits the same CC
-schema (engine/cc_backtest.py:241, the DataFrame build at :524-527). All three round each equity row to
+(realchains/real_cc_backtest.py:527; the append at :523); the simulated CC engine emits the same CC
+schema (engine/cc_backtest.py:242, the DataFrame build at :524-527). All three round each equity row to
 two decimals and store the date as an ISO string, so joins key on the string. All three start from the
-same deployed base — cash/capital initialization at realchains/vol_premium.py:839,
-realchains/real_cc_backtest.py:312-317, and engine/cc_backtest.py:257-270 — with $100,000 the pinned
+same deployed base — cash/capital initialization at realchains/vol_premium.py:840,
+realchains/real_cc_backtest.py:313-318, and engine/cc_backtest.py:258-271 — with $100,000 the pinned
 convention on every run Experiment 6 touches. v1 consumes the two real-chain engines; the simulated
 engine's stream is schema-compatible but out of Experiment 6's scope.
 
@@ -138,12 +138,12 @@ common era; an inner join measures the combination where all legs actually ran, 
 is REPORTED with every result the panel feeds.
 
 The span facts that make the policy binding. The SPY short-vol leg is frozen at
-`REGISTERED_CLEAN_START['SPY'] = '2010-12-01'` (realchains/real_cc_backtest.py:89; the registered load
+`REGISTERED_CLEAN_START['SPY'] = '2010-12-01'` (realchains/real_cc_backtest.py:90; the registered load
 at tests/test_vol_premium.py:420) and runs the full 2010-12 → 2026-06 span (:486). The MSFT canonical
 store runs 2016-04-11 → 2026-04-10 (verified store min/max; the CC fixture runs the bare store span
-with a '2026-06-06' end cap, tests/test_real_cc_backtest.py:734-737), which makes MSFT the binding
+with a '2026-06-06' end cap, tests/test_real_cc_backtest.py:739-742), which makes MSFT the binding
 right endpoint — its store ends \\~2 months before every other ticker's. The QQQ short-vol pin runs
-2011-03-23 → 2026-06-05 (tests/test_vol_premium.py:864-866), and the MSFT short-vol pin runs 2010-05-10
+2011-03-23 → 2026-06-05 (tests/test_vol_premium.py:884-886), and the MSFT short-vol pin runs 2010-05-10
 → 2026-04-10 (:959-961) — both spans start before their canonical stores' first days because both pins
 load era backfills, an accounting the scout section below carries. Every leg trades the NYSE calendar,
 so inside a joint window the binding differences are span endpoints, not calendar holes; any
@@ -152,9 +152,9 @@ leg-specific missing date simply drops from the join — alignment is exact, nev
 ### stream_correlations — pairwise Pearson on per-capital daily P&L
 
 The per-leg basis is the `short_vol_statistics` normalization: daily dollar P&L over the FIXED deployed
-capital, `np.diff(eq) / capital` (realchains/vol_premium.py:184 — the inline comment reads "FIXED
+capital, `np.diff(eq) / capital` (realchains/vol_premium.py:185 — the inline comment reads "FIXED
 deployed-capital base (not grown equity)"). The alternative convention — prior-day-equity returns, as
-`compute_statistics` uses (`np.diff(equity) / equity[:-1]`, engine/cc_backtest.py:678-679) — is the
+`compute_statistics` uses (`np.diff(equity) / equity[:-1]`, engine/cc_backtest.py:679-680) — is the
 wrong basis for a portfolio: each stream's denominator embeds its own compounding history, so a sum of
 such returns is the return of no actual portfolio. Dollars add; compounding returns do not. The Gap C+B
 doc already contrasts exactly these two conventions (docs/van_tharp_gap_cb.md:84-85); Gap G picks the
@@ -165,34 +165,34 @@ Why naive cross-stream equity summing lies, in three parts, each grounded in the
 - **Mixed denominators.** A 1% day on the MSFT CC's grown \\~$486K equity is a different dollar than 1%
   on a $100K base; per-capital P&L puts every leg on its own committed $100K. Contract counts make the
   same point: identical $100K commitments size different notionals — SPY short vol 8 contracts
-  (tests/test_vol_premium.py:438), QQQ 17 (:888), MSFT CC 18 (tests/test_real_cc_backtest.py:748) — and
+  (tests/test_vol_premium.py:442), QQQ 17 (:888), MSFT CC 18 (tests/test_real_cc_backtest.py:753) — and
   the count is span-sensitive (MSFT CC 34 on the extended span, :1084, the same ticker at a lower
   initial price). Normalization is by capital, never by contracts.
 - **The stock-leg asymmetry.** CC equity carries the full stock position
-  (realchains/real_cc_backtest.py:510) while the structure stream carries none — it is cash plus hedge
-  stock plus the structure mark (realchains/vol_premium.py:1039-1042). Summing raw curves stacks stock
+  (realchains/real_cc_backtest.py:511) while the structure stream carries none — it is cash plus hedge
+  stock plus the structure mark (realchains/vol_premium.py:1040-1043). Summing raw curves stacks stock
   exposure and capital; the per-capital P&L convention keeps each leg a self-contained system instead.
 - **The rf asymmetry.** The structure engine accrues daily risk-free interest on cash and records each
-  day's credit in the `rf_credit` column (realchains/vol_premium.py:861-865); both CC engines credit
+  day's credit in the `rf_credit` column (realchains/vol_premium.py:862-866); both CC engines credit
   zero interest — the real engine's hedge financing is an explicit zero-interest simplification
-  (realchains/real_cc_backtest.py:293-294) and the simulated engine pins leftover cash at 0% yield,
-  consuming `risk_free_rate` only as the Black-Scholes pricing rate (engine/cc_backtest.py:257-270,
+  (realchains/real_cc_backtest.py:294-295) and the simulated engine pins leftover cash at 0% yield,
+  consuming `risk_free_rate` only as the Black-Scholes pricing rate (engine/cc_backtest.py:258-271,
   :250). A naive sum silently blends rf-inclusive and rf-free P&L.
 
 **The rf convention, decided:** a structure leg's per-day credit is netted out —
 `rf_credit[1:] / capital` subtracted from the diffs, with the same off-by-one `short_vol_statistics`
-uses, because the credit lands at the start of the following day (realchains/vol_premium.py:185-189).
+uses, because the credit lands at the start of the following day (realchains/vol_premium.py:186-190).
 The presence of the `rf_credit` column is itself the switch: a leg carrying it is netted, a leg without
 it passes through raw — no per-engine flags, so the schema asymmetry is implementable exactly as
 stated. This is the pinned +2.54's own basis: the docstring records that netting the ACTUAL per-day
 interest makes rf cancel exactly and the verdict rate-invariant, with the identity pinned at
-realchains/vol_premium.py:169-171 (the accounting-choice discussion at :148-176). CC legs are already
+realchains/vol_premium.py:170-172 (the accounting-choice discussion at :148-176). CC legs are already
 rf-free by engine construction. Net effect: **every leg is daily P&L above zero-yield cash on its own
 $100K**, and the structure legs sit on their published statistical basis. The caveat travels with the
 pins: the CC engines' idle cash genuinely earned nothing, an engine simplification the harness inherits
 rather than introduces. One inherited day-0 convention is also kept: diffs start at day 1, so each
 leg's day-0 entry half-spread (the structure stream's `eq[0]` is already struck at the entry mid,
-realchains/vol_premium.py:164-173) stays out of the summed P&L, exactly as `short_vol_statistics`
+realchains/vol_premium.py:165-174) stays out of the summed P&L, exactly as `short_vol_statistics`
 treats it.
 
 On that basis, `stream_correlations(panel)` is pairwise Pearson over the aligned per-capital series.
@@ -208,8 +208,8 @@ A's legs: a day where the SPY leg makes $500 and the CC leg loses $300 combines 
 `0.5 × (+0.005) + 0.5 × (−0.003) = +0.001` — +$100 on the $100K book — the identical arithmetic
 whether the leg ran 8 contracts or 18, because the divisor is capital, never contracts. The caveat is
 named: this is a **linear scaling of measured streams, not a re-run at split capital** —
-integer-contract granularity (`int(capital // (initial_price * 100))` at realchains/vol_premium.py:834;
-the CC engine's equivalent `int(capital // contract_cost)` at realchains/real_cc_backtest.py:313) is
+integer-contract granularity (`int(capital // (initial_price * 100))` at realchains/vol_premium.py:835;
+the CC engine's equivalent `int(capital // contract_cost)` at realchains/real_cc_backtest.py:314) is
 ignored by construction, and it would bite: one-third of the QQQ leg's 17 pinned contracts is not an
 integer.
 
@@ -239,7 +239,7 @@ Consumers of the combined stream:
 
 The marble bag is TRADE-level and a portfolio stream is DAILY, so **the ruin replay does not apply to
 the combined stream in v1.** `simulate_sizing` draws per-trade R-multiples from the Gap A ledger and
-folds each through `equity *= (1 + fraction * r)` (common/position_sizing.py:50-61, the fold at :121;
+folds each through `equity *= (1 + fraction * r)` (common/position_sizing.py:51-62, the fold at :121;
 "a REPLAY layer over the Gap A ledger", :4), and its input comes from `build_trade_ledger`, which
 reduces ONE overlay's event stream to per-trade records (common/trade_ledger.py:150-159). A combined
 portfolio curve has simultaneous overlapping positions across overlays and no per-trade R
@@ -247,7 +247,7 @@ decomposition, so it cannot enter the bag. The module already names the adjacent
 is IID, and block bootstraps are named widenings (common/position_sizing.py:21-26); a daily-block
 bootstrap over the combined per-capital stream is the portfolio analog, a NEW object in that family,
 not a reuse. Significance stays with the daily Newey-West t: `ledger_statistics` itself disclaims
-significance authority (common/trade_ledger.py:238-243).
+significance authority (common/trade_ledger.py:237-242).
 
 ### The pandas decision
 
@@ -258,7 +258,7 @@ nothing forbids external libraries. pandas is a first-class repo dependency (req
 pandas and pandas-stubs), and `daily_equity` is already a DataFrame from all three producers, so a
 DataFrame-taking harness inverts nothing. The convention cost is named: today's `common/` interfaces
 are stdlib and numpy — the ledger takes list-of-dict trades, the sizer takes sequences and imports no
-numpy at all (common/trade_ledger.py:48-54; common/position_sizing.py:38-45) — so this heavies the leaf
+numpy at all (common/trade_ledger.py:48-54; common/position_sizing.py:38-46) — so this heavies the leaf
 slightly, in practice a no-op since every consumer package already imports pandas. The numpy-only
 alternative (arrays in, alignment pushed to callers) would preserve the current leaf style at the cost
 of re-implementing the date join at every call site; the join is the harness's whole job, so the
@@ -282,13 +282,13 @@ not the pinned full-span t), pinned by the new test, while the published full-sp
 The legs, coordinates verbatim from their pins:
 
 - **SPY hedged short call vol** — target_delta 0.25, dte 30, capital 100_000, risk_free_rate 0.045,
-  hedge_cost_bps 0.0 (tests/test_vol_premium.py:430-431), span frozen at
+  hedge_cost_bps 0.0 (tests/test_vol_premium.py:434-435), span frozen at
   `REGISTERED_CLEAN_START['SPY'] = '2010-12-01'` (:420). Published basis: NW t +2.54 (:451), Sharpe
   0.52 (:452), max DD 4.09% (:444), alpha over cash +$36,495.14 within net P&L +$72,999.90 (:441-443),
   cost-robust to +2.42 at 0.2 bp and +2.25 at 0.5 bp (:470, :406-407), correlation to SPY +0.26
   (:413-414). The frictionless hedge basis is deliberately kept so the leg matches the +2.54 pin.
 - **MSFT real covered call** — call_delta 0.25, close_at_pct 0.75, dte 30, risk_free_rate 0.045,
-  capital 100_000, bid/ask fills (tests/test_real_cc_backtest.py:108-114), canonical-store span with
+  capital 100_000, bid/ask fills (tests/test_real_cc_backtest.py:113-119), canonical-store span with
   the fixture's '2026-06-06' end cap (:734-737). Published basis: net overlay P&L −$183,552.34 (:749),
   total return 386.26% versus buy-and-hold 569.81%, max DD 41.00% (:753-755), excess NW t −1.73 and
   sharpe_excess −0.49 (:784-785).
@@ -333,12 +333,12 @@ The legs: the SAME short-vol system on the three canonical call stores with pinn
 target_delta 0.25, dte 30, capital $100,000, frictionless hedge — the published bases:
 
 - **SPY** — as in Combo A: NW t +2.54, the only cost-surviving positive leg
-  (tests/test_vol_premium.py:451, :406-407).
+  (tests/test_vol_premium.py:455, :406-407).
 - **QQQ** (EXPLORATORY pin) — span 2011-03-23 → 2026-06-05; gross NW t +2.07, dying at 0.5 bp hedge
-  friction (+1.88); alpha over cash +$69,381.23 (tests/test_vol_premium.py:864-866, :896, :899, :891).
+  friction (+1.88); alpha over cash +$69,381.23 (tests/test_vol_premium.py:884-886, :896, :899, :891).
 - **MSFT** (EXPLORATORY pin, the single-name kill) — span 2010-05-10 → 2026-04-10; frictionless net
   P&L −$48,198.61, alpha over cash −$18,202.17, gross NW t −0.26, max DD 74.58%
-  (tests/test_vol_premium.py:959-961, :988-990, :994, :997-998). One figure trap flagged now: the class
+  (tests/test_vol_premium.py:987-989, :988-990, :994, :997-998). One figure trap flagged now: the class
   docstring's "net P&L −$58K" is the net-0.5bp narrative number (:959-961), not the frictionless pin.
 
 Weights: **one-third each, pre-committed.** Span: the inner join — expected 2011-03-23 → 2026-04-10,
@@ -372,7 +372,7 @@ claim on this cross-section. Either way the matrix gets pinned.
 - Per-capital units only, with integer-contract granularity ignored by the linear combination.
 - Combo A's CC leg conflates MSFT beta with overlay P&L by construction — that is the design, but no
   conclusion about the CC overlay alone follows; the overlay-only excess is a different stream with its
-  own pinned verdict (−1.73, tests/test_real_cc_backtest.py:784-785).
+  own pinned verdict (−1.73, tests/test_real_cc_backtest.py:789-790).
 - No ruin replay on the combined stream (the C+B mismatch above); the daily-block variant is a named
   widening, not a v1 deliverable.
 
@@ -438,7 +438,7 @@ Always-run synthetic tests (hand-built two- and three-stream panels, no dataset)
 - Correlation exactness: a crafted co-moving pair measures +1.0, an anti-moving pair measures −1.0, and
   an orthogonal pair measures 0.0, exactly.
 - The rf convention: a synthetic stream carrying an `rf_credit` column has `rf_credit[1:]` netted with
-  the off-by-one honored (the realchains/vol_premium.py:185-189 model), and a stream without the column
+  the off-by-one honored (the realchains/vol_premium.py:186-190 model), and a stream without the column
   passes through raw — the column's presence is the switch.
 - Combination: a 50/50 combine of a tiny panel reproduces hand arithmetic row for row, and weights that
   do not sum to 1 are rejected.
@@ -449,8 +449,8 @@ Always-run synthetic tests (hand-built two- and three-stream panels, no dataset)
 Dataset-gated Experiment 6 pins (proposed class name `TestPortfolioCombos`, final at build time):
 
 - The four leg re-runs reproduce their published pins before any combo number is computed: SPY +2.54
-  (tests/test_vol_premium.py:451), QQQ +2.07 (:896), MSFT short vol −0.26 (:994), and the MSFT CC
-  −$183,552.34 with excess NW t −1.73 (tests/test_real_cc_backtest.py:749, :784-785).
+  (tests/test_vol_premium.py:455), QQQ +2.07 (:896), MSFT short vol −0.26 (:994), and the MSFT CC
+  −$183,552.34 with excess NW t −1.73 (tests/test_real_cc_backtest.py:754, :784-785).
 - Combo A: the pairwise correlation, each leg's common-span NW t and max DD, the combo's NW t and max
   DD, and the realized span endpoints.
 - Combo B: the three pairwise correlations, the combined and best-single NW t and max DD, and the
@@ -492,7 +492,7 @@ pre-commitment IS the leg/weight/span block.
 - **No FDR interaction in v1.** Nothing enters `idea_ledger.jsonl`.
 - **One significance authority, used descriptively.** `newey_west_summary` over per-capital daily
   streams carries every t; the ledger statistics never gate (their own posture,
-  common/trade_ledger.py:238-243); DD comparisons carry no significance claim at all.
+  common/trade_ledger.py:237-242); DD comparisons carry no significance claim at all.
 - **Do not re-pin.** Common-span leg statistics are NEW pins beside the new code; every published
   full-span pin stays untouched (docs/van_tharp_test_plan.md:299-300), and the scout's leg re-runs
   alarm on drift instead of absorbing it.
@@ -511,9 +511,9 @@ pre-commitment IS the leg/weight/span block.
 ## Open questions
 
 1. **rf handling in the correlation basis.** Leaning: as decided above — net the structure legs'
-   `rf_credit` (the pinned +2.54's own excess basis, realchains/vol_premium.py:185-189) so every leg is
+   `rf_credit` (the pinned +2.54's own excess basis, realchains/vol_premium.py:186-190) so every leg is
    P&L over zero-yield cash, with CC legs already rf-free by construction
-   (realchains/real_cc_backtest.py:293-294). The raw alternative avoids the column-keyed behavior but
+   (realchains/real_cc_backtest.py:294-295). The raw alternative avoids the column-keyed behavior but
    blends rf-inclusive and rf-free P&L in the combined stream and takes the structure legs off their
    published basis. The practical asymmetry, named: the slow rf drip barely moves a daily Pearson, but
    it materially moves the combined stream's mean and t — the netting matters for the verdict metric

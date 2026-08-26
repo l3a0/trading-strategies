@@ -77,12 +77,12 @@ Consequences of the replay design:
   (docs/van_tharp_gap_a.md, "Phased plan").
 - **The engines keep their flat-notional convention.** All three size once from `prices[0]` before the
   daily loop and never re-size: `num_contracts = int(capital // contract_cost)` and
-  `shares = 100 * num_contracts` at engine/cc_backtest.py:258-264, realchains/real_cc_backtest.py:313-316,
-  and realchains/vol_premium.py:825-828, with the loops starting at :308, :338, and :848 respectively.
+  `shares = 100 * num_contracts` at engine/cc_backtest.py:259-265, realchains/real_cc_backtest.py:314-317,
+  and realchains/vol_premium.py:826-829, with the loops starting at :308, :338, and :848 respectively.
   Position exposure therefore never compounds — each trade's dollar P&L comes off the same contract
   count. One denominator nuance: `short_vol_statistics` measures returns against constant capital
-  (`np.diff(eq) / capital`, the "FIXED deployed-capital base" comment, realchains/vol_premium.py:183),
-  while `compute_statistics` divides by prior-day equity (engine/cc_backtest.py:678-679) — but the
+  (`np.diff(eq) / capital`, the "FIXED deployed-capital base" comment, realchains/vol_premium.py:184),
+  while `compute_statistics` divides by prior-day equity (engine/cc_backtest.py:679-680) — but the
   flat-exposure fact holds in both. The engines' convention is the constant-dollar-risk baseline (a fixed
   dollar R every trade, P&L adding rather than compounding); the replay generalizes it to risk that
   scales with equity.
@@ -98,12 +98,12 @@ rules are out of scope here and would be a separate, engine-touching design.
 
 1. **The overlays trade one position at a time, so a single equity path is well-defined.** Every engine
    holds one scalar position state, gates entry on it being empty, and resets it at each terminal:
-   `if position is None:` at engine/cc_backtest.py:330 (state declared :287; resets :408, :435, :461) and
-   realchains/real_cc_backtest.py:341 (declared :324; resets :434, :482), and `if legs is None:` at
-   realchains/vol_premium.py:859 (declared :832; resets :930, :955 — the staggered branch at :895 settles
+   `if position is None:` at engine/cc_backtest.py:331 (state declared :287; resets :408, :435, :461) and
+   realchains/real_cc_backtest.py:342 (declared :324; resets :434, :482), and `if legs is None:` at
+   realchains/vol_premium.py:860 (declared :832; resets :930, :955 — the staggered branch at :895 settles
    the near leg of the one open calendar, never a second entry). The ledger reducer mirrors the same
    strict alternation with a single `entry` slot cleared after each terminal
-   (common/trade_ledger.py:178-186, :216).
+   (common/trade_ledger.py:177-185, :216).
 2. **Per-unit P&L is treated as size-invariant.** No market-impact model: replaying at a larger size
    assumes fills at the same prices. At retail scale on liquid listed options this is a reasonable
    simplification, and it is stated rather than hidden.
@@ -152,9 +152,9 @@ Each path draws `n_trades` R-multiples with replacement and compounds equity fro
 - `n_trades=None` replays one career the same length as the input ledger; a fixed horizon is available
   through the parameter (open question 3).
 - `seed=42` drives a stdlib `random.Random(seed)` — the `monte_carlo_shuffle` convention
-  (engine/cc_backtest.py:1182, :1217), chosen over the search-side numpy convention
+  (engine/cc_backtest.py:1183, :1217), chosen over the search-side numpy convention
   (`np.random.default_rng(20260613)`: `PERMUTATION_SEED` at search/explorations.py:74, `CAMPAIGN_SEED`
-  at search/edge_search.py:104) because this is a descriptive, engine-adjacent Monte Carlo like the
+  at search/edge_search.py:109) because this is a descriptive, engine-adjacent Monte Carlo like the
   shuffle test, not a kill-gate permutation null — and stdlib `random` keeps the module numpy-free.
 
 Proposed output shape (a dict, exact keys settled at build time): `terminal` percentiles
@@ -168,7 +168,7 @@ Ruin accounting is three-tiered:
 - **Intratrade (when `mae_r` is supplied).** Each draw carries its trade's MAE-R alongside its R, and the
   trough `pre_trade_equity * (1 + fraction * mae_r)` is what tests the threshold — tested before the
   close multiplication `equity *= (1 + fraction * r)` is applied. Because `mae <= min(pnl, 0)` by
-  construction (common/trade_ledger.py:206), the trough never sits above the close equity, so testing
+  construction (common/trade_ledger.py:205), the trough never sits above the close equity, so testing
   trough-then-close cannot miss a breach. The trough enters only the ruin test; the max-drawdown
   distribution is computed peak-to-trough on post-trade close equity in both modes. Gap A's MAE column is
   what makes intratrade ruin measurable — a trade that recovers by the close can still have killed the
@@ -238,7 +238,7 @@ fixed, seed-free grid over the open interval — deterministic, no RNG anywhere 
 ### Per-regime bags
 
 They compose for free. Filter a ledger by Gap D's bucketing (`regime_ledger_statistics` /
-`SIX_REGIME_CELLS`, common/trade_ledger.py:300-341) and pass a cell's `r_multiple` column as the bag. The
+`SIX_REGIME_CELLS`, common/trade_ledger.py:299-340) and pass a cell's `r_multiple` column as the bag. The
 sizer adds no regime code; the caller composes, keeping `common/` a leaf — the Gap D pattern.
 
 ## The synthetic ground-truth game
@@ -349,7 +349,7 @@ and the monotonicity verdict. These are Experiment 1's first pinned measurements
    tolerance to plan against (Loc 8812). Leaning: report P(ruin) at both thresholds (0.5, and 0.75 for
    the 25-percent tolerance) in the sweep output and headline the 0.5 default.
 2. **An `avg_loss_1R`-normalized bag as a labelled cross-check.** `ledger_statistics` already offers
-   Tharp's ex-post normalizer (`r_normalizer='avg_loss_1r'`, common/trade_ledger.py:246-250, :259-269).
+   Tharp's ex-post normalizer (`r_normalizer='avg_loss_1r'`, common/trade_ledger.py:245-249, :259-269).
    Consistency argues for accepting an optional bag normalized the same way, carrying the same loud
    ex-post label — never the primary. Leaning yes.
 3. **Horizon convention.** The default is one same-length career (`n_trades=None`). Tharp's own exercises

@@ -9,10 +9,15 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-
-from factor.factor_mechanism import (REGISTERED_PREMIA, _ols_tstats, loading_family, long_short_returns,
-                              registered_premia)
 from test_factor_backend import _panel
+
+from factor.factor_mechanism import (
+    REGISTERED_PREMIA,
+    _ols_tstats,
+    loading_family,
+    long_short_returns,
+    registered_premia,
+)
 
 
 def _momentum(prices: pd.DataFrame, window: int = 20) -> pd.DataFrame:

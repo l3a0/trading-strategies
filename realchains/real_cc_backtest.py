@@ -42,18 +42,19 @@ Usage:
 """
 
 from __future__ import annotations
-from common.paths import data_path
 
 import csv
 import gzip
 import io
 import os
 import sys
+from collections.abc import Container, Sequence
 from datetime import datetime
-from typing import Any, Container, Sequence, TextIO
+from typing import Any, TextIO
 
 import pandas as pd
 
+from common.paths import data_path
 from engine.cc_backtest import compute_statistics, run_cc_overlay
 
 COMMISSION_PER_SHARE = 0.0065  # $0.65 per 100-share contract, both legs (engine convention)
@@ -446,7 +447,7 @@ def run_real_cc_overlay(
                         position['cap_quote'] = cap_q
                 quote = day['marks'].get(position['contract']) if day else None
                 if quote is not None:
-                    bid_q, ask_q, mid_q, delta_q = quote
+                    _bid_q, ask_q, mid_q, delta_q = quote
                     position['last_mid'] = mid_q
                     position['real_delta'] = delta_q
                     # close_ref is the net cost to close the spread excluding
@@ -500,7 +501,7 @@ def run_real_cc_overlay(
         # so the hedge unwinds at Monday's close — one weekend of hedge
         # exposure the option leg no longer has. The SPY cc_r_experiment pins
         # DO span that era (disclosed in its log entry); MSFT/QQQ pins do not.
-        target_hedge = (int(round(min(max(position['real_delta'], 0.0), 1.0) * shares))
+        target_hedge = (round(min(max(position['real_delta'], 0.0), 1.0) * shares)
                         if delta_hedge and position is not None else 0)
         hedge_trade = target_hedge - hedge_shares
         if hedge_trade != 0:
@@ -602,7 +603,7 @@ def main() -> None:
     print(f'{ticker}: {len(dates)} trading days {dates[0]} -> {dates[-1]}, '
           f'{len(days)} chain days', flush=True)
 
-    real_sum, real_trades, real_eq = run_real_cc_overlay(dates, prices, store, real_params)
+    real_sum, _real_trades, real_eq = run_real_cc_overlay(dates, prices, store, real_params)
     import numpy as np
     proxy_sum, _, proxy_eq = run_cc_overlay(dates, np.array(prices), params)
     real_st = compute_statistics(real_eq, num_contracts=real_sum['num_contracts'],

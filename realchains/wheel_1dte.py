@@ -42,8 +42,9 @@ import hashlib
 import json
 import math
 import sys
+from collections.abc import Sequence
 from datetime import date as _date
-from typing import Any, Sequence
+from typing import Any
 
 from common.paths import data_path
 from common.position_sizing import kelly_fraction, simulate_sizing
@@ -383,7 +384,7 @@ def run_wheel(
                         diag['eligible_put_days'] += 1
                         row = _pick(day_idx['puts'], -DELTA_TARGET)
                         assert row is not None
-                        delta, k, bid, _mid = row
+                        delta, k, _bid, _mid = row
                         prem = row[fill_i]
                         n = contracts
                         while n > 0 and k * 100 * n > cash - FEE_PER_CONTRACT * n:
@@ -420,7 +421,7 @@ def run_wheel(
                             row is None or row[1] != unconstrained[1]):
                         diag['basis_rule_binding_days'] += 1
                     if row is not None:
-                        delta, k, bid, _mid = row
+                        delta, k, _bid, _mid = row
                         prem = row[fill_i]
                         n = shares // 100
                         entry = {'action': 'sell', 'date': d, 'side': 'call',

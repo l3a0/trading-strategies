@@ -27,8 +27,9 @@ endpoint. Promotion stays CLOSED: e-LOND SURFACES survivors, never crowns them.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable, Sequence
 from statistics import NormalDist
-from typing import Callable, NamedTuple, Sequence
+from typing import NamedTuple
 
 # --- registered constants (prereg S3) ----------------------------------------
 ONLINE_FDR_ALPHA = 0.10        # target FDR — owner risk-appetite choice

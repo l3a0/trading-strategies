@@ -26,7 +26,8 @@ don't care; interpretation does, so each caller documents its own units.
 from __future__ import annotations
 
 import math
-from typing import NamedTuple, Sequence
+from collections.abc import Sequence
+from typing import NamedTuple
 
 import numpy as np
 

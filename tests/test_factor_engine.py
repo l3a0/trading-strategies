@@ -7,11 +7,11 @@ as the F2 primitives and feeds the SAME honest core. All always-run on the synth
 from __future__ import annotations
 
 import pytest
+from test_factor_backend import CONTRACT, _panel
 
-from search.backend import Backend
 from factor.factor_engine import ExprFactor, GrammarFactorBackend, evaluate_expr
 from factor.factor_grammar import Expr, ExprGrammarError, canonical_expr_key, leaf
-from test_factor_backend import CONTRACT, _panel
+from search.backend import Backend
 
 
 def _backend(**kw) -> GrammarFactorBackend:

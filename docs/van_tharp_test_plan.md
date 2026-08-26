@@ -58,7 +58,7 @@ Tharp's native units: the **R-multiple** (a trade's P&L expressed in multiples o
 
 These are closer than they look. The SQN is `sqrt(N) * mean(R) / std(R)` — literally the one-sample
 t-statistic of the R-multiple distribution. The repo's Newey-West t-stat
-(`short_vol_statistics`, realchains/vol_premium.py:139; `compute_statistics`, engine/cc_backtest.py:600) is
+(`short_vol_statistics`, realchains/vol_premium.py:140; `compute_statistics`, engine/cc_backtest.py:601) is
 already a stronger, HAC-robust version of the same quantity: it corrects for the serial dependence a naive
 SQN ignores. So the engine does not need a new significance authority. It needs the two **inputs** that the
 SQN and expectancy require and the engine never computes:
@@ -79,23 +79,23 @@ blocks, and a rough build size.
 
 **What exists.** Both engines log trades as an event stream keyed off a single `action` discriminator, with
 a *different* payload shape per action — there is no fixed columnar trade schema. The simulated CC engine
-appends four shapes in `run_cc_overlay`: `sell` (engine/cc_backtest.py:355), `expiration`
-(engine/cc_backtest.py:407), `close` (engine/cc_backtest.py:432), and `close_itm`
-(engine/cc_backtest.py:456). The structure engine appends four in `run_real_structure_overlay`: `enter`
-(realchains/vol_premium.py:890), `settle_leg` (realchains/vol_premium.py:908), `settle`
-(realchains/vol_premium.py:925), and `close` (realchains/vol_premium.py:949). The only per-trade economic
+appends four shapes in `run_cc_overlay`: `sell` (engine/cc_backtest.py:356), `expiration`
+(engine/cc_backtest.py:408), `close` (engine/cc_backtest.py:433), and `close_itm`
+(engine/cc_backtest.py:457). The structure engine appends four in `run_real_structure_overlay`: `enter`
+(realchains/vol_premium.py:891), `settle_leg` (realchains/vol_premium.py:909), `settle`
+(realchains/vol_premium.py:926), and `close` (realchains/vol_premium.py:950). The only per-trade economic
 fields recorded are realized P&L (plus `realized_pnl`, `call_value`, `profit_pct` on the CC side; `credit`
-on the structure side). The in-memory CC `position` dict (engine/cc_backtest.py:345) holds state, not a
+on the structure side). The in-memory CC `position` dict (engine/cc_backtest.py:346) holds state, not a
 recorded record.
 
 **What's missing.** No per-trade initial-risk basis is recorded anywhere — a grep for
 `initial_risk|max_loss|stop_dist|width|risk_basis` returns nothing across engine/cc_backtest.py and
 realchains/vol_premium.py. Max adverse excursion (MAE), the worst intratrade mark, is tracked nowhere
-either: `worst` appears only in `sensitivity_analysis` (a param-sweep statistic, engine/cc_backtest.py:1289)
-and a drawdown comment; the structure mark loop updates `leg['mid']` per day (realchains/vol_premium.py:934)
+either: `worst` appears only in `sensitivity_analysis` (a param-sweep statistic, engine/cc_backtest.py:1290)
+and a drawdown comment; the structure mark loop updates `leg['mid']` per day (realchains/vol_premium.py:935)
 but never records a running low-water mark. Both statistics functions discard the trade list entirely and
 reconstruct everything from the daily equity DataFrame (`short_vol_statistics` reads `daily_equity['equity']`
-at realchains/vol_premium.py:181). The need is a common per-trade record — `{entry_date, close_date, pnl,
+at realchains/vol_premium.py:182). The need is a common per-trade record — `{entry_date, close_date, pnl,
 initial_risk_R, mae}` — emitted by every overlay. `initial_risk_R` is free for the defined-risk structures
 (the credit spread and iron condor: long-wing width minus net credit), though that width is never computed
 today; undefined-risk overlays need a declared stop or Tharp's average-loss-as-1R fallback (Loc 739).
@@ -109,10 +109,10 @@ site and through the per-day mark loop where intratrade marks are available but 
 
 ### Gap B — a trade-level resampler
 
-**What exists.** `monte_carlo_shuffle` (engine/cc_backtest.py:1185) resamples the **underlying's daily
+**What exists.** `monte_carlo_shuffle` (engine/cc_backtest.py:1186) resamples the **underlying's daily
 returns** to rebuild a synthetic price path and re-runs the overlay on it. The daily simple returns are
-computed at engine/cc_backtest.py:1220, shuffled and compounded into a synthetic path, and the overlay is
-re-run on that path at engine/cc_backtest.py:1244; the metric is `total_return_pct` and the statistic is the
+computed at engine/cc_backtest.py:1221, shuffled and compounded into a synthetic path, and the overlay is
+re-run on that path at engine/cc_backtest.py:1245; the metric is `total_return_pct` and the statistic is the
 real path's percentile rank among the shuffles. The trades list is discarded each iteration. This is a
 sequence-randomization test on the underlying — it preserves the return distribution and destroys serial
 order — and it exists only in the simulated engine (there is no `monte_carlo_shuffle` in realchains/).
@@ -130,12 +130,12 @@ account outcomes?"
 ### Gap C — a position-sizing layer
 
 **What exists.** Flat fixed-notional sizing, identical across all three engines. Capital is a flat dollar
-input (default $100,000 — engine/cc_backtest.py:1357, realchains/vol_premium.py:826). Contract count is
+input (default $100,000 — engine/cc_backtest.py:1358, realchains/vol_premium.py:827). Contract count is
 computed once at t=0 from the first day's price and never reassigned: the CC path does
-`num_contracts = int(capital // contract_cost)` (engine/cc_backtest.py:257), the real CC path mirrors it
-(realchains/real_cc_backtest.py:313), and every structure overlay routes through the same floor-division in
-`run_real_structure_overlay` (realchains/vol_premium.py:834). Returns are measured against the constant
-`capital` base, not grown equity (engine/cc_backtest.py:524; realchains/vol_premium.py:182). A grep for
+`num_contracts = int(capital // contract_cost)` (engine/cc_backtest.py:258), the real CC path mirrors it
+(realchains/real_cc_backtest.py:314), and every structure overlay routes through the same floor-division in
+`run_real_structure_overlay` (realchains/vol_premium.py:835). Returns are measured against the constant
+`capital` base, not grown equity (engine/cc_backtest.py:525; realchains/vol_premium.py:183). A grep for
 `kelly|fixed.?fraction|percent.?of.?equity|risk.?per.?trade|position.?siz` returns zero matches in the
 sizing path.
 
@@ -151,15 +151,15 @@ the unit count by current equity and a declared per-trade risk (which is Gap A's
 
 ### Gap D — six-regime (vol × direction) bucketing with per-cell counts and R-distributions
 
-**What exists.** `regime_analysis` (engine/cc_backtest.py, returning at engine/cc_backtest.py:855) buckets
+**What exists.** `regime_analysis` (engine/cc_backtest.py, returning at engine/cc_backtest.py:856) buckets
 CC trade P&L into four directional regimes — bull, bear, sideways, unknown — from `classify_regime`
-(engine/cc_backtest.py:725), a price-versus-200-day-SMA classifier with a `±5%` band. Each bucket carries
+(engine/cc_backtest.py:726), a price-versus-200-day-SMA classifier with a `±5%` band. Each bucket carries
 exactly three fields: `days` (a regime-**day** count, not a trade count), `total_pnl` (summed), and
 `avg_pnl_per_day` (total_pnl divided by days). It reads only the `date` and `pnl` columns
-(engine/cc_backtest.py:839) and is CC-only — a grep over realchains/ and search/ for `regime_analysis` or
+(engine/cc_backtest.py:840) and is CC-only — a grep over realchains/ and search/ for `regime_analysis` or
 `classify_regime` returns nothing. The volatility axis raw material exists but is unwired: `detect_regime`
-(engine/cc_backtest.py:162) returns high/low/normal from rolling vol with `25%` and `15%` thresholds, and
-`estimate_iv` (engine/cc_backtest.py:171) multiplies rolling vol by `1.1`/`1.3`/`1.5` per regime — both
+(engine/cc_backtest.py:163) returns high/low/normal from rolling vol with `25%` and `15%` thresholds, and
+`estimate_iv` (engine/cc_backtest.py:172) multiplies rolling vol by `1.1`/`1.3`/`1.5` per regime — both
 live inside IV estimation in `run_cc_overlay`, never used to bucket realized P&L.
 
 **What's missing.** A six-cell bucketing that crosses the vol axis (`detect_regime`, already pinned) with
@@ -176,15 +176,15 @@ trade list compatible with the CC schema the function hard-codes.
 ### Gap E — exit mechanics beyond hold-to-expiry
 
 **What exists.** More exit variety than a single hold-to-expiry, but unevenly. The simulated CC engine has a
-profit-target close (action `close`, engine/cc_backtest.py:422) and a deep-ITM close
-(action `close_itm`, engine/cc_backtest.py:447). The real CC engine mirrors all three exit triggers —
-`hit_target` (realchains/real_cc_backtest.py:467), `deep_itm` (realchains/real_cc_backtest.py:468), and
-`hit_stop` (realchains/real_cc_backtest.py:469), the last gated by `stop_loss_mult`
-(realchains/real_cc_backtest.py:288) emitting a `close_stop` action — and is pinned by
-`TestMsftStopLossRegression` (tests/test_real_cc_backtest.py:1150). Among the seven structures, only
-`short_vol` carries early-close management (`early_close_single`, realchains/vol_premium.py:935); the other
+profit-target close (action `close`, engine/cc_backtest.py:423) and a deep-ITM close
+(action `close_itm`, engine/cc_backtest.py:448). The real CC engine mirrors all three exit triggers —
+`hit_target` (realchains/real_cc_backtest.py:468), `deep_itm` (realchains/real_cc_backtest.py:469), and
+`hit_stop` (realchains/real_cc_backtest.py:470), the last gated by `stop_loss_mult`
+(realchains/real_cc_backtest.py:289) emitting a `close_stop` action — and is pinned by
+`TestMsftStopLossRegression` (tests/test_real_cc_backtest.py:1155). Among the seven structures, only
+`short_vol` carries early-close management (`early_close_single`, realchains/vol_premium.py:936); the other
 six (straddle, iron condor, strangle, risk reversal, credit spread, calendar) carry `management: hold` and
-settle only at expiry (the `date >= expiration` branch, realchains/vol_premium.py:915; the calendar adds
+settle only at expiry (the `date >= expiration` branch, realchains/vol_premium.py:916; the calendar adds
 staggered per-leg settlement but no discretionary early exit).
 
 **What's missing.** Roll logic exists nowhere — a grep for `roll` finds only comments. No profit-target,
@@ -202,10 +202,10 @@ monotonically worse (no edge), echoing the real-chain collapse of the risk-manag
 ### Gap F — an entry-selection seam
 
 **What exists.** A partial injection point. The generic `run_real_structure_overlay` takes the selector as a
-keyword-only callable — `select` (realchains/vol_premium.py:785), invoked as `picked = select(day, params)`
-(realchains/vol_premium.py:869). But every named overlay binds it to a fixed `_legs_*` selector via
-`STRUCTURE_SPECS` (realchains/vol_premium.py:718), and the CC path hardwires `select_entry`
-(realchains/real_cc_backtest.py:345) and `select_cap_leg` (realchains/real_cc_backtest.py:354) with no
+keyword-only callable — `select` (realchains/vol_premium.py:786), invoked as `picked = select(day, params)`
+(realchains/vol_premium.py:870). But every named overlay binds it to a fixed `_legs_*` selector via
+`STRUCTURE_SPECS` (realchains/vol_premium.py:719), and the CC path hardwires `select_entry`
+(realchains/real_cc_backtest.py:346) and `select_cap_leg` (realchains/real_cc_backtest.py:355) with no
 override. No caller, test, or harness ever passes an alternative selector.
 
 **What's missing.** A seeded random-selector that the harness can swap in at the existing `select=` seam
@@ -220,8 +220,8 @@ the edge survives.
 ### Gap G — a multi-overlay portfolio harness
 
 **What exists.** Every overlay emits a daily equity stream — the structure engine builds
-`daily_equity` with columns `['date', 'equity', 'price', 'rf_credit']` (realchains/vol_premium.py:984), the
-real CC engine emits `['date', 'equity', 'price']` (realchains/real_cc_backtest.py:514), and the simulated
+`daily_equity` with columns `['date', 'equity', 'price', 'rf_credit']` (realchains/vol_premium.py:985), the
+real CC engine emits `['date', 'equity', 'price']` (realchains/real_cc_backtest.py:515), and the simulated
 CC engine returns a daily curve for `compute_statistics`. Every consumer is single-strategy.
 
 **What's missing.** As of this plan, a harness existed nowhere — a repo-wide grep for

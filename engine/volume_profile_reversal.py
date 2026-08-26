@@ -56,9 +56,10 @@ import json
 import os
 import sys
 import zlib
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from multiprocessing import Pool
-from typing import Any, Sequence
+from typing import Any
 
 import numpy as np
 
@@ -534,9 +535,9 @@ def collect_cell(bars: dict[str, np.ndarray], cfg: ProfileCfg, era_start: str,
         ct_first.append(float(np.mean(c_win)))              # control POC-first rate
         ev_sess.append(e.date)
         ev_side.append(e.side)
-    return dict(ev_ret=np.array(ev_ret), ct_ret=np.array(ct_ret),
-                ev_first=np.array(ev_first), ct_first=np.array(ct_first),
-                date=np.array(ev_sess), side=np.array(ev_side, dtype=int))
+    return {'ev_ret': np.array(ev_ret), 'ct_ret': np.array(ct_ret),
+                'ev_first': np.array(ev_first), 'ct_first': np.array(ct_first),
+                'date': np.array(ev_sess), 'side': np.array(ev_side, dtype=int)}
 
 
 def _summarize(label: str, fill: str, c: dict[str, np.ndarray]) -> dict[str, Any]:
@@ -549,7 +550,7 @@ def _summarize(label: str, fill: str, c: dict[str, np.ndarray]) -> dict[str, Any
     ev_ret, ct_ret = c['ev_ret'], c['ct_ret']
     n = len(ev_ret)
     if n < 20:
-        return dict(cell=label, fill=fill, n=n, note='too few events')
+        return {'cell': label, 'fill': fill, 'n': n, 'note': 'too few events'}
     excess = ev_ret - ct_ret
     sess = c['date']
     boot = session_bootstrap(excess, sess, seed=VP_SEED)
@@ -557,22 +558,22 @@ def _summarize(label: str, fill: str, c: dict[str, np.ndarray]) -> dict[str, Any
     ev_win, ct_win = c['ev_first'], c['ct_first']
     fboot = session_bootstrap(ev_win - ct_win, sess, seed=VP_SEED + 1)
     side_arr = c['side']
-    return dict(
-        cell=label, fill=fill, n=n, n_sessions=int(boot['n_sessions']),
-        n_short=int((side_arr == -1).sum()), n_long=int((side_arr == 1).sum()),
-        event_bp=float(ev_ret.mean() * 1e4),
-        control_bp=float(ct_ret.mean() * 1e4),
-        excess_bp=float(boot['mean'] * 1e4),
-        excess_ci_bp=[float(boot['lo'] * 1e4), float(boot['hi'] * 1e4)],
-        excess_p=float(boot['p']),
-        hac_t=round(float(hac.t_newey_west), 3),
-        naive_t=round(float(hac.t_naive), 3),
-        poc_first_rate=float(ev_win.mean()),
-        control_poc_first_rate=float(ct_win.mean()),
-        poc_first_excess=float(fboot['mean']),
-        poc_first_p=float(fboot['p']),
-        predicted_sign=1,
-    )
+    return {
+        'cell': label, 'fill': fill, 'n': n, 'n_sessions': int(boot['n_sessions']),
+        'n_short': int((side_arr == -1).sum()), 'n_long': int((side_arr == 1).sum()),
+        'event_bp': float(ev_ret.mean() * 1e4),
+        'control_bp': float(ct_ret.mean() * 1e4),
+        'excess_bp': float(boot['mean'] * 1e4),
+        'excess_ci_bp': [float(boot['lo'] * 1e4), float(boot['hi'] * 1e4)],
+        'excess_p': float(boot['p']),
+        'hac_t': round(float(hac.t_newey_west), 3),
+        'naive_t': round(float(hac.t_naive), 3),
+        'poc_first_rate': float(ev_win.mean()),
+        'control_poc_first_rate': float(ct_win.mean()),
+        'poc_first_excess': float(fboot['mean']),
+        'poc_first_p': float(fboot['p']),
+        'predicted_sign': 1,
+    }
 
 
 def measure_cell(bars: dict[str, np.ndarray], cfg: ProfileCfg, era_start: str,
@@ -624,9 +625,9 @@ def run_grid(bars: dict[str, np.ndarray], era_start: str = ERA_START,
     flags = benjamini_yekutieli(pvals, q=FDR_Q)
     for c, f in zip(cells, flags):
         c['by_survivor'] = bool(f)
-    return dict(era_start=era_start, era_end=era_end, fill=fill,
-                q=FDR_Q, cells=cells,
-                survivors=[c['cell'] for c in cells if c.get('by_survivor')])
+    return {'era_start': era_start, 'era_end': era_end, 'fill': fill,
+                'q': FDR_Q, 'cells': cells,
+                'survivors': [c['cell'] for c in cells if c.get('by_survivor')]}
 
 
 def run_holdout(bars: dict[str, np.ndarray]) -> dict[str, Any]:
@@ -643,8 +644,8 @@ def run_holdout(bars: dict[str, np.ndarray]) -> dict[str, Any]:
         rng = np.random.default_rng(VP_SEED ^ zlib.crc32(cfg.key().encode()))
         holdout_cells.append(
             measure_cell(bars, cfg, HOLDOUT_SPLIT, None, 'touch', rng))
-    return dict(train=train, holdout_split=HOLDOUT_SPLIT,
-                holdout_cells=holdout_cells)
+    return {'train': train, 'holdout_split': HOLDOUT_SPLIT,
+                'holdout_cells': holdout_cells}
 
 
 # ---------------------------------------------------- the universe campaign
@@ -846,12 +847,12 @@ def build_results() -> dict[str, Any]:
     """The committed block: full-era grid + the train/holdout confirmation."""
     bars = _load_nvda()
     if bars is None:
-        return dict(available=False)
+        return {'available': False}
     full = run_grid(bars, ERA_START, None, 'touch')
     full_barrier = run_grid(bars, ERA_START, None, 'barrier')
     holdout = run_holdout(bars)
-    return dict(available=True, ticker=TICKER, seed=VP_SEED,
-                full_touch=full, full_barrier=full_barrier, holdout=holdout)
+    return {'available': True, 'ticker': TICKER, 'seed': VP_SEED,
+                'full_touch': full, 'full_barrier': full_barrier, 'holdout': holdout}
 
 
 def main() -> None:

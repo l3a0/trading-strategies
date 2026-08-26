@@ -21,13 +21,14 @@ is NOT premium option-chain data). The recorded factor ledger stays regenerable 
 exploration's pin is the dataset-gated test + the docs write-up, not the ledger.
 """
 from __future__ import annotations
-from common.paths import data_path
 
 import argparse
 import hashlib
 import os
 
 import pandas as pd
+
+from common.paths import data_path
 
 # The committed universe — HAND-SELECTED ~40 large-caps with 10y+ continuous history (no post-2014
 # IPOs/spinoffs), diversified across sectors. Committed/frozen for reproducibility, but NOT independently

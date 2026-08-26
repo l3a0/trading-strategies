@@ -56,8 +56,9 @@ realistic transaction costs. Phase B (the put side) is the remaining open work.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -1107,13 +1108,13 @@ def run_real_structure_overlay(
             if hedge_mode == 'per_leg_sign':
                 leg = legs[0]
                 lo, hi = (-1.0, 0.0) if leg['right'] == 'put' else (0.0, 1.0)
-                target_hedge = int(round(min(max(leg['delta'], lo), hi) * shares))
+                target_hedge = round(min(max(leg['delta'], lo), hi) * shares)
             else:  # combined: neutralize the net POSITION delta (−Σ sign·delta). For an all-short
                 # structure this equals Σ delta (the old form) bit-for-bit, so the straddle/strangle
                 # pins are unchanged; for a MIXED-sign reversal (short put + long call) it is the only
                 # correct form — Σ delta would read ~0 and leave the +0.5 position delta unhedged.
                 combined = -sum(leg['sign'] * leg['delta'] for leg in legs)
-                target_hedge = int(round(min(max(combined, -1.0), 1.0) * shares))
+                target_hedge = round(min(max(combined, -1.0), 1.0) * shares)
         else:
             target_hedge = 0
         hedge_trade = target_hedge - hedge_shares

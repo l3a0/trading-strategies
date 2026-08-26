@@ -13,13 +13,19 @@ forwards, while every pre-existing pin proves behavior is unchanged.
 from __future__ import annotations
 
 import os
-from common.paths import DATA_DIR
 
 import pytest
 
+from common.paths import DATA_DIR
+from generative.generative_grammar import (
+    Composition,
+    GrammarError,
+    Leg,
+    canonical_key,
+    composition_of,
+    enumerate_compositions,
+)
 from search.backend import Backend, OptionBackend
-from generative.generative_grammar import (Composition, GrammarError, Leg, canonical_key, composition_of,
-                                 enumerate_compositions)
 
 # the honest-core-facing contract a VALID (scored) row must emit (read_gate_wire result keys + ids); a
 # no-trades / mechanism-incoherent row is measurement_invalid with p_value=None and is tested separately.
@@ -94,8 +100,8 @@ class TestOptionBackendOnRealChains:
     agrees with the inline family. This is the no-behavior-change proof on real data."""
 
     def _setup(self):
-        from search.edge_search import _data_lineage_hash, _load_ticker_data
         from generative.generative_engine import score_composition
+        from search.edge_search import _data_lineage_hash, _load_ticker_data
         store, dates, prices = _load_ticker_data('MSFT')
         ob = OptionBackend('MSFT', dates, prices, store)
         c = composition_of('short_vol', {'target_delta': 0.25, 'dte': 30})
@@ -119,12 +125,12 @@ class TestOptionBackendOnRealChains:
         assert ob.mechanism(c) == ob.score(c)['family']     # same _entry_signature -> derive_family
 
     def test_lineage_forwards(self) -> None:
-        ob, c, store, dates, prices, lineage, _ = self._setup()
+        ob, c, _store, _dates, _prices, lineage, _ = self._setup()
         assert ob.lineage(c) == lineage('MSFT', ob.end, ob.capital, ob.checksums)
 
     def test_mechanism_incoherent_branch_trades_but_fails_closed(self) -> None:
-        from search.edge_search import _load_ticker_data
         from generative.generative_engine import score_composition
+        from search.edge_search import _load_ticker_data
         store, dates, prices = _load_ticker_data('MSFT')
         ob = OptionBackend('MSFT', dates, prices, store)
         # a LONG single call is long-vega / single-expiration -> harvests no committed premium ->

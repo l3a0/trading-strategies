@@ -7,15 +7,17 @@ the batch cap, and the numberless-corpus seal on the prompt.
 """
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pytest
 
-from search.edge_search import STRUCTURE_CAMPAIGN, ProposalBatch
 from generative.generative_proposer import (
     _composition_from_proposal,
     build_composition_prompt,
     gate_compositions,
 )
 from proposer.read_gate_wire import GEN_PROPOSAL_FIELDS
+from search.edge_search import STRUCTURE_CAMPAIGN, ProposalBatch
 
 # a search ticker (in STRUCTURE_CAMPAIGN.search) and the sealed ticker, named explicitly so the tests do
 # not depend on which datasets happen to be present locally.
@@ -130,7 +132,7 @@ class TestGateCompositions:
 class TestCompositionPrompt:
     """build_composition_prompt — the NUMBERLESS prompt; the seal is assert_numberless on the corpus input."""
 
-    _SCRUBBED = [{'phase': 'structure', 'template': 'straddle', 'ticker': _SEARCH,
+    _SCRUBBED: ClassVar[list] = [{'phase': 'structure', 'template': 'straddle', 'ticker': _SEARCH,
                   'params': {'dte': 30}, 'predicted_sign': 1, 'verdict': 'KILLED'}]
 
     def test_prompt_contains_grammar_primitives_and_universe(self) -> None:

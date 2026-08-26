@@ -16,19 +16,19 @@ reproduces a human-decided clip exactly before anyone leans on it for a novel ti
 from __future__ import annotations
 
 import os
-from common.paths import DATA_DIR
 from datetime import date, timedelta
 
 import pytest
 
 import pipeline.validate_dailies as vd
+from common.paths import DATA_DIR
 from pipeline.validate_dailies import (
     DayMetrics,
+    _mark_inside,
+    _on_lattice,
+    _parity_spot,
     classify_day,
     propose_boundary,
-    _on_lattice,
-    _mark_inside,
-    _parity_spot,
 )
 
 

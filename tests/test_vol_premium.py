@@ -16,13 +16,12 @@ from __future__ import annotations
 
 import math
 import os
-from common.paths import DATA_DIR
-from typing import Any
+from typing import Any, ClassVar
 
 import pandas as pd
 import pytest
 
-from search.edge_search import STRUCTURE_GRAMMAR
+from common.paths import DATA_DIR
 from realchains.vol_premium import (
     STRUCTURE_SPECS,
     _leg_intrinsic,
@@ -31,7 +30,6 @@ from realchains.vol_premium import (
     bs_vega,
     implied_vol,
     run_real_calendar_overlay,
-    run_real_structure_overlay,
     run_real_call_credit_spread_overlay,
     run_real_credit_spread_overlay,
     run_real_iron_condor_overlay,
@@ -39,6 +37,7 @@ from realchains.vol_premium import (
     run_real_short_vol_overlay,
     run_real_straddle_overlay,
     run_real_strangle_overlay,
+    run_real_structure_overlay,
     select_calendar,
     select_call_credit_spread,
     select_credit_spread,
@@ -48,6 +47,7 @@ from realchains.vol_premium import (
     short_vol_statistics,
     structure_greek_signature,
 )
+from search.edge_search import STRUCTURE_GRAMMAR
 
 _SPY_DAILIES = os.path.join(DATA_DIR, 'spy_option_dailies.csv')
 _HAVE_SPY = os.path.exists(_SPY_DAILIES) or os.path.exists(_SPY_DAILIES + '.gz')
@@ -141,7 +141,7 @@ class TestShortVolMechanics:
         dates = ['2021-03-01', '2021-03-02', '2021-03-03']
         prices = [100.0, 101.0, 99.0]
         store: dict[str, dict[str, Any]] = {}
-        summary, trades, eq = run_real_short_vol_overlay(
+        summary, trades, _eq = run_real_short_vol_overlay(
             dates, prices, store, {'capital': 100_000, 'risk_free_rate': 0.0})
         assert summary['num_calls_sold'] == 0
         assert trades == []
@@ -418,7 +418,11 @@ class TestSpyShortVolRegression:
 
     @pytest.fixture(scope='class')
     def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
-        from realchains.real_cc_backtest import REGISTERED_CLEAN_START, load_chain_store, load_unadjusted_prices
+        from realchains.real_cc_backtest import (
+            REGISTERED_CLEAN_START,
+            load_chain_store,
+            load_unadjusted_prices,
+        )
         store = load_chain_store(_SPY_DAILIES, start=REGISTERED_CLEAN_START['SPY'])  # registration-frozen benchmark
         days = sorted(store)
         dates, prices = load_unadjusted_prices('SPY', days[0], '2026-06-06')
@@ -502,7 +506,11 @@ class TestSpyShortPutRegression:
 
     @pytest.fixture(scope='class')
     def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
-        from realchains.real_cc_backtest import REGISTERED_CLEAN_START, load_chain_store, load_unadjusted_prices
+        from realchains.real_cc_backtest import (
+            REGISTERED_CLEAN_START,
+            load_chain_store,
+            load_unadjusted_prices,
+        )
         store = load_chain_store(_SPY_PUTS, start=REGISTERED_CLEAN_START['SPY'])  # registration-frozen span
         days = sorted(store)
         dates, prices = load_unadjusted_prices('SPY', days[0], '2026-06-06')
@@ -578,7 +586,11 @@ class TestIwmShortPutRegression:
 
     @pytest.fixture(scope='class')
     def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
-        from realchains.real_cc_backtest import REGISTERED_CLEAN_START, load_chain_store, load_unadjusted_prices
+        from realchains.real_cc_backtest import (
+            REGISTERED_CLEAN_START,
+            load_chain_store,
+            load_unadjusted_prices,
+        )
         store = load_chain_store(_IWM_DAILIES, start=REGISTERED_CLEAN_START['IWM'])  # registration-frozen span
         days = sorted(store)
         dates, prices = load_unadjusted_prices('IWM', days[0], '2026-06-06')
@@ -748,7 +760,11 @@ class TestSpyStraddleSecondary:
 
     @pytest.fixture(scope='class')
     def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
-        from realchains.real_cc_backtest import REGISTERED_CLEAN_START, load_chain_store, load_unadjusted_prices
+        from realchains.real_cc_backtest import (
+            REGISTERED_CLEAN_START,
+            load_chain_store,
+            load_unadjusted_prices,
+        )
         store = load_chain_store(_SPY_DAILIES, extra_paths=[_SPY_PUTS], start=REGISTERED_CLEAN_START['SPY'])  # registration-frozen span
         days = sorted(store)
         dates, prices = load_unadjusted_prices('SPY', days[0], '2026-06-06')
@@ -806,7 +822,11 @@ class TestIwmStraddleSecondary:
 
     @pytest.fixture(scope='class')
     def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
-        from realchains.real_cc_backtest import REGISTERED_CLEAN_START, load_chain_store, load_unadjusted_prices
+        from realchains.real_cc_backtest import (
+            REGISTERED_CLEAN_START,
+            load_chain_store,
+            load_unadjusted_prices,
+        )
         store = load_chain_store(_IWM_DAILIES, start=REGISTERED_CLEAN_START['IWM'])  # registration-frozen span
         days = sorted(store)
         dates, prices = load_unadjusted_prices('IWM', days[0], '2026-06-06')
@@ -871,7 +891,11 @@ class TestQqqShortVolRegression:
 
     @pytest.fixture(scope='class')
     def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
-        from realchains.real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
+        from realchains.real_cc_backtest import (
+            CHAIN_CLEAN_START,
+            load_chain_store,
+            load_unadjusted_prices,
+        )
         store = load_chain_store(_QQQ_DAILIES, extra_paths=[_QQQ_BACKFILL], start=CHAIN_CLEAN_START.get('QQQ'))
         days = sorted(store)
         dates, prices = load_unadjusted_prices('QQQ', days[0], '2026-06-06')
@@ -918,7 +942,11 @@ class TestIwmShortVolRegression:
 
     @pytest.fixture(scope='class')
     def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
-        from realchains.real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
+        from realchains.real_cc_backtest import (
+            CHAIN_CLEAN_START,
+            load_chain_store,
+            load_unadjusted_prices,
+        )
         store = load_chain_store(_IWM_DAILIES, start=CHAIN_CLEAN_START['IWM'])
         days = sorted(store)
         dates, prices = load_unadjusted_prices('IWM', days[0], '2026-06-06')
@@ -968,7 +996,11 @@ class TestMsftShortVolRegression:
 
     @pytest.fixture(scope='class')
     def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
-        from realchains.real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
+        from realchains.real_cc_backtest import (
+            CHAIN_CLEAN_START,
+            load_chain_store,
+            load_unadjusted_prices,
+        )
         store = load_chain_store(_MSFT_DAILIES, extra_paths=[_MSFT_BACKFILL], start=CHAIN_CLEAN_START['MSFT'])
         days = sorted(store)
         dates, prices = load_unadjusted_prices('MSFT', days[0], '2026-04-11')
@@ -1285,7 +1317,11 @@ class TestSpyIronCondorExploratory:
 
     @pytest.fixture(scope='class')
     def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
-        from realchains.real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
+        from realchains.real_cc_backtest import (
+            CHAIN_CLEAN_START,
+            load_chain_store,
+            load_unadjusted_prices,
+        )
         store = load_chain_store(_SPY_DAILIES, extra_paths=[_SPY_PUTS], start=CHAIN_CLEAN_START['SPY'])
         days = sorted(store)
         dates, prices = load_unadjusted_prices('SPY', days[0], '2026-06-06')
@@ -1339,7 +1375,11 @@ class TestMsftShortPutExploratory:
 
     @pytest.fixture(scope='class')
     def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
-        from realchains.real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
+        from realchains.real_cc_backtest import (
+            CHAIN_CLEAN_START,
+            load_chain_store,
+            load_unadjusted_prices,
+        )
         store = load_chain_store(_MSFT_PUTS, start=CHAIN_CLEAN_START['MSFT'])
         days = sorted(store)
         dates, prices = load_unadjusted_prices('MSFT', days[0], '2026-04-11')
@@ -1381,7 +1421,11 @@ class TestQqqShortPutExploratory:
 
     @pytest.fixture(scope='class')
     def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
-        from realchains.real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
+        from realchains.real_cc_backtest import (
+            CHAIN_CLEAN_START,
+            load_chain_store,
+            load_unadjusted_prices,
+        )
         store = load_chain_store(_QQQ_PUTS, start=CHAIN_CLEAN_START.get('QQQ'))
         days = sorted(store)
         dates, prices = load_unadjusted_prices('QQQ', days[0], '2026-06-06')
@@ -1428,7 +1472,11 @@ class TestMsftStraddleExploratory:
 
     @pytest.fixture(scope='class')
     def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
-        from realchains.real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
+        from realchains.real_cc_backtest import (
+            CHAIN_CLEAN_START,
+            load_chain_store,
+            load_unadjusted_prices,
+        )
         store = load_chain_store(_MSFT_DAILIES, extra_paths=[_MSFT_BACKFILL, _MSFT_PUTS],
                                  start=CHAIN_CLEAN_START['MSFT'])
         days = sorted(store)
@@ -1470,7 +1518,11 @@ class TestQqqStraddleExploratory:
 
     @pytest.fixture(scope='class')
     def market(self) -> tuple[list[str], list[float], dict[str, Any]]:
-        from realchains.real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
+        from realchains.real_cc_backtest import (
+            CHAIN_CLEAN_START,
+            load_chain_store,
+            load_unadjusted_prices,
+        )
         store = load_chain_store(_QQQ_DAILIES, extra_paths=[_QQQ_BACKFILL, _QQQ_PUTS],
                                  start=CHAIN_CLEAN_START.get('QQQ'))
         days = sorted(store)
@@ -1511,7 +1563,7 @@ class TestGenericStructureEngineSpecs:
         assert set(STRUCTURE_SPECS) == {'short_vol', 'straddle', 'iron_condor', 'strangle',
                                         'risk_reversal', 'credit_spread', 'call_credit_spread',
                                         'calendar'}
-        for name, spec in STRUCTURE_SPECS.items():
+        for spec in STRUCTURE_SPECS.values():
             assert callable(spec['select'])
             assert spec['entry_guard'] in ('each_short_positive', 'net_positive')
             assert spec['hedge_mode'] in ('per_leg_sign', 'combined', 'none')
@@ -1532,7 +1584,11 @@ class TestGenericStructureEngineSpecs:
 
 
 def _equiv_market(ticker: str, path: str, extra_paths=()):
-    from realchains.real_cc_backtest import CHAIN_CLEAN_START, load_chain_store, load_unadjusted_prices
+    from realchains.real_cc_backtest import (
+        CHAIN_CLEAN_START,
+        load_chain_store,
+        load_unadjusted_prices,
+    )
     store = load_chain_store(path, extra_paths=extra_paths, start=CHAIN_CLEAN_START.get(ticker))
     days = sorted(store)
     dates, prices = load_unadjusted_prices(ticker, days[0], '2026-06-06')
@@ -1838,7 +1894,7 @@ class TestExitMechanics:
     is target > stop > time, expiry-day settlement preempts, net-debit
     entries never arm, and the off path is pinned by a golden run."""
 
-    DAYS = ['2020-01-02', '2020-01-03', '2020-01-06', '2020-01-07', '2020-01-08', '2020-01-09']
+    DAYS: ClassVar[list] = ['2020-01-02', '2020-01-03', '2020-01-06', '2020-01-07', '2020-01-08', '2020-01-09']
 
     def test_stop_fires_multi_leg_at_asks(self) -> None:
         """Two short legs (net credit 3.0), stop at 2x: fires the day the
@@ -1858,7 +1914,7 @@ class TestExitMechanics:
         ]
         dates, px, store, select = _two_leg_scenario(legs, marks, self.DAYS,
                                                      entry_date=self.DAYS[0])
-        s, trades, _ = run_real_structure_overlay(
+        _s, trades, _ = run_real_structure_overlay(
             dates, px, store, {'capital': 100_000, 'risk_free_rate': 0.0,
                                'stop_loss_mult': 2.0},
             select=select, entry_guard='each_short_positive', hedge_mode='none')
@@ -1889,7 +1945,7 @@ class TestExitMechanics:
         ]
         dates, px, store, select = _two_leg_scenario(legs, marks, self.DAYS,
                                                      entry_date=self.DAYS[0])
-        s, trades, _ = run_real_structure_overlay(
+        _s, trades, _ = run_real_structure_overlay(
             dates, px, store, {'capital': 100_000, 'risk_free_rate': 0.0,
                                'close_at_pct': 0.75, 'exit_dte': 3},
             select=select, entry_guard='each_short_positive', hedge_mode='none')
@@ -1916,7 +1972,7 @@ class TestExitMechanics:
         ]
         dates, px, store, select = _two_leg_scenario(legs, marks, self.DAYS,
                                                      entry_date=self.DAYS[0])
-        s, trades, _ = run_real_structure_overlay(
+        _s, trades, _ = run_real_structure_overlay(
             dates, px, store, {'capital': 100_000, 'risk_free_rate': 0.0,
                                'stop_loss_mult': 2.0},
             select=select, entry_guard='each_short_positive', hedge_mode='none')
@@ -1935,7 +1991,7 @@ class TestExitMechanics:
         flat = {'C': (1.0, 1.1, 1.05, 0.3)}
         marks = [flat, flat, flat, flat, flat, flat]
         dates, px, store, select = _two_leg_scenario(legs, marks, self.DAYS)
-        s, trades, _ = run_real_structure_overlay(
+        _s, trades, _ = run_real_structure_overlay(
             dates, px, store, {'capital': 100_000, 'risk_free_rate': 0.0,
                                'exit_dte': 2},
             select=select, entry_guard='each_short_positive', hedge_mode='none')
@@ -1962,7 +2018,7 @@ class TestExitMechanics:
                  blowup, blowup, blowup, blowup, blowup]
         dates, px, store, select = _two_leg_scenario(legs, marks, self.DAYS,
                                                      entry_date=self.DAYS[0])
-        s, trades, _ = run_real_structure_overlay(
+        _s, trades, _ = run_real_structure_overlay(
             dates, px, store, {'capital': 100_000, 'risk_free_rate': 0.0,
                                'stop_loss_mult': 2.0},
             select=select, entry_guard='each_short_positive', hedge_mode='none')
@@ -2001,7 +2057,7 @@ class TestExitMechanics:
         marks = [flat] * 6
         dates, px, store, select = _two_leg_scenario(legs, marks, self.DAYS,
                                                      entry_date=self.DAYS[0])
-        s, trades, eq = run_real_structure_overlay(
+        s, trades, _eq = run_real_structure_overlay(
             dates, px, store, {'capital': 100_000, 'risk_free_rate': 0.0},
             select=select, entry_guard='each_short_positive', hedge_mode='none')
         assert [t['action'] for t in trades] == ['enter', 'settle']
@@ -2049,7 +2105,7 @@ class TestSpyExitVariantExploration:
         pairs = [(d, p) for d, p in zip(dates, prices) if days[0] <= d <= days[-1]]
         return [d for d, _ in pairs], [p for _, p in pairs], store
 
-    _cache: dict[tuple[tuple[str, Any], ...], tuple[dict[str, Any], float, dict[str, int]]] = {}
+    _cache: ClassVar[dict[tuple[tuple[str, Any], ...], tuple[dict[str, Any], float, dict[str, int]]]] = {}
 
     def _measure(self, market, extra: dict[str, Any]) -> tuple[dict[str, Any], float, dict[str, int]]:
         # Memoized: the sign-flip test revisits all six variants plus the
@@ -2172,7 +2228,7 @@ class TestCallSpreadExitSizingExploration:
     mark noise (-1.039R at the 50% target). Promotion of ANY of this runs through a
     registration, never from this entry (docs/explorations.md)."""
 
-    VARIANTS = {
+    VARIANTS: ClassVar[dict] = {
         'hold': {},
         'target50': {'close_at_pct': 0.50},
         'target75': {'close_at_pct': 0.75},

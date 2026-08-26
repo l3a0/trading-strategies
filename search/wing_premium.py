@@ -43,11 +43,13 @@ Usage:
 from __future__ import annotations
 
 import csv
+import itertools
 import json
 import math
 import random
 import sys
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from common.paths import data_path
 from realchains.real_cc_backtest import (
@@ -326,7 +328,7 @@ def sample_cycles(signal: dict[str, dict[str, Any]],
         window = trading_dates[ti:j + 1]
         rets = []
         ok = True
-        for a, b in zip(window, window[1:]):
+        for a, b in itertools.pairwise(window):
             ca, cb = closes.get(a), closes.get(b)
             if ca is None or cb is None or ca <= 0 or cb <= 0:
                 ok = False
@@ -603,7 +605,7 @@ def main() -> None:
         print(f"{t:<7}{r['cycles']:>7}{r['coverage']:>7.2f}{r['rho']:>8.3f}"
               f"{r['placebo_p']:>8.3f}{r.get('mean_premium', 0):>8.3f}"
               f"{r.get('premium_sd', 0):>7.3f}{r.get('atm_cross_check', 0):>7.3f}"
-              f"{str(r.get('demoted', '')):>8}")
+              f"{r.get('demoted', '')!s:>8}")
         for q, row in r.get('quintiles', {}).items():
             print(f'   {q}: {row}')
     for t, rob in res['robustness'].items():

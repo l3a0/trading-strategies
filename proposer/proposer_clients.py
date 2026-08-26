@@ -15,7 +15,8 @@ its corpus input), coordinate-only output, every-look-recorded downstream — re
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from proposer.read_gate_wire import ProposalBatch, _parse_proposal_array
 
@@ -60,7 +61,7 @@ class ClaudeProposer:
     def _make_client(self) -> Any:
         if self._client is not None:
             return self._client
-        import anthropic   # optional dependency — only needed when an LLM round actually runs
+        import anthropic  # optional dependency — only needed when an LLM round actually runs
         return anthropic.Anthropic()   # resolves ANTHROPIC_API_KEY / profile from the environment
 
     def __call__(self, menu: Any, corpus: list[dict[str, Any]],
@@ -155,7 +156,7 @@ class ClaudeCodeProposer:
         import tempfile
         cmd, env = self._build_invocation(prompt)
         with tempfile.TemporaryDirectory() as neutral_cwd:   # no repo CLAUDE.md in scope
-            out = subprocess.run(cmd, env=env, cwd=neutral_cwd,
+            out = subprocess.run(cmd, env=env, cwd=neutral_cwd, check=False,
                                  capture_output=True, text=True, timeout=self.timeout)
         try:
             payload = _json.loads(out.stdout) if (out.stdout or '').strip() else {}

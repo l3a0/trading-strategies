@@ -16,18 +16,21 @@ sample, no idea-ledger rows; a LIVE read licenses a registration only.
 
 from __future__ import annotations
 
+import itertools
 import math
 import os
+from typing import ClassVar
 
 import pytest
 
+import search.wing_premium as wp
 from common.paths import data_path
 from realchains.vol_premium import bs_price
-import search.wing_premium as wp
 from search.wing_premium import (
     PCTL_MIN,
     WING_PLACEBO_SEED,
     WING_RF,
+    _leg_iv,
     breach_prob_n_d2,
     pit_percentile,
     placebo_p,
@@ -37,7 +40,6 @@ from search.wing_premium import (
     sample_cycles,
     select_legs,
     spearman,
-    _leg_iv,
 )
 
 _SPY = data_path('spy_option_dailies.csv')
@@ -166,7 +168,7 @@ class TestPointInTimePercentile:
 
 
 class TestCycleSampler:
-    DATES = [f'2020-01-{d:02d}' for d in range(1, 32)]   # calendar-like labels
+    DATES: ClassVar[list] = [f'2020-01-{d:02d}' for d in range(1, 32)]   # calendar-like labels
 
     def _signal(self, entry_dates: list[str], exp: str | None = None,
                 strike: float = 110.0) -> dict[str, dict]:
@@ -191,7 +193,7 @@ class TestCycleSampler:
         cycles, skips, tail = sample_cycles(signal, pcts, self.DATES,
                                             closes, {})
         assert len(cycles) >= 2 and skips == 0 and tail == 0
-        for a, b in zip(cycles, cycles[1:]):
+        for a, b in itertools.pairwise(cycles):
             assert b['entry'] > a['settle']          # strict non-overlap
         assert cycles[0]['settle'] == self.DATES[9]  # last day <= expiration
 

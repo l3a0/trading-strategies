@@ -34,7 +34,8 @@ from __future__ import annotations
 import math
 import random
 from collections import Counter
-from typing import Any, Callable, NamedTuple, Optional
+from collections.abc import Callable
+from typing import Any, NamedTuple
 
 import numpy as np
 import pandas as pd
@@ -149,8 +150,8 @@ def run_cell(
     cell: Cell,
     *,
     hedged: bool = True,
-    select: Optional[Callable[[dict[str, Any], dict[str, Any]], Any]] = None,
-    extra_params: Optional[dict[str, Any]] = None,
+    select: Callable[[dict[str, Any], dict[str, Any]], Any] | None = None,
+    extra_params: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], pd.DataFrame]:
     """One credit-spread overlay run — run_structure_via_spec's three lines
     with the hedge mode chosen here (the engine's existing 'combined'/'none').
@@ -200,7 +201,7 @@ def sharpe_unrounded(excess: np.ndarray) -> float:
 
 def _find_put_quote(
     store: dict[str, dict[str, Any]], date: str, leg: dict[str, Any]
-) -> Optional[tuple]:
+) -> tuple | None:
     """The leg's candidate tuple on `date`, matched by (expiration, strike,
     negative delta) — 'enter' legs_detail carries no contract ID."""
     day = store.get(date)
@@ -321,8 +322,8 @@ def _oos_record(
     *,
     hedged: bool,
     run_cell_fn: RunCellFn,
-    select: Optional[Callable[..., Any]] = None,
-    extra_params: Optional[dict[str, Any]] = None,
+    select: Callable[..., Any] | None = None,
+    extra_params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run one cell on one test window and package the section-5.5 pieces."""
     t_dates = list(test_df['d'])
@@ -372,12 +373,12 @@ def walk_forward_structure(
     prices: list[float],
     store: dict[str, dict[str, Any]],
     *,
-    cells: Optional[list[Cell]] = None,
+    cells: list[Cell] | None = None,
     train_years: int = TRAIN_YEARS,
     test_months: int = TEST_MONTHS,
     roll_months: int = ROLL_MONTHS,
     min_trades: int = MIN_TRADES,
-    forced_cell: Optional[Cell] = None,
+    forced_cell: Cell | None = None,
     run_cell_fn: RunCellFn = run_cell,
 ) -> list[dict[str, Any]]:
     """The registered pipeline: per-window in-sample selection over `cells`
@@ -401,7 +402,7 @@ def walk_forward_structure(
             'test_end': test_df['d'].iloc[-1],
         }
         if forced_cell is not None:
-            winner: Optional[Cell] = forced_cell
+            winner: Cell | None = forced_cell
             rec.update({'train_sharpe': None, 'n_trades': None,
                         'min_grid_trades': None, 'n_below_30': None})
         else:
@@ -461,8 +462,8 @@ def replay_records(
     store: dict[str, dict[str, Any]],
     *,
     hedged: bool,
-    select_factory: Optional[Callable[[Cell], Callable[..., Any]]] = None,
-    extra_params: Optional[dict[str, Any]] = None,
+    select_factory: Callable[[Cell], Callable[..., Any]] | None = None,
+    extra_params: dict[str, Any] | None = None,
     train_years: int = TRAIN_YEARS,
     test_months: int = TEST_MONTHS,
     roll_months: int = ROLL_MONTHS,

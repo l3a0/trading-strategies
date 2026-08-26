@@ -13,11 +13,11 @@ import os
 import numpy as np
 import pandas as pd
 import pytest
+from test_factor_backend import _panel
 
 from factor.factor_backend import FactorBackend
 from factor.factor_engine import GrammarFactorBackend
 from factor.factor_search import run_factor_search
-from test_factor_backend import _panel
 
 
 def _noise_panel(seed: int = 99, T: int = 200, N: int = 30) -> pd.DataFrame:

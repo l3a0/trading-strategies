@@ -12,13 +12,13 @@ import hashlib
 import json
 
 import pytest
+from test_factor_backend import _panel
+from test_factor_search import _noise_panel
 
 import factor.factor_proposer as fp
 from factor.factor_engine import GrammarFactorBackend
 from factor.factor_grammar import enumerate_exprs
 from proposer.read_gate_wire import FACTOR_PROPOSAL_FIELDS, ProposalBatch
-from test_factor_backend import _panel
-from test_factor_search import _noise_panel
 
 EXPRS = enumerate_exprs()
 
@@ -100,7 +100,7 @@ class TestGate:
              'universe': 'SYNTH', 'predicted_sign': 1, 'reasoning': 'off-grammar window'},
             {'expr': other, 'universe': 'SYNTH', 'predicted_sign': -1, 'reasoning': 'bad sign'},
         ]
-        cands, needs, rejected, batch = fp.llm_propose_factor_candidates(
+        cands, _needs, rejected, _batch = fp.llm_propose_factor_candidates(
             _stub(proposals), fb,
             search=frozenset({'SYNTH'}), sealed=frozenset({'HOLDOUT'}), corpus=[], tried_keys=set())
         assert len(cands) == 1                                     # only the first is grammar+sign+universe valid
@@ -139,7 +139,7 @@ class TestGate:
         fb = _backend()
         def bad_batch(menu, corpus, onboarded) -> ProposalBatch:
             return ProposalBatch(None, model_requested='m', model_served='s', temperature=0.0, prompt_sha='h')
-        cands, _, rejected, _ = fp.llm_propose_factor_candidates(
+        cands, _, _rejected, _ = fp.llm_propose_factor_candidates(
             bad_batch, fb, search=frozenset({'SYNTH'}), sealed=frozenset(), corpus=[])
         assert cands == []                                        # non-iterable proposals -> no crash, none
         cands2, _, rej2, _ = fp.llm_propose_factor_candidates(
@@ -321,7 +321,7 @@ class TestFactorClients:
     def test_client_plugs_into_the_gate(self) -> None:
         # the client is a FactorProposer — it drives llm_propose_factor_candidates end to end
         fb = GrammarFactorBackend('SYNTH', _panel(T=200), checksum='cafe')
-        reply = '[{"expr": %s, "universe":"SYNTH", "predicted_sign":1}]' % json.dumps(fp.expr_to_dict(EXPRS[0]))
+        reply = f'[{{"expr": {json.dumps(fp.expr_to_dict(EXPRS[0]))}, "universe":"SYNTH", "predicted_sign":1}}]'
         author = fp.FactorClaudeProposer(client=self._api_client(reply))
         cands, _, _, batch = fp.llm_propose_factor_candidates(
             author, fb, search=frozenset({'SYNTH'}), sealed=frozenset(), corpus=[])

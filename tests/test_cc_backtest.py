@@ -6,13 +6,13 @@ from __future__ import annotations
 import csv
 import math
 import os
-from common.paths import DATA_DIR
 from typing import Any
 
 import numpy as np
 import pandas as pd
 import pytest
 
+from common.paths import DATA_DIR
 from engine.cc_backtest import (
     _param_combinations,
     bs_delta,
@@ -30,7 +30,6 @@ from engine.cc_backtest import (
     sensitivity_analysis,
     walk_forward_optimization,
 )
-
 
 # ====================
 # normal_pdf

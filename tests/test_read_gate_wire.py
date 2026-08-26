@@ -39,13 +39,13 @@ class TestRecursionShapes:
 
     def test_clean_object_passes(self):
         # the canonical scrubbed corpus shape — coordinates + a one-bit verdict, no raise
-        assert_numberless({'wire_version': 1, 'recorded': 2, 'needs_onboard': [],
-                           'rejected': [{'proposal': {'overlay': 'short_vol', 'ticker': 'AAA',
-                                                      'params': {'dte': 30}, 'predicted_sign': 1},
-                                         'reason': 'off-grammar'}],
-                           'corpus': [{'template': 'short_call_25', 'ticker': 'AAA',
-                                       'params': {'dte': 30}, 'predicted_sign': 1,
-                                       'verdict': 'KILLED'}]}) is None
+        assert assert_numberless({'wire_version': 1, 'recorded': 2, 'needs_onboard': [],
+                                  'rejected': [{'proposal': {'overlay': 'short_vol', 'ticker': 'AAA',
+                                                             'params': {'dte': 30}, 'predicted_sign': 1},
+                                                'reason': 'off-grammar'}],
+                                  'corpus': [{'template': 'short_call_25', 'ticker': 'AAA',
+                                              'params': {'dte': 30}, 'predicted_sign': 1,
+                                              'verdict': 'KILLED'}]}) is None
 
     def test_top_level_dict_key(self):
         with pytest.raises(ValueError, match='numberless'):
@@ -93,7 +93,7 @@ class TestRecursionShapes:
     def test_deeply_nested_six_layers(self):
         deep = {_BANNED: 9.9}
         for i in range(6):
-            deep = {'k{}'.format(i): [deep]} if i % 2 else {'k{}'.format(i): deep}
+            deep = {f'k{i}': [deep]} if i % 2 else {f'k{i}': deep}
         with pytest.raises(ValueError, match='numberless'):
             assert_numberless(deep)
 
@@ -298,7 +298,7 @@ class TestBannedSetCompleteness:
         missing = produced - BANNED_RESULT_FIELDS
         assert not missing, (
             'result fields produced by the engine but NOT in BANNED_RESULT_FIELDS '
-            '(a silent leak channel): {}'.format(sorted(missing)))
+            f'(a silent leak channel): {sorted(missing)}')
 
     def test_completeness_against_a_live_kill_gate_row(self):
         # build a real structure_kill_gate row via the synthetic scorer path and confirm
@@ -318,7 +318,7 @@ class TestBannedSetCompleteness:
         for r in rows + ledger_rows:
             produced |= (set(r) - coords)
         missing = produced - BANNED_RESULT_FIELDS
-        assert not missing, 'live row carries unbanned result keys: {}'.format(sorted(missing))
+        assert not missing, f'live row carries unbanned result keys: {sorted(missing)}'
         # and the raw rows really do trip the guard (sanity that they ARE result-bearing)
         with pytest.raises(ValueError, match='numberless'):
             assert_numberless(rows)
@@ -472,6 +472,5 @@ if __name__ == '__main__':
             assert_numberless(shape(field))
         except ValueError:
             continue
-        raise SystemExit('SLIPPED THROUGH: {} in {}'.format(field, shape(field)))
-    print('all {} banned fields caught at all {} shapes'.format(
-        len(BANNED_RESULT_FIELDS), len(shapes)))
+        raise SystemExit(f'SLIPPED THROUGH: {field} in {shape(field)}')
+    print(f'all {len(BANNED_RESULT_FIELDS)} banned fields caught at all {len(shapes)} shapes')

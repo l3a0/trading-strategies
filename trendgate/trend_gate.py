@@ -24,18 +24,19 @@ run consumes identical inputs.
 """
 
 from __future__ import annotations
-from common.paths import data_path
-from common.stats import newey_west_summary
 
 import json
 import math
 import os
 import subprocess
 import sys
-from typing import Any, Iterator, Sequence
+from collections.abc import Iterator, Sequence
+from typing import Any
 
 import numpy as np
 
+from common.paths import data_path
+from common.stats import newey_west_summary
 from engine.cc_backtest import calc_rolling_volatility, classify_regime
 from realchains.real_cc_backtest import (
     REGISTERED_CLEAN_START,
@@ -593,7 +594,7 @@ def sequence_record(markets: dict[str, dict[str, Any]],
     for t, m in markets.items():
         try:
             arm = run_arm(m, susp_dates & set(m['span_dates']))
-        except Exception:
+        except Exception:  # noqa: BLE001 — a failing arm returns None; the caller handles it
             return None
         if arm['short_call_days'] == 0:
             return None
@@ -741,7 +742,7 @@ def _require_clean_tree(allow_dirty: bool) -> None:
     runs refuse a dirty tree by default."""
     if allow_dirty:
         return
-    proc = subprocess.run(['git', 'status', '--porcelain'],
+    proc = subprocess.run(['git', 'status', '--porcelain'], check=False,
                           capture_output=True, text=True)
     if proc.returncode != 0:
         sys.exit('git status failed — run from the repo root (the §10 '
@@ -796,7 +797,7 @@ def stage1_baseline(markets: dict[str, dict[str, Any]]) -> dict[str, Any]:
     sigma_cycles = [c['pnl'] for c in cycles]
     sd = float(np.std(sigma_cycles, ddof=1))
     n_baseline = len(sigma_cycles)
-    n_exp = max(int(round(n_expected_record)), 1)
+    n_exp = max(round(n_expected_record), 1)
     return {
         'cycles': cycles, 'obs': obs,
         'D_A': real_a, 'D_B': real_b,
@@ -1094,11 +1095,11 @@ def cmd_stage2(markets: dict[str, dict[str, Any]]) -> None:
         'short_call_days_on_bull_fraction': scd_on_bull,
         'loyo': loyo,
         # §6.4: per ticker AND pooled (the pooled value is the dollar sum).
-        'stress_windows': {f'{lo}->{hi}': (lambda per: {
-            **per, 'pooled': float(sum(per.values()))})({
-                t: stress_window_deltas(arms['record'][t]['daily_equity'],
-                                        arms['baseline'][t]['daily_equity'],
-                                        (lo, hi)) for t in markets})
+        'stress_windows': {f'{lo}->{hi}': {
+            **(per := {t: stress_window_deltas(arms['record'][t]['daily_equity'],
+                                               arms['baseline'][t]['daily_equity'],
+                                               (lo, hi)) for t in markets}),
+            'pooled': float(sum(per.values()))}
             for lo, hi in STRESS_WINDOWS},
         'common_base_nw': {t: common_base_nw_t(
             arms['record'][t]['daily_equity'],

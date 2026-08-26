@@ -30,7 +30,6 @@ per day, written incrementally; resumable — re-running skips days already pres
 """
 
 from __future__ import annotations
-from common.paths import data_path
 
 import argparse
 import csv
@@ -39,6 +38,7 @@ import sys
 import time
 from datetime import datetime
 
+from common.paths import data_path
 from pipeline.download_option_chains import fetch_chain
 
 OUT_FIELDS = [

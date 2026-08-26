@@ -64,13 +64,13 @@ Two layers:
 from __future__ import annotations
 
 import os
-from common.paths import DATA_DIR
 from collections import Counter
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
+from common.paths import DATA_DIR
 from engine.cc_backtest import compute_statistics, run_cc_overlay
 from realchains.real_cc_backtest import (
     CHAIN_CLEAN_START,
@@ -81,7 +81,12 @@ from realchains.real_cc_backtest import (
     select_cap_leg,
     select_entry,
 )
-from realchains.walk_forward_real import FIXED_PARAMS, PARAM_GRID, _chain, walk_forward_real
+from realchains.walk_forward_real import (
+    FIXED_PARAMS,
+    PARAM_GRID,
+    _chain,
+    walk_forward_real,
+)
 
 _DAILIES = os.path.join(DATA_DIR, 'qqq_option_dailies.csv')
 _UNADJ = os.path.join(DATA_DIR, 'qqq_10yr_prices_unadjusted.csv')
@@ -275,8 +280,8 @@ class TestDeltaHedgeMechanics:
     exactly like the mark.
     """
 
-    DATES = ['2024-01-02', '2024-01-03', '2024-01-04']
-    PRICES = [100.0, 102.0, 101.0]
+    DATES: ClassVar[list] = ['2024-01-02', '2024-01-03', '2024-01-04']
+    PRICES: ClassVar[list] = [100.0, 102.0, 101.0]
 
     @staticmethod
     def _store(day2_quote: bool = True) -> dict[str, dict[str, Any]]:
@@ -368,7 +373,7 @@ class TestCallSpreadMechanics:
         day = self._store()['2024-01-02']
         cap = select_cap_leg(day, '2024-02-02', 110.0, 0.10)
         assert cap is not None
-        delta, bid, ask, mid, strike, cid = cap
+        _delta, _bid, _ask, _mid, strike, cid = cap
         assert (strike, cid) == (115.0, 'K')
         # no higher strike available -> None (degrade to naked)
         assert select_cap_leg(day, '2024-02-02', 115.0, 0.10) is None

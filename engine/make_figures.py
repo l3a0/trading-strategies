@@ -41,8 +41,6 @@ Run: python make_figures.py
 # pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownLambdaType=false
 
 from __future__ import annotations
-from common.paths import data_path
-from common.stats import newey_west_lag
 
 import csv
 import math
@@ -58,6 +56,8 @@ from matplotlib.figure import Figure
 from matplotlib.ticker import FuncFormatter
 from numpy.typing import NDArray
 
+from common.paths import data_path
+from common.stats import newey_west_lag
 from engine.cc_backtest import (
     bs_delta,
     calc_rolling_volatility,
@@ -70,7 +70,6 @@ from engine.cc_backtest import (
     run_cc_overlay,
     walk_forward_optimization,
 )
-
 
 OUT = "docs/figures"
 FIGSIZE = (16, 9)
@@ -222,12 +221,12 @@ def fig2_excess_histogram(
         horizontalalignment="right",
         fontsize=11,
         family="monospace",
-        bbox=dict(
-            boxstyle="round,pad=0.6",
-            facecolor="white",
-            edgecolor=LIGHTGRAY,
-            alpha=0.95,
-        ),
+        bbox={
+            "boxstyle": "round,pad=0.6",
+            "facecolor": "white",
+            "edgecolor": LIGHTGRAY,
+            "alpha": 0.95,
+        },
     )
 
     ax.set_xlabel("Daily excess return (basis points)", fontsize=12)
@@ -383,7 +382,7 @@ def fig4_t_stat_vs_years(sharpe: float) -> Figure:
         fontsize=11,
         color=BLUE,
         fontweight="bold",
-        arrowprops=dict(arrowstyle="->", color=BLUE, alpha=0.7),
+        arrowprops={"arrowstyle": "->", "color": BLUE, "alpha": 0.7},
     )
 
     ax.set_xlabel("Years of data", fontsize=12)
@@ -439,8 +438,8 @@ def fig5_implied_vs_realized_vol(
         ax.text(
             x[int(len(x) * 0.015)], y, label, fontsize=10, va="center",
             color="#555555", style="italic", zorder=12,
-            bbox=dict(boxstyle="round,pad=0.3", facecolor="white",
-                      edgecolor="none", alpha=0.85),
+            bbox={"boxstyle": "round,pad=0.3", "facecolor": "white",
+                      "edgecolor": "none", "alpha": 0.85},
         )
 
     ax.plot(x, rv, color=GRAY, linewidth=1.6, label="Realized vol (trailing 30-day)")
@@ -506,7 +505,7 @@ def fig6_delta_dial(prices: NDArray[np.float64]) -> Figure:
         fontsize=11,
         color=RED,
         fontweight="bold",
-        arrowprops=dict(arrowstyle="->", color=RED, alpha=0.7),
+        arrowprops={"arrowstyle": "->", "color": RED, "alpha": 0.7},
     )
 
     ax.set_xlabel("How far out-of-the-money the strike is set (%)", fontsize=12)
@@ -697,7 +696,7 @@ def fig9_monte_carlo(mc: dict[str, Any]) -> Figure:
         xytext=(real - (real - float(mc['mc_mean'])) * 1.1,
                 ax.get_ylim()[1] * 0.78),
         fontsize=11, color=RED, fontweight="bold",
-        arrowprops=dict(arrowstyle="->", color=RED, alpha=0.7),
+        arrowprops={"arrowstyle": "->", "color": RED, "alpha": 0.7},
     )
 
     ax.set_xlabel("Total return of the overlay (%)", fontsize=12)
