@@ -30,11 +30,11 @@ a through-origin hedge of 1.6766. Both come from the GLD-GDX intersection: the
 full 2006-05-23 .. 2007-11-30 window (Ch.7: t=-3.357, ~95%) and the
 first-252-day training set on p.63 (Ch.3: t=-3.18, ~90%). This module matches
 the t-stat and half-life closely (t=-3.45 full / -3.09 train) and lands the
-origin hedge at ~1.638. The exact 1.6766 is a lost data vintage -- Yahoo
+origin hedge at ~1.6379. The exact 1.6766 is a lost data vintage -- Yahoo
 re-scales adjusted close by every later dividend, so no modern download hits it;
-independent reproductions converge on ~1.638 too. Raw close is the closest
+independent reproductions converge on ~1.6379 too. Raw close is the closest
 modern proxy to Chan's 2007-era adjusted series (GDX had barely any dividends
-stripped then), so ``--book`` uses raw.
+stripped then), so ``--ch7`` and ``--ch3`` use raw.
 
 If ``statsmodels`` is installed, the report prints an independent second
 opinion (its ``coint`` and ``adfuller``) next to the hand-rolled numbers.
@@ -205,9 +205,11 @@ def load_close(ticker: str, *, unadjusted: bool = False) -> pd.Series:
     date, so either header shape loads.
 
     The basis matters for cross-ticker levels: GLD pays no dividend, so its
-    adjusted close already equals its raw close, but GDX's dividends make its
-    adjusted history ~20% below raw. Chan's book used 2008-era (raw) prices,
-    so faithful reproduction of the 1.6766 hedge ratio needs ``unadjusted``.
+    adjusted close already equals its raw close, but GDX's dividends put today's
+    adjusted history ~15% below raw. Chan's 2007-vintage adjusted close was near
+    raw (few GDX dividends by then), so raw is the closest modern proxy for
+    reproducing the book -- which is why ``--ch7``/``--ch3`` and ``--unadjusted``
+    use it.
     """
     suffix = "_20yr_prices_unadjusted.csv" if unadjusted else "_20yr_prices.csv"
     path = data_path(f"{ticker.lower()}{suffix}")
@@ -401,9 +403,9 @@ def selftest() -> None:
 # Chan used the ADJUSTED close, but the exact 1.6766 is a lost data vintage:
 # Yahoo re-scales adjusted close by every later dividend, so his 2007-era
 # series differs from any modern download. Independent reproductions (aushaff,
-# our own) converge on hedge ~1.638. Raw close is the closest modern proxy to
+# our own) converge on hedge ~1.6379. Raw close is the closest modern proxy to
 # his 2007-vintage adjusted (GDX had barely any dividends stripped back then),
-# so --book uses raw + origin over the full window.
+# so --ch7 uses raw + origin over the full window.
 BOOK_START = "2006-05-23"
 BOOK_END = "2007-11-30"
 BOOK_TRAIN_END = "2007-05-23"  # first ~252 trading days -> Ch.3 / p.63 run
