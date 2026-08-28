@@ -114,6 +114,7 @@ If you use an analogy (e.g., "USB for AI"), plant it once early and call it back
 ### 8. Technical accuracy matters
 
 - Double-check numbers, dates, and claims. If you're unsure, flag it.
+- **Present a number at one consistent precision, and write the same quantity the same way throughout.** Pick the significant figures the data supports and hold to them. If a reproduction lands 1.638 (four significant figures), report the book's 1.6766 as 1.677 beside it — matching five digits against four implies a precision you don't have. Write the same number identically everywhere it appears: 1.677 in the ledger, the table, and the prose, never 1.6766 in one spot and 1.68 in another. Round from the true value, not from an already-rounded printout — a displayed 1.3905 could round to 1.390 or 1.391, and only the underlying 1.390487 settles it as 1.390. Different quantities may carry different precision (a hedge ratio at three decimals, a t-statistic at two), as long as each is internally consistent. (Owner directive, 2026-08-27.)
 - When simplifying a technical concept, don't make it wrong. A good analogy clarifies without distorting.
 - Distinguish between what is established fact, what is widely believed, and what is your interpretation.
 
@@ -201,6 +202,7 @@ When asked to edit or improve an existing draft:
 - [ ] Would a non-specialist reader follow the logic without re-reading?
 - [ ] Is every section earning its place? (If I cut it, would the post suffer?)
 - [ ] Are claims supported by specific examples, data, or cited sources?
+- [ ] Is every number at the precision the data supports (no false extra digit), is the same quantity written the same way everywhere it appears, and were rounds taken from the true value rather than an already-rounded printout?
 - [ ] Where the post makes a design, strategy, or modeling choice, is the tradeoff named outright ("the price for X is Y") rather than implied?
 - [ ] Does the ending land — does it leave the reader with something to think about?
 - [ ] Is the post between 1,200–2,500 words?
