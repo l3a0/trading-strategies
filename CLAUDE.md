@@ -366,3 +366,11 @@ If you find yourself thinking "they already approved committing earlier in this 
 **Branch *before the first edit*, not just before the commit.** The moment a task will modify any tracked file — code, prose, config, even a one-line typo fix — run `git branch --show-current` and, if it shows `main`, create the `fix/…` or `feat/…` branch *before* touching the file. Don't edit on `main`'s working tree and defer branching until commit time: uncommitted work stranded on `main` mingles with anything else that lands there, is easy to lose track of across turns, and primes an accidental direct-to-`main` commit. Branching first costs nothing — `git checkout -b` carries any uncommitted changes onto the new branch — so there's no reason to wait.
 
 **Re-check `git branch --show-current` before *every* commit — not just the first of a session.** A mid-session squash-merge deletes the branch you were working on and leaves the local checkout on `main`, so "I was on a branch at the last commit" is not a safe assumption — the ground can move under you between turns. If the check shows `main`, branch first. (The orphaned local branch left behind by a merge is cleaned up separately, via `git sync-prune` / `git branch -D` — that's housekeeping, not part of the commit flow.)
+
+### Pull requests
+
+PR titles use a Conventional Commits prefix. The form is `type(scope): summary`. Types in use: `docs`, `feat`, `fix`, `chore`, `ci`, `perf`. Add a scope in parens when it sharpens the title, like `docs(CLAUDE.md)` or `feat(search)`. Drop it when none does, like a plain `docs:` for a whole-doc change.
+
+PR bodies use Markdown section headings, not a wall of prose. Lead with `## Why`, then `## What`. Add situational sections after as the change needs them, like `## Scope`, `## Notes`, or `## Evidence`. The body's prose obeys the global short-sentence rule (Writing Principle 6). So short complete sentences and no em dashes. The blog voice permits em dashes sparingly in posts, but a PR body is not a post. End every body with the footer line: `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
+
+This matches the sibling `marketlake` repo.
