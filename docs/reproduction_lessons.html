@@ -1,0 +1,475 @@
+<title>The Number That Wouldn't Reproduce</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;0,6..72,700;1,6..72,400;1,6..72,500&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+  :root {
+    /* Light — warm, gold-inflected but restrained */
+    --ground: #F7F5EF;
+    --surface: #FEFDFA;
+    --surface-2: #F1EEE4;
+    --ink: #23201A;
+    --muted: #6B6353;
+    --faint: #97907F;
+    --rule: #E3DECF;
+    --rule-strong: #CFC8B4;
+    --accent: #946B1C;      /* muted brass — the one accent */
+    --accent-soft: #F0E7D0;
+    --good: #4A7C59;        /* reproduced */
+    --good-soft: #E4EEE3;
+    --lost: #A24C3C;        /* lost to data vintage */
+    --lost-soft: #F3E2DC;
+    --shadow: 0 1px 2px rgba(35,32,26,.05), 0 8px 28px -14px rgba(35,32,26,.18);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #16130D;
+      --surface: #1D1912;
+      --surface-2: #221D14;
+      --ink: #ECE6D7;
+      --muted: #A39A85;
+      --faint: #7C745F;
+      --rule: #2C271C;
+      --rule-strong: #3A3324;
+      --accent: #D8AC57;
+      --accent-soft: #2A2214;
+      --good: #7FB88C;
+      --good-soft: #1E2A1F;
+      --lost: #D48B7C;
+      --lost-soft: #2C1D18;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px -14px rgba(0,0,0,.6);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #16130D;
+    --surface: #1D1912;
+    --surface-2: #221D14;
+    --ink: #ECE6D7;
+    --muted: #A39A85;
+    --faint: #7C745F;
+    --rule: #2C271C;
+    --rule-strong: #3A3324;
+    --accent: #D8AC57;
+    --accent-soft: #2A2214;
+    --good: #7FB88C;
+    --good-soft: #1E2A1F;
+    --lost: #D48B7C;
+    --lost-soft: #2C1D18;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px -14px rgba(0,0,0,.6);
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "Newsreader", Georgia, "Times New Roman", serif;
+    font-size: clamp(1.06rem, 1rem + 0.35vw, 1.2rem);
+    line-height: 1.62;
+    font-optical-sizing: auto;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  .wrap { max-width: 41rem; margin: 0 auto; padding: 0 1.5rem; }
+  main { padding-bottom: 5rem; }
+
+  /* ---- Eyebrow / mono labels ---- */
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .72rem;
+    font-weight: 500;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  mark, .num, .stat { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+
+  /* ---- Hero ---- */
+  header {
+    padding: clamp(3.5rem, 8vw, 6rem) 0 2.4rem;
+    border-bottom: 1px solid var(--rule);
+  }
+  .kicker { display: flex; align-items: center; gap: .8rem; margin-bottom: 1.4rem; }
+  .kicker::after { content: ""; height: 1px; flex: 1; background: var(--rule-strong); }
+  h1 {
+    font-weight: 600;
+    font-size: clamp(2.35rem, 1.6rem + 3.6vw, 3.7rem);
+    line-height: 1.04;
+    letter-spacing: -.018em;
+    text-wrap: balance;
+    margin: 0 0 1.1rem;
+  }
+  h1 em { font-style: italic; color: var(--accent); font-weight: 500; }
+  .dek {
+    font-size: clamp(1.18rem, 1.05rem + 0.5vw, 1.4rem);
+    line-height: 1.5;
+    color: var(--muted);
+    max-width: 34rem;
+    margin: 0;
+    text-wrap: pretty;
+  }
+  .byline {
+    margin-top: 2rem;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .76rem;
+    letter-spacing: .04em;
+    color: var(--faint);
+    display: flex; flex-wrap: wrap; gap: .5rem 1.1rem;
+  }
+  .byline span { white-space: nowrap; }
+
+  /* ---- Body prose ---- */
+  section { padding-top: 2.6rem; }
+  p { margin: 0 0 1.15rem; text-wrap: pretty; }
+  p + p { margin-top: 0; }
+  .lead { font-size: 1.12em; }
+  a { color: var(--accent); text-underline-offset: 2px; text-decoration-thickness: 1px; }
+  strong { font-weight: 700; }
+  em { font-style: italic; }
+  .tick { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .9em; font-weight: 500; }
+
+  h2 {
+    font-size: 1.02rem;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-weight: 600;
+    letter-spacing: .02em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin: 3rem 0 .2rem;
+  }
+
+  /* ---- Lessons ---- */
+  .lesson { padding: 1.9rem 0; border-top: 1px solid var(--rule); }
+  .lesson:first-of-type { border-top: 0; }
+  .lesson-head { display: grid; grid-template-columns: 2.6rem 1fr; gap: .2rem 1rem; align-items: start; }
+  .lesson-no {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 1rem; font-weight: 600;
+    color: var(--accent);
+    padding-top: .34rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .lesson h3 {
+    grid-column: 2;
+    margin: 0 0 .5rem;
+    font-size: clamp(1.28rem, 1.15rem + 0.5vw, 1.55rem);
+    font-weight: 600;
+    line-height: 1.18;
+    letter-spacing: -.01em;
+    text-wrap: balance;
+  }
+  .lesson .body { grid-column: 2; }
+  .lesson .body p:last-child { margin-bottom: 0; }
+  @media (max-width: 33rem) {
+    .lesson-head { grid-template-columns: 1fr; }
+    .lesson h3, .lesson .body { grid-column: 1; }
+    .lesson-no { padding-top: 0; margin-bottom: .3rem; }
+  }
+
+  /* ---- Ledger scorecard ---- */
+  .ledger {
+    margin: 2.4rem 0 1rem;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  .ledger-cap {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 1rem;
+    padding: 1rem 1.25rem .85rem;
+    border-bottom: 1px solid var(--rule);
+    background: var(--surface-2);
+  }
+  .ledger-cap b { font-family: "IBM Plex Mono", monospace; font-size: .78rem; letter-spacing: .1em; text-transform: uppercase; font-weight: 600; color: var(--ink); }
+  .ledger-cap span { font-family: "IBM Plex Mono", monospace; font-size: .72rem; color: var(--faint); }
+  .row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: .3rem 1rem;
+    align-items: center;
+    padding: .8rem 1.25rem;
+    border-top: 1px solid var(--rule);
+  }
+  .row:first-of-type { border-top: 0; }
+  .row .q { font-size: .98rem; line-height: 1.3; }
+  .row .q small { display: block; color: var(--faint); font-size: .78rem; }
+  .row .vals { font-family: "IBM Plex Mono", monospace; font-size: .84rem; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .row .vals b { color: var(--ink); font-weight: 600; }
+  .pill {
+    justify-self: end;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .68rem; font-weight: 600; letter-spacing: .04em;
+    padding: .22rem .55rem; border-radius: 999px; white-space: nowrap;
+  }
+  .pill.good { color: var(--good); background: var(--good-soft); }
+  .pill.lost { color: var(--lost); background: var(--lost-soft); }
+  @media (max-width: 33rem) {
+    .row { grid-template-columns: 1fr auto; }
+    .row .vals { grid-column: 1 / -1; text-align: left; order: 3; }
+    .pill { order: 2; }
+  }
+
+  /* ---- Big number callout ---- */
+  .callout {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    border-radius: 12px; overflow: hidden;
+    margin: 2.2rem 0;
+    box-shadow: var(--shadow);
+  }
+  .callout > div { background: var(--surface); padding: 1.4rem 1.25rem; }
+  .callout .lab { font-family: "IBM Plex Mono", monospace; font-size: .7rem; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); margin-bottom: .5rem; }
+  .callout .big { font-family: "IBM Plex Mono", monospace; font-size: clamp(1.8rem, 1.3rem + 2.2vw, 2.5rem); font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
+  .callout .lost-side .big { color: var(--lost); position: relative; display: inline-block; }
+  .callout .lost-side .big::after { content:""; position:absolute; left:-4%; right:-4%; top:52%; height:2px; background: var(--lost); opacity:.55; transform: rotate(-7deg); }
+  .callout .good-side .big { color: var(--good); }
+  .callout .sub { margin-top: .55rem; font-size: .9rem; color: var(--muted); line-height: 1.4; }
+  @media (max-width: 30rem){ .callout { grid-template-columns: 1fr; } }
+
+  /* ---- Aside note (why they disagreed) ---- */
+  .aside { background: var(--surface-2); border: 1px solid var(--rule); border-radius: 10px; padding: 1.1rem 1.25rem 1.15rem; margin: 1.6rem 0; }
+  .aside-lab { font-family:"IBM Plex Mono",monospace; font-size:.66rem; letter-spacing:.1em; text-transform:uppercase; color: var(--faint); margin-bottom: 1rem; }
+  .aside-grid { display:grid; grid-template-columns:1fr 1fr; gap: 1rem; }
+  .aside-grid > div { display:flex; align-items:baseline; gap:.55rem; }
+  .an { font-family:"IBM Plex Mono",monospace; font-size: clamp(1.5rem,1.2rem+1vw,1.9rem); font-weight:600; line-height:1; font-variant-numeric: tabular-nums; }
+  .aside-grid > div:first-child .an { color: var(--lost); }
+  .aside-grid > div:last-child .an { color: var(--good); }
+  .al { font-family:"IBM Plex Mono",monospace; font-size:.68rem; color: var(--muted); line-height:1.3; }
+  .al b { display:block; color: var(--ink); font-weight:600; }
+  .aside-note { font-family:"IBM Plex Mono",monospace; font-size:.72rem; color: var(--faint); margin: 1rem 0 0; line-height:1.5; }
+  @media (max-width: 26rem){ .aside-grid { grid-template-columns:1fr; gap:.7rem; } }
+
+  /* ---- Then vs now bars ---- */
+  .decay { margin: 2rem 0 1rem; }
+  .bar-row { display: grid; grid-template-columns: 8.5rem 1fr; gap: .7rem; align-items: center; margin: .55rem 0; }
+  .bar-lab { font-family: "IBM Plex Mono", monospace; font-size: .76rem; color: var(--muted); line-height: 1.25; }
+  .bar-lab b { display:block; color: var(--ink); font-weight:600; }
+  .bar-track { position: relative; height: 1.7rem; background: var(--surface-2); border-radius: 5px; overflow: hidden; }
+  .bar-fill { position: absolute; top:0; bottom:0; left:0; border-radius: 5px; display:flex; align-items:center; }
+  .bar-fill span { font-family:"IBM Plex Mono",monospace; font-size:.72rem; font-weight:600; color: #fff; padding-left:.5rem; white-space:nowrap; }
+  .bar-fill.on { background: var(--good); }
+  .bar-fill.off { background: var(--lost); }
+  .thresh { position:absolute; top:-.3rem; bottom:-.3rem; width:2px; background: var(--accent); }
+  .thresh[data-label]::after { content:attr(data-label); position:absolute; top:-1.15rem; left:50%; transform:translateX(-50%); font-family:"IBM Plex Mono",monospace; font-size:.6rem; letter-spacing:.04em; color:var(--accent); white-space:nowrap; }
+  .decay { margin-top: 2.6rem; }
+  .decay-note { font-family:"IBM Plex Mono",monospace; font-size:.72rem; color:var(--faint); margin-top:1.4rem; }
+
+  /* ---- Results table ---- */
+  .table-scroll { overflow-x:auto; margin: 1.4rem 0; border:1px solid var(--rule); border-radius:12px; }
+  table { border-collapse: collapse; width:100%; font-size:.9rem; }
+  caption { text-align:left; caption-side: top; font-family:"IBM Plex Mono",monospace; font-size:.72rem; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); padding:1rem 1.1rem .3rem; }
+  th, td { padding: .68rem 1.1rem; text-align: right; border-top:1px solid var(--rule); font-variant-numeric: tabular-nums; white-space:nowrap; }
+  thead th { border-top:0; font-family:"IBM Plex Mono",monospace; font-weight:600; font-size:.72rem; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); }
+  tbody td, tbody th { font-family:"IBM Plex Mono",monospace; }
+  th:first-child, td:first-child { text-align:left; font-family:"Newsreader",serif; font-variant-numeric: normal; }
+  tbody tr:hover { background: var(--surface-2); }
+
+  /* ---- Closing / footer ---- */
+  .closer { margin-top: 3.2rem; padding-top: 2.4rem; border-top: 2px solid var(--rule-strong); }
+  .closer p { font-size: 1.08em; }
+  footer { border-top: 1px solid var(--rule); margin-top: 3rem; padding: 2rem 0 0; font-family:"IBM Plex Mono",monospace; font-size: .74rem; color: var(--faint); line-height: 1.7; }
+  footer .src { color: var(--muted); }
+
+  .disc { font-size: .8rem; color: var(--faint); font-style: italic; margin-top: 1.5rem; }
+
+  @keyframes rise { from { opacity:0; transform: translateY(12px); } to { opacity:1; transform:none; } }
+  header > * { animation: rise .7s cubic-bezier(.2,.7,.2,1) both; }
+  .kicker { animation-delay:.02s; } h1 { animation-delay:.08s; } .dek { animation-delay:.16s; } .byline { animation-delay:.24s; }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="kicker"><span class="eyebrow">Field Notes · Reproducibility</span></div>
+    <h1>The number that <em>wouldn't</em> reproduce</h1>
+    <p class="dek">I re-ran a cointegration test from a 2009 quant-trading book. The published hedge ratio never reproduced exactly. Chasing the gap taught me more than a clean match would have.</p>
+    <div class="byline">
+      <span>Ernest Chan · <i>Quantitative Trading</i></span>
+      <span>GLD / GDX pair trade</span>
+      <span>Reproduced 2026</span>
+    </div>
+  </header>
+
+  <main>
+    <section>
+      <p class="lead">Ernest Chan's <em>Quantitative Trading</em> opens its pairs-trading chapter with an example. Buy gold, short the gold miners, and the two prices tend to drift back toward each other.</p>
+      <p>The book runs a <strong>cointegration test</strong> on the pair. That is a statistical check for whether a long-short combination of two prices stays range-bound instead of wandering off on its own. It reports two numbers. A <strong>hedge ratio</strong> of <mark>1.6766</mark>, meaning short 1.6766 dollars of miners per dollar of gold. And a test statistic of <mark>&minus;3.18</mark>, where more negative means the spread mean-reverts more convincingly.</p>
+      <p>I set out to rebuild both from scratch, in Python, on data I pulled myself. I reproduced the test statistic, but not the hedge ratio. My data kept landing on <span class="tick">1.6379</span>, not the book's <span class="tick">1.6766</span>. So did <a href="https://aushaff.github.io/2018/04/06/e_chan_ex7.2.html">the independent reproduction I found</a>, and <a href="https://github.com/burakbayramli/books/tree/master/Quantitative_Trading_Chan">Chan's own data</a> when re-run today.</p>
+      <p>Here is the ledger of what reproduced and what didn't, and then the six detours it took to understand why.</p>
+
+      <div class="ledger" role="table" aria-label="Reproduction ledger">
+        <div class="ledger-cap"><b>Reproduction ledger</b><span>book vs. mine</span></div>
+        <div class="row">
+          <div class="q">Hedge ratio<small>through-origin regression</small></div>
+          <div class="vals"><b>1.6766</b> &rarr; 1.6379</div>
+          <div class="pill lost">vintage drift</div>
+        </div>
+        <div class="row">
+          <div class="q">CADF test statistic<small>full window / training set</small></div>
+          <div class="vals"><b>&minus;3.36 / &minus;3.18</b> &rarr; &minus;3.45 / &minus;3.09</div>
+          <div class="pill good">reproduced</div>
+        </div>
+        <div class="row">
+          <div class="q">Mean-reversion half-life</div>
+          <div class="vals"><b>~10 days</b> &rarr; ~10 days</div>
+          <div class="pill good">reproduced</div>
+        </div>
+        <div class="row">
+          <div class="q">Cointegration verdict</div>
+          <div class="vals"><b>&gt;90% conf.</b> &rarr; rejects null</div>
+          <div class="pill good">reproduced</div>
+        </div>
+      </div>
+    </section>
+
+    <section aria-label="Lessons">
+      <h2>Six detours</h2>
+
+      <article class="lesson">
+        <div class="lesson-head">
+          <div class="lesson-no">01</div>
+          <h3>One &ldquo;result&rdquo; can be a collage of two runs.</h3>
+          <div class="body">
+            <p>The hedge ratio and the test statistic do not come from the same computation. The hedge ratio is from a full-window run in Chapter 7. The test statistic is from a Chapter 3 example that drops the last 60 days and tests only the first 252.</p>
+            <p>The book prints them near each other. It is easy to read them as one result. They are two, on two different windows. Trace every quoted number to its own run before you try to match it.</p>
+          </div>
+        </div>
+      </article>
+
+      <article class="lesson">
+        <div class="lesson-head">
+          <div class="lesson-no">02</div>
+          <h3>The hedge you quote and the test you run need not share a regression.</h3>
+          <div class="body">
+            <p>My hedge ratio came out at <span class="tick">1.3905</span>, nowhere near the book's <span class="tick">1.6766</span>. The answer was buried in Chan's <span class="tick">example7_2.m</span>.</p>
+            <p>Chan's hedge ratio comes from a regression forced through the origin, with no intercept. His test statistic comes from a <em>separate</em> regression that includes one. Same pair, two regressions, two different slopes. Through the origin the slope is <span class="tick">1.6379</span>. With an intercept it is <span class="tick">1.3905</span>. Read the spec, not just the result.</p>
+          </div>
+        </div>
+      </article>
+
+      <article class="lesson">
+        <div class="lesson-head">
+          <div class="lesson-no">03</div>
+          <h3>&ldquo;Adjusted close&rdquo; is not a fixed number.</h3>
+          <div class="body">
+            <p>The exact <span class="tick">1.6766</span> cannot be reproduced from any download you make today.</p>
+            <p>Prices come in two flavors. <strong>Raw</strong> prices are what traded. <strong>Adjusted</strong> prices are re-scaled backward to fold dividends in, as if you had reinvested every payout, so a chart reflects total return. The catch is that the series is pinned to the latest price, so every new dividend scales the whole earlier history down another notch.</p>
+            <p><span class="tick">GDX</span> has paid dividends for nineteen years since 2007. So today's adjusted 2006 price sits about 15% below the number Chan saw. His 2007-vintage adjusted price is closest to today's <em>raw</em> price, because the miners had barely paid a dividend yet. Adjusted close is not a property of a date. It is a function of when you pressed download.</p>
+            <p>You could sidestep the drift by anchoring the series at a fixed start instead of today. That gives a total-return index that never rewrites its past. Simpler still, a raw as-traded price is already fixed: a given day's close is a historical fact, whatever dividends come later. That is the series I used.</p>
+
+            <div class="callout">
+              <div class="lost-side">
+                <div class="lab">Book, 2007 vintage</div>
+                <div class="big">1.6766</div>
+                <div class="sub">Not reproducible from any modern download.</div>
+              </div>
+              <div class="good-side">
+                <div class="lab">Everyone since</div>
+                <div class="big">~1.6379</div>
+                <div class="sub">Independent reproductions converge here. Mine included.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="lesson">
+        <div class="lesson-head">
+          <div class="lesson-no">04</div>
+          <h3>Separate the fragile estimate from the robust conclusion.</h3>
+          <div class="body">
+            <p>Not everything drifted. The hedge ratio moved with the data vintage. The <strong>half-life</strong>, which is how long the spread takes to close half its gap, reproduced at about 10 days, matching the book. So did the verdict: the spread is cointegrated with better than 90% confidence.</p>
+            <p>The trade signal survived. The hedge ratio slipped about two percent, from 1.6766 to 1.6379, while the half-life and the verdict held.</p>
+          </div>
+        </div>
+      </article>
+
+      <article class="lesson">
+        <div class="lesson-head">
+          <div class="lesson-no">05</div>
+          <h3>An independent implementation separates data bugs from code bugs.</h3>
+          <div class="body">
+            <p>I wrote the test twice. Once by hand, in fifteen lines of numpy. Once by calling a standard statistics library. They agreed to four decimal places. That agreement was the proof that my remaining gap was data, not a bug in my arithmetic.</p>
+            <p>Chan hit the same fork and drew the opposite lesson. His Python test disagreed with his MATLAB and R tests on this pair, and he concluded that Python's statistics packages could not be trusted. They were fine. All three ran the same test on different default settings.</p>
+
+            <div class="aside">
+              <div class="aside-lab">Why they disagreed &middot; GLD/GDX, 252-day window</div>
+              <div class="aside-grid">
+                <div><span class="an">&minus;2.30</span><span class="al"><b>Python default</b>autolag picks 6 lags</span></div>
+                <div><span class="an">&minus;3.09</span><span class="al"><b>MATLAB spec</b>1 lag, fixed</span></div>
+              </div>
+              <p class="aside-note">Same data, same library, one setting. Chan's own numbers were &minus;2.4 and &minus;3.2 &mdash; reproduced here.</p>
+            </div>
+
+            <p>The setting is the number of lags the test adds to absorb autocorrelation. MATLAB fixes it at one. Python's default reads it from the data, and on the shorter window it chose six. Each extra lag pulls the statistic toward zero, and six was enough to push Python's result across the line into &ldquo;not cointegrated.&rdquo; Pin the lag and all three agree.</p>
+          </div>
+        </div>
+      </article>
+
+      <article class="lesson">
+        <div class="lesson-head">
+          <div class="lesson-no">06</div>
+          <h3>Cointegration is a property of a window, not a pair.</h3>
+          <div class="body">
+            <p>The last detour outlives the reproduction. Gold and gold miners cointegrated cleanly from 2006 to 2008. Run the same test over 2006 to 2026 and it falls apart.</p>
+            <p>The statistic drops to <span class="tick">&minus;1.45</span>, well short of significance. The spread's half-life balloons from 10 days to over 800. The miners detached from gold somewhere in the 2010s and never fully came back.</p>
+
+            <div class="decay" aria-label="Test statistic then versus now">
+              <div class="bar-row">
+                <div class="bar-lab">2006&ndash;2008<b>t = &minus;3.18</b></div>
+                <div class="bar-track">
+                  <div class="bar-fill on" style="width:79.5%"><span>cointegrated</span></div>
+                  <div class="thresh" data-label="signif." style="left:77%"></div>
+                </div>
+              </div>
+              <div class="bar-row">
+                <div class="bar-lab">2006&ndash;2026<b>t = &minus;1.45</b></div>
+                <div class="bar-track">
+                  <div class="bar-fill off" style="width:36.25%"><span>not cointegrated</span></div>
+                  <div class="thresh" style="left:77%"></div>
+                </div>
+              </div>
+              <p class="decay-note">Bar length = |t-statistic|. The brass line is the significance threshold the book's own verdict clears in 2006&ndash;2008 and misses over the full span. The relationship it documented was real. It also had a shelf life.</p>
+            </div>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section>
+      <h2>The two runs, reproduced</h2>
+      <div class="table-scroll">
+        <table>
+          <caption>Chan's numbers vs. mine, raw close</caption>
+          <thead>
+            <tr><th>Run</th><th>Window</th><th>Hedge (origin)</th><th>CADF t</th><th>Verdict</th></tr>
+          </thead>
+          <tbody>
+            <tr><th>Ch. 7 full</th><td>2006-05 &ndash; 2007-11</td><td>1.6766 &rarr; 1.6379</td><td>&minus;3.36 &rarr; &minus;3.45</td><td>~95%</td></tr>
+            <tr><th>Ch. 3 (p.63)</th><td>first 252 days</td><td>1.6766 &rarr; 1.6283</td><td>&minus;3.18 &rarr; &minus;3.09</td><td>~90%</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="disc">Exploratory reproduction, not investment advice. Figures are from a from-scratch Python re-run on yfinance data and will not match the book to the last digit, by design.</p>
+    </section>
+
+    <section class="closer">
+      <h2>So what</h2>
+      <p>If you backtest from a paper or a book, budget most of your reproduction time for data provenance, not method. The method is usually in the open. The exact prices are not. Which vintage, which adjustment, which vendor's later revisions. A reproduction that lands the conclusion but misses the last digit is usually a data-vintage story, not a mistake.</p>
+      <p>The clean version of this project would have printed <span class="tick">1.6766</span> and moved on. The messy version taught me how a published number ages. The method holds. The data drifts. And the relationship itself can quietly dissolve. Reproducing a result is less about matching digits than understanding why they move. The number I couldn't reproduce told me more than the ones I could.</p>
+    </section>
+
+    <footer>
+      <div class="src">Reproduced with a numpy-only Engle-Granger / CADF test, cross-checked against statsmodels.</div>
+      <div>Source: Ernest P. Chan, <i>Quantitative Trading</i>, rev. ed. &middot; example7_2.m and example3_6_1.m &middot; GLD &amp; GDX daily closes.</div>
+    </footer>
+  </main>
+</div>
