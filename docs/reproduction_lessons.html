@@ -302,7 +302,7 @@
     <section>
       <p class="lead">Ernest Chan's <em>Quantitative Trading</em> opens its pairs-trading chapter with an example. Buy gold, short the gold miners, and the two prices tend to drift back toward each other.</p>
       <p>The book runs a <strong>cointegration test</strong> on the pair. That is a statistical check for whether a long-short combination of two prices stays range-bound instead of wandering off on its own. It reports two numbers. A <strong>hedge ratio</strong> of <mark>1.6766</mark>, meaning short 1.6766 dollars of miners per dollar of gold. And a test statistic of <mark>&minus;3.18</mark>, where more negative means the spread mean-reverts more convincingly.</p>
-      <p>I set out to rebuild both from scratch, in Python, on data I pulled myself. I reproduced the test statistic, but not the hedge ratio. My data kept landing on <span class="tick">1.6379</span>, not the book's <span class="tick">1.6766</span>. So did every other reproduction I could find.</p>
+      <p>I set out to rebuild both from scratch, in Python, on data I pulled myself. I reproduced the test statistic, but not the hedge ratio. My data kept landing on <span class="tick">1.6379</span>, not the book's <span class="tick">1.6766</span>. So did <a href="https://aushaff.github.io/2018/04/06/e_chan_ex7.2.html">the independent reproduction I found</a>, and <a href="https://github.com/burakbayramli/books/tree/master/Quantitative_Trading_Chan">Chan's own data</a> when re-run today.</p>
       <p>Here is the ledger of what reproduced and what didn't, and then the six detours it took to understand why.</p>
 
       <div class="ledger" role="table" aria-label="Reproduction ledger">
