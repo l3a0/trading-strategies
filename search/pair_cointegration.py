@@ -5,8 +5,9 @@ Reproduces the GLD-vs-GDX pair-trading analysis from Ernest Chan,
 p.63): a hedge-ratio regression, an Engle-Granger / CADF unit-root test on the
 residual spread, and an Ornstein-Uhlenbeck half-life.
 
-EXPLORATORY / a method reproduction -- NOT a pinned result. Nothing here is
-frozen by a regression test.
+A pinned reproduction: the GLD/GDX numbers below are frozen by
+``tests/test_pair_cointegration.py``. It reproduces a published method, not a
+registered strategy verdict.
 
 Three steps, numpy-only for the core (statsmodels is an optional cross-check):
 
@@ -61,69 +62,17 @@ import pandas as pd
 from numpy.typing import NDArray
 
 from common.paths import data_path
+from common.timeseries import (
+    ADF_CRIT_CONST,
+    EG_CRIT_N2,
+    adf_tstat,
+    ols,
+    ou_half_life,
+)
 
-# MacKinnon (2010) asymptotic critical values.
-#
-# Standard ADF unit-root test on a single series, constant, no trend.
-ADF_CRIT_CONST: dict[str, float] = {"1%": -3.43, "5%": -2.86, "10%": -2.57}
-# Engle-Granger residual-based test: N=2 I(1) variables, a constant in the
-# cointegrating regression, no trend. More demanding than the plain ADF
-# values because the spread was itself estimated (the hedge ratio is fitted,
-# which mechanically makes residuals look more stationary).
-EG_CRIT_N2: dict[str, float] = {"1%": -3.90, "5%": -3.34, "10%": -3.04}
-
-
-@dataclass(frozen=True)
-class OLSFit:
-    """Coefficients, their standard errors, and residuals from one OLS fit."""
-
-    beta: NDArray[np.float64]
-    se: NDArray[np.float64]
-    resid: NDArray[np.float64]
-
-
-def _ols(y: NDArray[np.float64], x: NDArray[np.float64]) -> OLSFit:
-    """Ordinary least squares of ``y`` on the columns of ``x`` (no implicit
-    intercept -- add a column of ones yourself if you want one)."""
-    beta, _res, _rank, _sv = np.linalg.lstsq(x, y, rcond=None)
-    resid = y - x @ beta
-    dof = len(y) - x.shape[1]
-    sigma2 = float(resid @ resid) / dof
-    xtx_inv = np.linalg.inv(x.T @ x)
-    se = np.sqrt(np.diag(sigma2 * xtx_inv))
-    return OLSFit(beta=beta, se=se, resid=resid)
-
-
-def adf_tstat(series: NDArray[np.float64], lags: int = 1, *, constant: bool = True) -> tuple[float, int]:
-    """Augmented Dickey-Fuller t-statistic on the lagged-level coefficient.
-
-    Regression (with ``lags`` augmenting terms):
-
-        d_y_t = [const] + rho * y_{t-1} + sum_i gamma_i * d_y_{t-i} + eps_t
-
-    Returns ``(tstat, nobs)``. A large-magnitude *negative* ``tstat`` is
-    evidence against a unit root (i.e. for stationarity / mean reversion).
-    Pass ``constant=False`` for regression residuals, which are mean-zero by
-    construction and so take no deterministic term.
-    """
-    y = np.asarray(series, dtype=float)
-    dy = np.diff(y)  # dy[k] = y[k+1]-y[k]; so d_y_t == dy[t-1]
-    n = len(dy)
-    if n - lags < 10:
-        raise ValueError(f"series too short: {len(y)} points, {lags} lags")
-
-    # Response d_y_t for t = lags+1 .. N-1  ->  dy[lags:]
-    response = dy[lags:]
-    columns: list[NDArray[np.float64]] = [y[lags:-1]]  # y_{t-1}
-    for i in range(1, lags + 1):
-        columns.append(dy[lags - i : n - i])  # d_y_{t-i}
-    if constant:
-        columns.append(np.ones(len(response)))
-    design = np.column_stack(columns)
-
-    fit = _ols(response, design)
-    tstat = float(fit.beta[0] / fit.se[0])  # coefficient on y_{t-1}
-    return tstat, len(response)
+# The OLS / ADF / OU primitives and the MacKinnon critical values live in the
+# leaf module common/timeseries.py; factor/factor_mechanism.py shares the same
+# ols. This module keeps only the pair-specific two-step test below.
 
 
 @dataclass(frozen=True)
@@ -161,7 +110,7 @@ def engle_granger(
     1.6766. It is display-only and does NOT change the test.
     """
     design = np.column_stack([b, np.ones(len(b))])
-    fit = _ols(a, design)
+    fit = ols(a, design)
     hedge_ratio = float(fit.beta[0])
     intercept = float(fit.beta[1])
     spread = fit.resid
@@ -176,22 +125,6 @@ def engle_granger(
         half_life=ou_half_life(spread),
         origin_hedge=origin_hedge,
     )
-
-
-def ou_half_life(spread: NDArray[np.float64]) -> float:
-    """Ornstein-Uhlenbeck mean-reversion half-life, in the series' own time
-    step (trading days here). Regress ``d_z_t`` on ``z_{t-1}``; the slope is
-    ``-theta``; half-life is ``ln(2)/theta``. Returns ``+inf`` when the spread
-    does not mean-revert (non-negative slope)."""
-    z = np.asarray(spread, dtype=float)
-    dz = np.diff(z)
-    zlag = z[:-1]
-    design = np.column_stack([zlag, np.ones(len(zlag))])
-    fit = _ols(dz, design)
-    slope = float(fit.beta[0])  # == -theta
-    if slope >= 0:
-        return math.inf
-    return math.log(2.0) / (-slope)
 
 
 def load_close(ticker: str, *, unadjusted: bool = False) -> pd.Series:
@@ -211,6 +144,10 @@ def load_close(ticker: str, *, unadjusted: bool = False) -> pd.Series:
     reproducing the book -- which is why ``--ch7``/``--ch3`` and ``--unadjusted``
     use it.
     """
+    # Provenance: fetched from yfinance on 2026-08-27 (PR #195); the *_unadjusted
+    # files use auto_adjust=False. Deliberately frozen -- there is no regeneration
+    # script, and the pinned tests freeze these exact bytes against Yahoo's
+    # drifting adjusted-close vintage (a re-download would fail the reproduction).
     suffix = "_20yr_prices_unadjusted.csv" if unadjusted else "_20yr_prices.csv"
     path = data_path(f"{ticker.lower()}{suffix}")
     raw = pd.read_csv(path, header=None, names=["date", "close"], usecols=[0, 1])
@@ -286,7 +223,7 @@ def run(
     au, bu = a.upper(), b.upper()
     basis = "raw / unadjusted closes" if unadjusted else "Yahoo dividend-adjusted closes"
 
-    print("Pair cointegration -- daily closes   (EXPLORATORY, not a pinned result)")
+    print("Pair cointegration -- daily closes   (pinned reproduction; see tests/test_pair_cointegration.py)")
     print(f"  A = {au}   B = {bu}")
     print(f"  Span: {span_start} .. {span_end}   (N = {len(closes)} trading days)")
     print(f"  Price basis: {basis} (both legs)")

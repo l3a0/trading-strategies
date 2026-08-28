@@ -32,6 +32,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from common.timeseries import ols
+
 REGISTERED_PREMIA: tuple[str, ...] = ('trend', 'lowvol')   # the committed factor families (base styles)
 PREMIUM_WINDOW = 20                                          # lookback for the base signals (the momentum window)
 # |t| a loading must clear to TYPE the factor — the exposure-typing threshold (does it harvest a known
@@ -73,17 +75,12 @@ def registered_premia(prices: pd.DataFrame, window: int = PREMIUM_WINDOW) -> pd.
 
 
 def _ols_tstats(y: np.ndarray, x: np.ndarray) -> np.ndarray:
-    """Plain OLS t-stats for `y ~ [1, x]` by numpy linear algebra (no scipy): the column t-stats
-    `beta / se(beta)` with `se` from the residual variance and `(X'X)^-1`. Returns the t-stat vector
-    (index 0 the intercept)."""
+    """Plain OLS t-stats for `y ~ [1, x]`: the column t-stats `beta / se(beta)`,
+    via the shared `common.timeseries.ols` (one least-squares definition, no
+    per-module copy). Returns the t-stat vector (index 0 the intercept)."""
     design = np.column_stack([np.ones(len(y)), x])
-    xtx_inv = np.linalg.inv(design.T @ design)
-    beta = xtx_inv @ (design.T @ y)
-    resid = y - design @ beta
-    dof = len(y) - design.shape[1]
-    sigma2 = float(resid @ resid) / dof
-    se = np.sqrt(np.diag(sigma2 * xtx_inv))
-    return beta / se
+    fit = ols(y, design)
+    return fit.beta / fit.se
 
 
 def loading_family(signal: pd.DataFrame, prices: pd.DataFrame, premia: pd.DataFrame | None = None,
