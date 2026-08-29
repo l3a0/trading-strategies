@@ -1,10 +1,11 @@
 # pyright: reportPrivateUsage=false
 """Regression tests for search/pair_cointegration.py.
 
-Three always-run layers (no dataset gate — the GLD/GDX price CSVs are committed
+Two always-run layers (no dataset gate — the GLD/GDX price CSVs are committed
 to git, not release-sized option chains). The shared OLS / ADF / OU primitives
-have their own mechanics tests in ``tests/test_timeseries.py``; this file tests
-the pair-specific two-step ``engle_granger`` and the reproduction.
+(now statsmodels-backed) have their own mechanics tests in
+``tests/test_timeseries.py``; this file tests the pair-specific two-step
+``engle_granger`` and the reproduction.
 
 1. ``TestEngleGranger`` — the two-step cointegration test on synthetic pairs
    with known answers (a shared-factor pair rejects, independent walks do not),
@@ -14,21 +15,12 @@ the pair-specific two-step ``engle_granger`` and the reproduction.
    full-history decay). These are the numbers the reproduction essay quotes. The
    test is what freezes the yfinance vintage: a future re-download that shifts
    the adjusted-close basis moves these numbers and fails CI.
-3. ``TestStatsmodelsCrossCheck`` — an independent second opinion. With the lag
-   convention matched (``autolag=None``), statsmodels agrees with the hand-rolled
-   ADF to machine precision, which also encodes the essay's lesson: drop
-   ``autolag=None`` and statsmodels reverts to its AIC default and diverges.
-   Gated behind ``find_spec`` so it runs wherever statsmodels is installed and
-   skips cleanly where it isn't (CI installs it in the unit job).
-
 The reproduced hedge is 1.6379 / 1.6283, not Chan's printed 1.6766 — the exact
 book value is a lost data vintage. 1.6766 is a cited book target, never asserted
 as a computed result.
 """
 
 from __future__ import annotations
-
-from importlib.util import find_spec
 
 import numpy as np
 import pytest
@@ -140,38 +132,3 @@ class TestGldGdxReproduction:
         assert full_span.nobs == 5028
         assert full_span.adf_stat == pytest.approx(-1.45, abs=1e-2)
         assert full_span.adf_stat > EG_CRIT_N2["10%"]
-
-
-# ============================================================
-# Layer 3 — independent statsmodels cross-check (enforced in CI)
-# ============================================================
-@pytest.mark.skipif(
-    find_spec("statsmodels") is None,
-    reason="statsmodels is an optional cross-check; the CI unit job installs it",
-)
-class TestStatsmodelsCrossCheck:
-    """The hand-rolled ADF must match statsmodels to machine precision when the
-    lag convention is matched (``maxlag=1, autolag=None``). Dropping
-    ``autolag=None`` is exactly the divergence the essay is about, so this test
-    also guards against a future edit reintroducing the AIC default.
-    """
-
-    @staticmethod
-    def _legs(end: str) -> tuple[np.ndarray, np.ndarray]:
-        df = aligned_closes("GLD", "GDX", start=BOOK_START, end=end, unadjusted=True)
-        return df["GLD"].to_numpy(dtype=float), df["GDX"].to_numpy(dtype=float)
-
-    @pytest.mark.parametrize("end", [BOOK_END, BOOK_TRAIN_END])
-    def test_matches_statsmodels(self, end: str) -> None:
-        import warnings
-
-        from statsmodels.tsa.stattools import adfuller, coint
-
-        a, b = self._legs(end)
-        ours = engle_granger(a, b, lags=1, origin=True)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            eg_t = coint(a, b, trend="c", maxlag=1, autolag=None)[0]
-            adf_t = adfuller(ours.spread, maxlag=1, regression="n", autolag=None)[0]
-        assert ours.adf_stat == pytest.approx(float(adf_t), abs=1e-6)
-        assert ours.adf_stat == pytest.approx(float(eg_t), abs=1e-6)

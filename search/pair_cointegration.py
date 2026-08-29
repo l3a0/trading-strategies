@@ -9,7 +9,7 @@ A pinned reproduction: the GLD/GDX numbers below are frozen by
 ``tests/test_pair_cointegration.py``. It reproduces a published method, not a
 registered strategy verdict.
 
-Three steps, numpy-only for the core (statsmodels is an optional cross-check):
+Three steps, backed by statsmodels:
 
 1. Hedge ratio. OLS of A's close on B's close, with an intercept -- this is the
    cointegrating regression the CADF test uses. The residual ``z = A - beta*B
@@ -37,10 +37,9 @@ independent reproductions converge on ~1.6379 too. Raw close is the closest
 modern proxy to Chan's 2007-era adjusted series (GDX had barely any dividends
 stripped then), so ``--ch7`` and ``--ch3`` use raw.
 
-If ``statsmodels`` is installed, the report prints an independent second
-opinion (its ``coint`` and ``adfuller``) next to the hand-rolled numbers.
-statsmodels is OPTIONAL and deliberately NOT in ``requirements.txt``, so the
-default path and the whole engine test suite stay dependency-free.
+The OLS, ADF, and OU primitives come from ``statsmodels`` via
+``common/timeseries.py``, run at a FIXED lag (``maxlag=1, autolag=None``), not
+statsmodels' AIC default.
 
 Usage:
     python -m search.pair_cointegration                    # GLD vs GDX, full history
@@ -115,7 +114,7 @@ def engle_granger(
     intercept = float(fit.beta[1])
     spread = fit.resid
     adf_stat, nobs = adf_tstat(spread, lags=lags, constant=False)
-    origin_hedge = float((b @ a) / (b @ b)) if origin else None
+    origin_hedge = float(ols(a, b.reshape(-1, 1)).beta[0]) if origin else None
     return CointResult(
         hedge_ratio=hedge_ratio,
         intercept=intercept,
@@ -252,41 +251,8 @@ def run(
     print()
     print("Caveats: asymptotic critical values (a fitted hedge ratio biases the")
     print("stat toward rejection) and a single fixed hedge ratio over the whole")
-    print("span. Cointegration is window-dependent; a borderline verdict deserves")
-    print("a cross-check.")
-    _print_crosscheck(av, bv, result.spread, lags)
-
-
-def _print_crosscheck(
-    a: NDArray[np.float64], b: NDArray[np.float64], spread: NDArray[np.float64], lags: int
-) -> None:
-    """Independent second opinion from statsmodels, if it is installed.
-
-    Optional by design: absence prints a hint and returns, so the primary
-    numpy-only path never depends on it. ``coint`` re-fits the whole
-    with-intercept Engle-Granger test; ``adfuller`` re-runs the ADF on our own
-    residual spread. Both should land close to the hand-rolled t-statistic.
-    """
-    try:
-        from statsmodels.tsa.stattools import adfuller, coint
-    except ImportError:
-        print()
-        print("statsmodels cross-check: not installed -- skipped "
-              "(uv pip install statsmodels to enable).")
-        return
-
-    with warnings.catch_warnings():
-        # adfuller in statsmodels 0.15 warns that its return type will change
-        # in a future release; we read only the first two elements, so silence
-        # it rather than pin a version-specific kwarg.
-        warnings.simplefilter("ignore", FutureWarning)
-        eg_t, eg_p, eg_crit = coint(a, b, trend="c", maxlag=lags, autolag=None)
-        adf_stat, adf_p = adfuller(spread, maxlag=lags, regression="n", autolag=None)[:2]
-    print()
-    print("statsmodels cross-check (independent implementation):")
-    print(f"  coint()  Engle-Granger t = {eg_t:.4f}   p = {eg_p:.4f}   "
-          f"crit 1%/5%/10% = {eg_crit[0]:.3f}/{eg_crit[1]:.3f}/{eg_crit[2]:.3f}")
-    print(f"  adfuller() on our spread:  t = {adf_stat:.4f}   p = {adf_p:.4f}")
+    print("span. Cointegration is window-dependent, so a borderline verdict")
+    print("deserves scrutiny across other windows.")
 
 
 def selftest() -> None:

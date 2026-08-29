@@ -11,9 +11,9 @@ H1a (this module) is the mechanism COMPUTATION, additive and standalone (it take
 the panel, never imports the backends). H1b wires it into `FactorBackend.mechanism` /
 `GrammarFactorBackend.mechanism` and the score gate, turning today's `family=None` into a derived family.
 
-DEPENDENCY-LIGHT: a plain OLS by numpy linear algebra (`(X'X)^-1 X'y` + residual standard errors), no
-scipy/statsmodels — the loading t-stat is all the gate needs, and a normal-tailed |t| hurdle matches the
-repo's `_asymptotic_p` convention.
+The loading regression is a plain OLS through the shared `common.timeseries.ols`
+(statsmodels-backed). The loading t-stat is all the gate needs, and a normal-tailed
+|t| hurdle matches the repo's `_asymptotic_p` convention.
 
 WHY ONLY `trend` + `lowvol`. They are the base styles a PRICE panel can build; the other canonical premia
 need data the panel does not carry — value / quality / investment need fundamentals (book, earnings,
@@ -76,9 +76,14 @@ def registered_premia(prices: pd.DataFrame, window: int = PREMIUM_WINDOW) -> pd.
 
 def _ols_tstats(y: np.ndarray, x: np.ndarray) -> np.ndarray:
     """Plain OLS t-stats for `y ~ [1, x]`: the column t-stats `beta / se(beta)`,
-    via the shared `common.timeseries.ols` (one least-squares definition, no
-    per-module copy). Returns the t-stat vector (index 0 the intercept)."""
+    via the shared `common.timeseries.ols` (statsmodels-backed). Returns the
+    t-stat vector (index 0 the intercept). Raises `np.linalg.LinAlgError` on a
+    rank-deficient (collinear) design so `loading_family` fails closed: the
+    statsmodels OLS would otherwise pinv through the singularity instead of
+    raising, unlike the normal-equations inverse this replaced."""
     design = np.column_stack([np.ones(len(y)), x])
+    if np.linalg.matrix_rank(design) < design.shape[1]:
+        raise np.linalg.LinAlgError("rank-deficient design (collinear regressors)")
     fit = ols(y, design)
     return fit.beta / fit.se
 
