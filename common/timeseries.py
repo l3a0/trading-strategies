@@ -3,29 +3,33 @@
 ``common/`` is the leaf everything else imports, so a primitive that more than
 one package needs lives here rather than in any one of them. These are the
 reusable estimators behind the pair-cointegration reproduction and the factor
-mechanism gate:
+mechanism gate, backed by ``statsmodels``:
 
 - ``ols`` — ordinary least squares (coefficients, their standard errors, and
-  residuals). The single least-squares definition; ``search/pair_cointegration``
-  and ``factor/factor_mechanism`` both build on it rather than each rolling their
-  own normal-equations copy.
-- ``adf_tstat`` — the Augmented Dickey-Fuller unit-root t-statistic.
-- ``ou_half_life`` — the Ornstein-Uhlenbeck mean-reversion half-life.
+  residuals), via ``statsmodels.api.OLS``. The single least-squares definition;
+  ``search/pair_cointegration`` and ``factor/factor_mechanism`` both build on it.
+- ``adf_tstat`` — the Augmented Dickey-Fuller unit-root t-statistic, via
+  ``statsmodels.tsa.stattools.adfuller`` at a FIXED lag.
+- ``ou_half_life`` — the Ornstein-Uhlenbeck mean-reversion half-life (an AR(1)
+  regression through ``ols``).
 - ``ADF_CRIT_CONST`` / ``EG_CRIT_N2`` — MacKinnon (2010) asymptotic critical
   values for the plain ADF test and the Engle-Granger residual test (N=2).
 
-Leaf discipline: this module imports nothing above ``common/`` (numpy + stdlib
-only), so both ``search/`` and ``factor/`` can share it without a dependency
-inversion.
+Leaf discipline: this module imports nothing above ``common/`` (statsmodels,
+numpy, stdlib), so both ``search/`` and ``factor/`` can share it without a
+dependency inversion.
 """
 
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
+import statsmodels.api as sm
 from numpy.typing import NDArray
+from statsmodels.tsa.stattools import adfuller
 
 # MacKinnon (2010) asymptotic critical values.
 #
@@ -49,58 +53,47 @@ class OLSFit:
 
 def ols(y: NDArray[np.float64], x: NDArray[np.float64]) -> OLSFit:
     """Ordinary least squares of ``y`` on the columns of ``x`` (no implicit
-    intercept -- add a column of ones yourself if you want one).
-
-    ``beta`` comes from ``np.linalg.lstsq`` (SVD-based, numerically stabler than
-    the normal equations); the standard errors use the residual variance and
-    ``(X'X)^-1`` in the textbook form.
-    """
-    beta, _res, _rank, _sv = np.linalg.lstsq(x, y, rcond=None)
-    resid = y - x @ beta
-    dof = len(y) - x.shape[1]
-    sigma2 = float(resid @ resid) / dof
-    xtx_inv = np.linalg.inv(x.T @ x)
-    se = np.sqrt(np.diag(sigma2 * xtx_inv))
-    return OLSFit(beta=beta, se=se, resid=resid)
+    intercept -- add a column of ones yourself if you want one). Backed by
+    ``statsmodels.api.OLS``; returns its coefficients, their standard errors,
+    and the residuals."""
+    res = sm.OLS(np.asarray(y, dtype=float), np.asarray(x, dtype=float)).fit()
+    return OLSFit(
+        beta=np.asarray(res.params, dtype=float),
+        se=np.asarray(res.bse, dtype=float),
+        resid=np.asarray(res.resid, dtype=float),
+    )
 
 
 def adf_tstat(series: NDArray[np.float64], lags: int = 1, *, constant: bool = True) -> tuple[float, int]:
-    """Augmented Dickey-Fuller t-statistic on the lagged-level coefficient.
-
-    Regression (with ``lags`` augmenting terms):
-
-        d_y_t = [const] + rho * y_{t-1} + sum_i gamma_i * d_y_{t-i} + eps_t
+    """Augmented Dickey-Fuller t-statistic on the lagged-level coefficient, via
+    ``statsmodels.tsa.stattools.adfuller`` at a FIXED lag (``maxlag=lags,
+    autolag=None``). The fixed lag is deliberate: statsmodels' ``autolag='aic'``
+    default would pick the lag count from the data and return a different
+    statistic (the reproduction essay's whole point).
 
     Returns ``(tstat, nobs)``. A large-magnitude *negative* ``tstat`` is
     evidence against a unit root (i.e. for stationarity / mean reversion).
     Pass ``constant=False`` for regression residuals, which are mean-zero by
     construction and so take no deterministic term.
     """
-    y = np.asarray(series, dtype=float)
-    dy = np.diff(y)  # dy[k] = y[k+1]-y[k]; so d_y_t == dy[t-1]
-    n = len(dy)
-    if n - lags < 10:
-        raise ValueError(f"series too short: {len(y)} points, {lags} lags")
-
-    # Response d_y_t for t = lags+1 .. N-1  ->  dy[lags:]
-    response = dy[lags:]
-    columns: list[NDArray[np.float64]] = [y[lags:-1]]  # y_{t-1}
-    for i in range(1, lags + 1):
-        columns.append(dy[lags - i : n - i])  # d_y_{t-i}
-    if constant:
-        columns.append(np.ones(len(response)))
-    design = np.column_stack(columns)
-
-    fit = ols(response, design)
-    tstat = float(fit.beta[0] / fit.se[0])  # coefficient on y_{t-1}
-    return tstat, len(response)
+    with warnings.catch_warnings():
+        # adfuller warns that its return type will change in a future release;
+        # we read the tuple's stat and nobs, so silence the FutureWarning.
+        warnings.simplefilter("ignore", FutureWarning)
+        result = adfuller(
+            np.asarray(series, dtype=float),
+            maxlag=lags,
+            autolag=None,  # type: ignore[arg-type]  # statsmodels stub over-narrows autolag to str
+            regression="c" if constant else "n",
+        )
+    return float(result[0]), int(result[3])  # type: ignore[arg-type]  # adfuller's tuple is untyped
 
 
 def ou_half_life(spread: NDArray[np.float64]) -> float:
     """Ornstein-Uhlenbeck mean-reversion half-life, in the series' own time
-    step (trading days here). Regress ``d_z_t`` on ``z_{t-1}``; the slope is
-    ``-theta``; half-life is ``ln(2)/theta``. Returns ``+inf`` when the spread
-    does not mean-revert (non-negative slope)."""
+    step (trading days here). Regress ``d_z_t`` on ``z_{t-1}`` (through the
+    shared ``ols``); the slope is ``-theta``; half-life is ``ln(2)/theta``.
+    Returns ``+inf`` when the spread does not mean-revert (non-negative slope)."""
     z = np.asarray(spread, dtype=float)
     dz = np.diff(z)
     zlag = z[:-1]

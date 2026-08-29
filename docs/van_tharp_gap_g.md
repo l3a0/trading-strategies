@@ -108,7 +108,7 @@ cross-sectional Spearman across names (factor/factor_backend.py:105-124), the IV
 Spearman pools cycles within one stream (search/explorations.py:344-346), the ACF figure computes
 single-series autocovariances (engine/make_figures.py:274), and the closest align-two-series precedent
 joins a factor's long-short returns to the registered premia, never overlay equity
-(factor/factor_mechanism.py:100). The walk-forward's concat chains OOS windows of one strategy
+(factor/factor_mechanism.py:105). The walk-forward's concat chains OOS windows of one strategy
 (engine/cc_backtest.py:931). The parent plan's Gap G claim is thereby confirmed — with one stale anchor
 noted for the build PR: docs/van_tharp_test_plan.md:230 cites the explorations Spearman at
 search/explorations.py:335, and it now sits at :346.

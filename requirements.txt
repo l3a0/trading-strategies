@@ -2,6 +2,7 @@ numpy
 pandas
 matplotlib
 yfinance
+statsmodels
 pytest
 pytest-cov
 pytest-xdist
