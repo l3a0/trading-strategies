@@ -12,9 +12,9 @@ PORTED, not depended (the repo is from-scratch minimal-dependency Python). The
 recurrences are ported from the published papers; the always-run tests pin the
 calibrator, the e-LOND recurrence, and e-BH against the `online-fdr` package
 (its GitHub-main e-value module, which parity-tests itself against the
-R/Bioconductor `onlineFDR`) — the oracle values are hardcoded in test_evalue_fdr.py
-so nothing here depends on `online-fdr` at runtime. See test_evalue_fdr.py for the
-optional live-parity check (skips unless `online-fdr` is installed, Python 3.10+).
+R/Bioconductor `onlineFDR`). The oracle values were captured once and hardcoded in
+test_evalue_fdr.py, so nothing here depends on `online-fdr`, at runtime or in the
+test suite.
 This module is `evalue_fdr` (not `online_fdr`) so it does not shadow the `online-fdr`
 package's import name when both are present.
 
