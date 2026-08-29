@@ -3,9 +3,9 @@
 Pins the calibrator, the e-LOND recurrence, and e-BH against ORACLE values captured
 from the `online-fdr` package (its GitHub-main e-value module — ELond, e_bh,
 p_to_e_power — which parity-tests itself against the R/Bioconductor onlineFDR). The
-oracle values are HARDCODED here so the repo depends on `online-fdr` for nothing at
-runtime (port, don't depend). `TestOnlineFdrParity` re-derives them live IF
-`online-fdr` is installed (Python 3.10+), and skips otherwise.
+oracle values are HARDCODED here so the repo depends on `online-fdr` for nothing
+(port, don't depend). The capture was an independent cross-check run once and
+frozen. These literals guard the repo's arithmetic every CI run.
 """
 from __future__ import annotations
 
@@ -166,35 +166,6 @@ class TestLedgerRunner:
 
     def test_empty_ledger(self) -> None:
         assert online_fdr_survivors([]) == []
-
-
-class TestOnlineFdrParity:
-    """Optional LIVE parity against the online-fdr package (skips unless installed,
-    Python 3.10+). The hardcoded oracle values above came from exactly this."""
-
-    def test_live_parity(self) -> None:
-        try:   # skip unless online-fdr's e-value module is importable (GitHub-main, 3.10+)
-            from online_fdr.e_values.batch import (
-                e_bh as ref_e_bh,  # type: ignore[import]
-            )
-            from online_fdr.e_values.sequential import (  # type: ignore[import]
-                DefaultLondGammaSequence,
-                ELond,
-            )
-            from online_fdr.e_values.toolbox import p_to_e_power  # type: ignore[import]
-        except Exception as exc:  # not installed / wrong version / wrong Python / no e_values  # noqa: BLE001 — optional dependency probe: any import failure means skip
-            pytest.skip(f'online-fdr e-value module unavailable: {exc}')
-
-        for p in (0.5, 0.25, 0.01, 0.0001):
-            assert calibrate_p_to_e(p) == pytest.approx(p_to_e_power(p, 0.5), rel=1e-12)
-        for evs in ([60.0, 5.0, 2.0, 0.5, 0.0], [300.0, 120.0, 2.0, 0.5, 0.0]):
-            assert e_bh(evs, 0.10) == ref_e_bh(evs, 0.10)
-        ref = ELond(alpha=0.10, gamma_seq=DefaultLondGammaSequence(c=_ORACLE_LOND_C))
-        mine = elond([200.0, 500.0, 0.5], 0.10, _oracle_gamma)
-        for e, m in zip([200.0, 500.0, 0.5], mine):
-            d = ref.test_one_detail(e)
-            assert m.rejected == d.rejected
-            assert m.level == pytest.approx(d.test_level, rel=1e-9)
 
 
 class TestFlagThreshold:
