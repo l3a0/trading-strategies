@@ -430,7 +430,7 @@ PR. E2 adds the dataset-gated Experiment 4 pins.
   reclassifies the work as a campaign under the e-LOND stream.
 - **No FDR interaction in v1.** Nothing enters `idea_ledger.jsonl` and no e-value is spent; escalation
   goes only through E3's human-signed registration.
-- **One significance authority.** The daily Newey-West HAC t (`short_vol_statistics`) is unchanged;
+- **One significance authority.** The daily Newey-West HAC t (`excess_over_cash_statistics`) is unchanged;
   every ledger and ruin statistic is reported, never a gate — the posture the ledger pins in its own
   docstring (common/trade_ledger.py:9-13).
 - **Byte-identity is proven, not asserted.** The synthetic off-equivalence test plus the full pinned

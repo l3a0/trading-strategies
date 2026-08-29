@@ -146,7 +146,7 @@ one more callable through a proven seam.
 
 The measurement side needs nothing new either. `run_real_short_vol_overlay` is itself a thin delegate
 to this same generic engine (realchains/vol_premium.py:126, the delegate return at :138), so the
-baseline and the random careers run literally one code path. `short_vol_statistics` consumes only the
+baseline and the random careers run literally one code path. `excess_over_cash_statistics` consumes only the
 returned `daily_equity` — reading its `rf_credit` column — plus the capital and rf (:141, the column
 read at :185-189). `build_trade_ledger` consumes the returned trades list plus
 `shares = 100 × num_contracts`, and `num_contracts` already rides the engine's summary
@@ -228,7 +228,7 @@ search/edge_search.py:109). Career *i* uses seed `RANDOM_ENTRY_SEED + i` for *i*
 row — the edge-search per-candidate idiom (search/edge_search.py:452, :449).
 
 **Per-career measures.** Each career's events feed the Gap A ledger (`build_trade_ledger` →
-`ledger_statistics`: expectancy_r, win rate, worst MAE-R) and `short_vol_statistics` (the hedged
+`ledger_statistics`: expectancy_r, win rate, worst MAE-R) and `excess_over_cash_statistics` (the hedged
 Newey-West t). One additional baseline pass runs the deterministic selector through the same harness —
 \~21 engine passes total — and the scout asserts it reproduces the pins (expectancy_r −0.5407 on n = 174
 closed cycles, the 175th being an open dangler the ledger drops, tests/test_trade_ledger.py:381-382;
@@ -405,7 +405,7 @@ career seeds `RANDOM_ENTRY_SEED + i` for i in 0..19.
 - **No FDR interaction in v1.** Nothing enters `idea_ledger.jsonl`; a baseline that lands outside the
   band escalates to a human-signed registration, never to a headline.
 - **One significance authority, used descriptively.** The hedged Newey-West t from
-  `short_vol_statistics` is reported per career and never gated on; the ledger statistics are reported,
+  `excess_over_cash_statistics` is reported per career and never gated on; the ledger statistics are reported,
   never gates — the ledger's own posture.
 - **Convention caveats travel with the pins.** The wait is drawn uniform{0..K} and counted in
   chain-days, so chainless calendar days consume none of it. Jittered careers trade fewer cycles by

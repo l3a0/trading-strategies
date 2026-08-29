@@ -9,10 +9,10 @@ dependencies; every consumer package already imports pandas).
 
 Units, decided once (the design's basis section): every leg is **per-capital
 daily P&L over zero-yield cash on its own deployed capital** — dollar diffs
-over the FIXED capital base (the ``short_vol_statistics`` convention), never
+over the FIXED capital base (the ``excess_over_cash_statistics`` convention), never
 prior-day-equity returns (compounding returns do not add; dollars do). A leg
 carrying an ``rf_credit`` column is rf-netted with the same off-by-one
-``short_vol_statistics`` uses (the credit lands at the start of the following
+``excess_over_cash_statistics`` uses (the credit lands at the start of the following
 day), which keeps structure legs on their published statistical basis; a leg
 without the column passes through raw — the column's presence is the switch,
 no per-engine flags. CC legs are rf-free by engine construction.
@@ -36,12 +36,12 @@ import pandas as pd
 def _per_capital_pnl(daily_equity: pd.DataFrame, capital: float) -> pd.Series:
     """One leg's per-capital daily P&L series, indexed by the LATER day of
     each diff (diffs start at day 1 — the day-0 entry half-spread stays out,
-    exactly as short_vol_statistics treats it)."""
+    exactly as excess_over_cash_statistics treats it)."""
     eq = daily_equity['equity'].to_numpy(dtype=float)
     pnl = np.diff(eq) / capital
     if 'rf_credit' in daily_equity.columns:
         # The structure engine's credit lands at the start of the FOLLOWING
-        # day: net rf_credit[1:], the short_vol_statistics off-by-one.
+        # day: net rf_credit[1:], the excess_over_cash_statistics off-by-one.
         pnl = pnl - daily_equity['rf_credit'].to_numpy(dtype=float)[1:] / capital
     dates = daily_equity['date'].astype(str).iloc[1:]
     return pd.Series(pnl, index=pd.Index(dates, name='date'))

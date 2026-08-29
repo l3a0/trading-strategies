@@ -241,7 +241,7 @@ def run_cc_overlay(
 
         daily_equity is a DataFrame with columns ['date', 'equity', 'price'],
         one row per simulated day. Downstream consumers
-        (compute_statistics, make_figures, walk-forward) index by column.
+        (excess_over_buy_hold_statistics, make_figures, walk-forward) index by column.
     """
 
     # Extract parameters from dict
@@ -265,7 +265,7 @@ def run_cc_overlay(
     shares = 100 * num_contracts                   # base shares held (covers the short calls)
     initial_stock_cost = shares * initial_price    # actual capital deployed in stock
     initial_cash = capital - initial_stock_cost    # leftover at t=0, 0% yield. Pinned for the
-                                                   # buy-and-hold benchmark; compute_statistics
+                                                   # buy-and-hold benchmark; excess_over_buy_hold_statistics
                                                    # reconstructs BH equity from
                                                    # shares × prices + initial_cash.
     current_cash = initial_cash                    # working cash account; drained/refilled by
@@ -582,7 +582,7 @@ def run_cc_overlay(
         'capital': round(capital, 2),
         'num_contracts': num_contracts,
         'initial_stock_cost': round(initial_stock_cost, 2),
-        # Initial leftover cash, NOT the working balance — compute_statistics rebuilds the
+        # Initial leftover cash, NOT the working balance — excess_over_buy_hold_statistics rebuilds the
         # buy-and-hold curve from `shares × prices + cash`, which only makes sense with the
         # constant initial cash. Under delta_hedge=True the working cash drifts as hedge
         # trades execute; that drift shows up in `final_equity` via the daily equity series.
@@ -609,7 +609,7 @@ def run_cc_overlay(
 # 4. Statistical Significance
 # ====================
 
-def compute_statistics(
+def excess_over_buy_hold_statistics(
     daily_equity: pd.DataFrame,
     num_contracts: int,
     cash: float,
@@ -1126,7 +1126,7 @@ def degrees_of_freedom(
     bars are not independent draws; ``n_observations`` (the bar count)
     overstates the real evidence. The binding constraint is (B), the trade
     count — and ultimately the Newey-West significance of *excess* returns
-    (see :func:`compute_statistics`). A high ``pct`` means "not obviously
+    (see :func:`excess_over_buy_hold_statistics`). A high ``pct`` means "not obviously
     over-parameterized," never "the edge is real."
 
     Counting convention: only *free* (optimized) parameters are charged
@@ -1432,7 +1432,7 @@ if __name__ == '__main__':
 
     # Statistical significance of the overlay's excess return over buy-and-hold.
     # Null hypothesis: the overlay adds zero value vs. simply holding the stock.
-    stats = compute_statistics(
+    stats = excess_over_buy_hold_statistics(
         daily_equity,
         num_contracts=summary['num_contracts'],
         cash=summary['cash'],
@@ -1455,7 +1455,7 @@ if __name__ == '__main__':
     # whether the volatility risk premium itself is showing up on this underlying.
     hedge_params: dict[str, float] = {**params, 'delta_hedge': 1.0}
     hedge_summary, _, hedge_daily_equity = run_cc_overlay(date_list, prices_arr, hedge_params)
-    hedge_stats = compute_statistics(
+    hedge_stats = excess_over_buy_hold_statistics(
         hedge_daily_equity,
         num_contracts=hedge_summary['num_contracts'],
         cash=hedge_summary['cash'],

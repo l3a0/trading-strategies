@@ -28,6 +28,7 @@ from realchains.vol_premium import (
     bs_gamma,
     bs_price,
     bs_vega,
+    excess_over_cash_statistics,
     implied_vol,
     run_real_calendar_overlay,
     run_real_call_credit_spread_overlay,
@@ -44,7 +45,6 @@ from realchains.vol_premium import (
     select_iron_condor,
     select_put_entry,
     select_straddle,
-    short_vol_statistics,
     structure_greek_signature,
 )
 from search.edge_search import STRUCTURE_GRAMMAR
@@ -153,7 +153,7 @@ class TestShortVolStatistics:
         """A steadily rising equity curve => positive, finite Newey-West t."""
         eq = pd.DataFrame({'equity': [100_000 + 50 * i for i in range(300)],
                            'price': [100.0] * 300})
-        st = short_vol_statistics(eq, 100_000, rf=0.0)
+        st = excess_over_cash_statistics(eq, 100_000, rf=0.0)
         assert st['t_stat_newey_west'] > 0
         assert st['n_days'] == 299
         assert 'passes_t_2' in st
@@ -161,7 +161,7 @@ class TestShortVolStatistics:
     def test_flat_equity_zero_t(self) -> None:
         """A flat equity curve => ~zero t, does not pass the t=2 bar."""
         eq = pd.DataFrame({'equity': [100_000.0] * 200, 'price': [100.0] * 200})
-        st = short_vol_statistics(eq, 100_000, rf=0.0)
+        st = excess_over_cash_statistics(eq, 100_000, rf=0.0)
         assert st['t_stat_newey_west'] == pytest.approx(0.0, abs=1e-9)
         assert st['passes_t_2'] is False
 
@@ -178,7 +178,7 @@ class TestShortVolStatistics:
         daily = cap * rf / 252  # exactly the T-bill dollar earned per day on capital
         eq = pd.DataFrame({'equity': [cap + daily * i for i in range(400)],
                            'price': [100.0] * 400})
-        st = short_vol_statistics(eq, cap, rf=rf)  # no rf_credit column -> flat fallback
+        st = excess_over_cash_statistics(eq, cap, rf=rf)  # no rf_credit column -> flat fallback
         assert st['t_stat_newey_west'] == pytest.approx(0.0, abs=1e-6)
         assert st['ann_excess_return_pct'] == pytest.approx(0.0, abs=1e-6)
         assert st['passes_t_2'] is False
@@ -236,7 +236,7 @@ class TestShortVolCompletion:
     def test_excess_nets_actual_rf_with_open_position(self) -> None:
         """The path the other 9 tests miss: rf > 0 AND a hedged position open
         across the rf-accruing days. The engine credits rf on CASH (not capital),
-        so short_vol_statistics must net the ACTUAL recorded credit. Its excess
+        so excess_over_cash_statistics must net the ACTUAL recorded credit. Its excess
         then equals the rf-netted vol-P&L — identical to the SAME run with rf=0
         (rf cancels, rate-invariant). A flat rf/252 on capital would NOT cancel
         (cash != capital): that base mismatch is exactly the bug this guards.
@@ -261,8 +261,8 @@ class TestShortVolCompletion:
         assert s_rf['num_calls_sold'] >= 1
         assert s_rf['interest_earned'] != 0.0
         assert 'rf_credit' in eq_rf.columns and eq_rf['rf_credit'].abs().sum() > 0
-        st_rf = short_vol_statistics(eq_rf, s_rf['capital'])  # nets the recorded rf_credit
-        st_0 = short_vol_statistics(eq_0, s_0['capital'])     # rf=0 reference vol-P&L
+        st_rf = excess_over_cash_statistics(eq_rf, s_rf['capital'])  # nets the recorded rf_credit
+        st_0 = excess_over_cash_statistics(eq_0, s_0['capital'])     # rf=0 reference vol-P&L
         # rf cancels: the netted excess equals the rf=0 vol-P&L (day-mean and t-stat).
         assert st_rf['mean_daily_excess_dollars'] == pytest.approx(st_0['mean_daily_excess_dollars'], abs=0.05)
         assert st_rf['t_stat_newey_west'] == pytest.approx(st_0['t_stat_newey_west'], abs=0.02)
@@ -273,11 +273,11 @@ class TestShortVolCompletion:
         expected = (eqv[-1] - eqv[0]) - s_rf['interest_earned']
         assert st_rf['mean_daily_excess_dollars'] * st_rf['n_days'] == pytest.approx(expected, abs=0.5)
         # The buggy flat-rf-on-capital benchmark does NOT cancel (cash != capital).
-        flat = short_vol_statistics(eq_rf.drop(columns=['rf_credit']), s_rf['capital'], rf=0.045)
+        flat = excess_over_cash_statistics(eq_rf.drop(columns=['rf_credit']), s_rf['capital'], rf=0.045)
         assert abs(flat['mean_daily_excess_dollars'] - st_rf['mean_daily_excess_dollars']) > 1.0
 
     def test_summed_excess_omits_day0_entry_spread(self) -> None:
-        """short_vol_statistics' summed daily excess and summary['alpha_vs_cash']
+        """excess_over_cash_statistics' summed daily excess and summary['alpha_vs_cash']
         are NOT identical — they differ by the day-0 entry-spread mark.
 
         np.diff(eq) starts from eq[0], which is ALREADY struck at the entry bid/ask
@@ -315,10 +315,10 @@ class TestShortVolCompletion:
                   'risk_free_rate': 0.045, 'hedge_cost_bps': 1.0}
         s, _, eq = run_real_short_vol_overlay(dates, prices, store, params)
         assert s['num_calls_sold'] >= 2  # genuinely multi-cycle
-        st = short_vol_statistics(eq, s['capital'], rf=0.045)
+        st = excess_over_cash_statistics(eq, s['capital'], rf=0.045)
 
         eqv = eq['equity'].to_numpy(float)
-        # What short_vol_statistics actually conserves: equity growth from the day-0
+        # What excess_over_cash_statistics actually conserves: equity growth from the day-0
         # mark, net of the engine's recorded rf — NOT growth from capital.
         summed_excess = (eqv[-1] - eqv[0]) - s['interest_earned']
         assert st['mean_daily_excess_dollars'] * st['n_days'] == pytest.approx(summed_excess, abs=0.5)
@@ -401,7 +401,7 @@ class TestSpyShortVolRegression:
     2010-05-17); rf credited on the cash collateral;
     Schwab-aware hedge cost (commission-free shares, half-spread). Significance is
     the rate-invariant Bakshi-Kapadia delta-hedged-gain measure (rf netted on the
-    cash base it was earned on — see short_vol_statistics).
+    cash base it was earned on — see excess_over_cash_statistics).
 
     Verdict: the gross delta-hedged premium is POSITIVE and MARGINALLY SIGNIFICANT
     (Newey-West t +2.54, Sharpe 0.52, +$36.5K vol-P&L) and SURVIVES SPY's realistic
@@ -435,7 +435,7 @@ class TestSpyShortVolRegression:
             dates, prices, store,
             {'target_delta': 0.25, 'dte': 30, 'capital': 100_000,
              'risk_free_rate': rf, 'hedge_cost_bps': bps})
-        return s, short_vol_statistics(eq, s['capital'], rf=rf)
+        return s, excess_over_cash_statistics(eq, s['capital'], rf=rf)
 
     def test_headline(self, market: Any) -> None:
         """8 contracts, 175 calls over 2010-12 -> 2026-06; net +$73.0K = +$36.5K rf
@@ -523,7 +523,7 @@ class TestSpyShortPutRegression:
             dates, prices, store,
             {'target_delta': -0.25, 'dte': 30, 'capital': 100_000, 'option_type': 'put',
              'risk_free_rate': rf, 'hedge_cost_bps': bps})
-        return s, short_vol_statistics(eq, s['capital'], rf=rf)
+        return s, excess_over_cash_statistics(eq, s['capital'], rf=rf)
 
     def test_headline(self, market: Any) -> None:
         """175 put cycles (8 contracts), 88.5% win, $364,106 premium collected;
@@ -604,7 +604,7 @@ class TestIwmShortPutRegression:
             dates, prices, store,
             {'target_delta': -0.25, 'dte': 30, 'capital': 100_000, 'option_type': 'put',
              'risk_free_rate': rf, 'hedge_cost_bps': bps})
-        return s, short_vol_statistics(eq, s['capital'], rf=rf)
+        return s, excess_over_cash_statistics(eq, s['capital'], rf=rf)
 
     def test_headline(self, market: Any) -> None:
         """169 put cycles (13 contracts), 86.3% win, $361,467 premium; frictionless net
@@ -777,7 +777,7 @@ class TestSpyStraddleSecondary:
             dates, prices, store,
             {'dte': 30, 'capital': 100_000, 'call_delta': 0.50, 'put_delta': -0.50,
              'risk_free_rate': rf, 'hedge_cost_bps': bps})
-        return s, short_vol_statistics(eq, s['capital'], rf=rf)
+        return s, excess_over_cash_statistics(eq, s['capital'], rf=rf)
 
     def test_headline(self, market: Any) -> None:
         """175 straddles (8 contracts), 55.2% win, $1.54M two-leg premium;
@@ -839,7 +839,7 @@ class TestIwmStraddleSecondary:
             dates, prices, store,
             {'dte': 30, 'capital': 100_000, 'call_delta': 0.50, 'put_delta': -0.50,
              'risk_free_rate': rf, 'hedge_cost_bps': bps})
-        return s, short_vol_statistics(eq, s['capital'], rf=rf)
+        return s, excess_over_cash_statistics(eq, s['capital'], rf=rf)
 
     def test_headline(self, market: Any) -> None:
         """169 straddles (13 contracts), 64.9% win, $1.61M premium; frictionless
@@ -907,7 +907,7 @@ class TestQqqShortVolRegression:
         s, _, eq = run_real_short_vol_overlay(
             dates, prices, store,
             {'target_delta': 0.25, 'dte': 30, 'capital': 100_000, 'risk_free_rate': rf, 'hedge_cost_bps': bps})
-        return s, short_vol_statistics(eq, s['capital'], rf=rf)
+        return s, excess_over_cash_statistics(eq, s['capital'], rf=rf)
 
     def test_headline(self, market: Any) -> None:
         s, _ = self._run(market, 0.0)
@@ -958,7 +958,7 @@ class TestIwmShortVolRegression:
         s, _, eq = run_real_short_vol_overlay(
             dates, prices, store,
             {'target_delta': 0.25, 'dte': 30, 'capital': 100_000, 'risk_free_rate': rf, 'hedge_cost_bps': bps})
-        return s, short_vol_statistics(eq, s['capital'], rf=rf)
+        return s, excess_over_cash_statistics(eq, s['capital'], rf=rf)
 
     def test_headline(self, market: Any) -> None:
         s, _ = self._run(market, 0.0)
@@ -1012,7 +1012,7 @@ class TestMsftShortVolRegression:
         s, _, eq = run_real_short_vol_overlay(
             dates, prices, store,
             {'target_delta': 0.25, 'dte': 30, 'capital': 100_000, 'risk_free_rate': rf, 'hedge_cost_bps': bps})
-        return s, short_vol_statistics(eq, s['capital'], rf=rf)
+        return s, excess_over_cash_statistics(eq, s['capital'], rf=rf)
 
     def test_headline_is_a_loss(self, market: Any) -> None:
         s, _ = self._run(market, 0.0)
@@ -1334,7 +1334,7 @@ class TestSpyIronCondorExploratory:
             dates, prices, store,
             {'dte': 30, 'capital': 100_000, 'short_delta': 0.25, 'wing_delta': 0.10,
              'fill': fill, 'risk_free_rate': rf})
-        return s, short_vol_statistics(eq, s['capital'], rf=rf)
+        return s, excess_over_cash_statistics(eq, s['capital'], rf=rf)
 
     def test_headline(self, market: Any) -> None:
         s, _ = self._run(market, 'bid_ask')
@@ -1392,7 +1392,7 @@ class TestMsftShortPutExploratory:
             dates, prices, store,
             {'target_delta': -0.25, 'dte': 30, 'capital': 100_000, 'option_type': 'put',
              'risk_free_rate': rf, 'hedge_cost_bps': bps})
-        return s, short_vol_statistics(eq, s['capital'], rf=rf)
+        return s, excess_over_cash_statistics(eq, s['capital'], rf=rf)
 
     def test_headline(self, market: Any) -> None:
         s, _ = self._run(market, 0.0)
@@ -1438,7 +1438,7 @@ class TestQqqShortPutExploratory:
             dates, prices, store,
             {'target_delta': -0.25, 'dte': 30, 'capital': 100_000, 'option_type': 'put',
              'risk_free_rate': rf, 'hedge_cost_bps': bps})
-        return s, short_vol_statistics(eq, s['capital'], rf=rf)
+        return s, excess_over_cash_statistics(eq, s['capital'], rf=rf)
 
     def test_headline(self, market: Any) -> None:
         s, _ = self._run(market, 0.0)
@@ -1490,7 +1490,7 @@ class TestMsftStraddleExploratory:
             dates, prices, store,
             {'dte': 30, 'capital': 100_000, 'call_delta': 0.50, 'put_delta': -0.50,
              'risk_free_rate': rf, 'hedge_cost_bps': bps})
-        return s, short_vol_statistics(eq, s['capital'], rf=rf)
+        return s, excess_over_cash_statistics(eq, s['capital'], rf=rf)
 
     def test_blowup(self, market: Any) -> None:
         s, st = self._run(market, 0.0)
@@ -1536,7 +1536,7 @@ class TestQqqStraddleExploratory:
             dates, prices, store,
             {'dte': 30, 'capital': 100_000, 'call_delta': 0.50, 'put_delta': -0.50,
              'risk_free_rate': rf, 'hedge_cost_bps': bps})
-        return s, short_vol_statistics(eq, s['capital'], rf=rf)
+        return s, excess_over_cash_statistics(eq, s['capital'], rf=rf)
 
     def test_null(self, market: Any) -> None:
         s, st0 = self._run(market, 0.0)
@@ -1677,7 +1677,7 @@ def _assert_engine_equivalent(market, name: str, *, must_trade: bool = True) -> 
     assert set(s) == _OVERLAY_SUMMARY_KEYS[name], \
         f'{name} summary keys drifted: {set(s) ^ _OVERLAY_SUMMARY_KEYS[name]}'
     # the delegate yields a real equity series the downstream HAC-t can consume
-    assert short_vol_statistics(eq, s['capital'], rf=s['risk_free_rate'])['t_stat_newey_west'] is not None
+    assert excess_over_cash_statistics(eq, s['capital'], rf=s['risk_free_rate'])['t_stat_newey_west'] is not None
 
 
 @pytest.mark.skipif(not (_HAVE_SPY and _HAVE_SPY_PUTS),
@@ -2266,7 +2266,7 @@ class TestCallSpreadExitSizingExploration:
                 'win': st['win_rate'], 'worst_mae': min(maes),
                 'p_ruin2': simulate_sizing(rs, fraction=0.02,
                                            mae_r=maes)['p_ruin'],
-                'nw_t': short_vol_statistics(
+                'nw_t': excess_over_cash_statistics(
                     eq, s['capital'])['t_stat_newey_west'],
                 'net': s['net_pnl'],
                 'reasons': dict(Counter(

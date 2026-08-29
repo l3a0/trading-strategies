@@ -35,7 +35,7 @@ from generative.generative_engine import (
     score_composition,
 )
 from generative.generative_grammar import canonical_key, composition_of
-from realchains.vol_premium import STRUCTURE_SPECS, short_vol_statistics
+from realchains.vol_premium import STRUCTURE_SPECS, excess_over_cash_statistics
 from search.edge_search import STRUCTURE_GRAMMAR, PremiumFamily, load_idea_ledger
 
 
@@ -124,7 +124,7 @@ class TestScoreComposition:
         spec = STRUCTURE_SPECS[name]
         s, _, eq_named = _NAMED_OVERLAY[name](dates, prices, store,
                                               {**_STRUCT_PARAMS[name], 'capital': 100_000})
-        t_named = short_vol_statistics(eq_named, s['capital'],
+        t_named = excess_over_cash_statistics(eq_named, s['capital'],
                                        rf=s['risk_free_rate'])['t_stat_newey_west']
         comp = composition_of(name, _STRUCT_PARAMS[name])
         row = score_composition(

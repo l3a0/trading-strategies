@@ -518,7 +518,7 @@ class TestNvdaGldTrueHoldExploration:
     @pytest.fixture(scope='class')
     def books(self) -> dict:
         from common.trade_ledger import build_trade_ledger, ledger_statistics
-        from engine.cc_backtest import compute_statistics
+        from engine.cc_backtest import excess_over_buy_hold_statistics
         from realchains.cc_r_experiment import (
             attribute_cycles,
             open_tail_entry,
@@ -553,7 +553,7 @@ class TestNvdaGldTrueHoldExploration:
                 native, list(eq['date']), excess,
                 open_entry_date=open_tail_entry(trades))
             st = ledger_statistics(adj)
-            daily = compute_statistics(eq, num_contracts=summary['num_contracts'],
+            daily = excess_over_buy_hold_statistics(eq, num_contracts=summary['num_contracts'],
                                        cash=summary['cash'])
             out[t] = {'summary': summary, 'ledger': st, 'records': adj,
                       'daily_t': daily['t_stat_newey_west'],

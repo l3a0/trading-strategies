@@ -65,7 +65,7 @@ A **`Composition`** is `(legs: 1..MAX_LEGS, hedge_rule, predicted_sign)` subject
 - `≤ MAX_EXPIRATIONS` distinct expiries (a governance cap), and
 - `|net_delta| ≤ 1.0` — **not a tunable cap but a correctness invariant** fixed by the engine's
   `[-1, +1]·shares` hedge clamp: a composition whose net position-delta per contract exceeds 1.0 is
-  *under-hedged*, so its "delta-hedged" P&L is not vol-isolated and `short_vol_statistics`' rf-netting
+  *under-hedged*, so its "delta-hedged" P&L is not vol-isolated and `excess_over_cash_statistics`' rf-netting
   identity breaks. Because delta is entry-day dependent, this is enforced at **runtime, fail-closed**
   (→ `measurement_invalid`) on the resolved legs, alongside the inline mechanism gate — not at
   construction. It becomes a knob only if the hedge is ever generalized beyond one lot per contract.

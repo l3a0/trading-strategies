@@ -39,7 +39,7 @@ existing naked cycles (no engine re-runs), scored by the D_A split against a
 permutation null. (2) The ENGINE-RE-RUN class (lower in this file) — structure
 strategies (short-vol / straddle / iron-condor) that CHANGE the trades, so each
 (template, ticker) candidate runs a full run_real_*_overlay and is scored by
-short_vol_statistics' Newey-West HAC t-stat against its asymptotic normal null
+excess_over_cash_statistics' Newey-West HAC t-stat against its asymptotic normal null
 (a closed-form p, no per-candidate permutation). Both phases share the
 Benjamini-Yekutieli ledger and the sealed-vault discipline; they are parallel
 kill-gates and neither bends the other.
@@ -534,7 +534,7 @@ def _format_summary(rows: Sequence[dict[str, Any]],
 # structure-side ideas — the delta-neutral short-vol / straddle / iron-condor
 # strategies — DO change the trades, so each candidate is (template, ticker)
 # and runs a full run_real_*_overlay engine pass rather than re-tagging fixed
-# cycles. It is scored by short_vol_statistics' Newey-West HAC t-stat against
+# cycles. It is scored by excess_over_cash_statistics' Newey-West HAC t-stat against
 # its ASYMPTOTIC normal null: no per-candidate permutation — the closed-form p
 # is the only mechanical difference from the re-tag gate. The batch is the
 # template x ticker cross-section, judged whole by the same Benjamini-Yekutieli
@@ -557,7 +557,7 @@ STRUCTURE_CAPITAL = 100_000
 STRUCTURE_END = '2026-06-06'   # as-of date the chains are loaded through (single source)
 # Engine-version tag folded into the data-lineage hash (#3a). The recorded
 # statistic is pinned to (data + capital + this version), NOT inferred live from
-# engine code — so a change to the overlay / short_vol_statistics mechanics or the
+# engine code — so a change to the overlay / excess_over_cash_statistics mechanics or the
 # frozen engine config (rf=0.045, hedge_cost_bps=1.0 in vol_premium) that re-computes
 # a different t-stat for the SAME data must BUMP this, which re-lineages and
 # re-records rather than silently keeping a stale answer-key row.
@@ -997,6 +997,7 @@ def structure_kill_gate(cand: StructureCandidate,
     HAC t-stat's asymptotic null — no RNG, closed-form p (the only mechanical
     difference from the re-tag gate)."""
     from realchains.vol_premium import (
+        excess_over_cash_statistics,
         run_real_calendar_overlay,
         run_real_call_credit_spread_overlay,
         run_real_credit_spread_overlay,
@@ -1005,7 +1006,6 @@ def structure_kill_gate(cand: StructureCandidate,
         run_real_short_vol_overlay,
         run_real_straddle_overlay,
         run_real_strangle_overlay,
-        short_vol_statistics,
     )
     overlays = {'short_vol': run_real_short_vol_overlay,
                 'straddle': run_real_straddle_overlay,
@@ -1028,7 +1028,7 @@ def structure_kill_gate(cand: StructureCandidate,
                 'params': cand.params_dict(), 'predicted_sign': cand.predicted_sign,
                 'measurement_invalid': True, 'no_trades': True,
                 't_stat_newey_west': None, 'sign_ok': False, 'p_value': None}
-    st = short_vol_statistics(eq, summary['capital'], rf=summary['risk_free_rate'])
+    st = excess_over_cash_statistics(eq, summary['capital'], rf=summary['risk_free_rate'])
     t_nw = float(st['t_stat_newey_west'])
     return {
         'phase': 'structure',

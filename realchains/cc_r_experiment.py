@@ -34,7 +34,7 @@ the reconstructed buy-and-hold), windowed (entry, close]:
 Epistemic class (plan header): EXPLORATORY measurement per the Gap E
 precedent — sample-spending, kill-or-justify, never a registered verdict;
 nothing enters the idea ledger and no e-value is spent. The engine's daily
-Newey-West t (`compute_statistics`) remains the significance authority;
+Newey-West t (`excess_over_buy_hold_statistics`) remains the significance authority;
 `sqn` / `r_newey_west_t` are reported, never gates — the trade-order score
 grades per-cycle endpoints equal-weighted per premium dollar, the daily t
 grades the actual dollar path, and why the daily judge outranks (path noise,
@@ -73,7 +73,7 @@ from common.trade_ledger import (
     ledger_statistics,
     regime_ledger_statistics,
 )
-from engine.cc_backtest import compute_statistics, six_regime_map
+from engine.cc_backtest import excess_over_buy_hold_statistics, six_regime_map
 from realchains.real_cc_backtest import (
     CHAIN_CLEAN_START,
     REGISTERED_CLEAN_START,
@@ -316,7 +316,7 @@ def run_cell(
         'summary': summary,
         'records': records,
         'ledger': ledger_statistics(records),
-        'daily': compute_statistics(eq, num_contracts=summary['num_contracts'],
+        'daily': excess_over_buy_hold_statistics(eq, num_contracts=summary['num_contracts'],
                                     cash=summary['cash']),
         'eq': eq,
         'excess_final': round(excess[-1], 2),

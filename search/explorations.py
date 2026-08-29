@@ -429,8 +429,8 @@ def random_entry_scout(
     from common.trade_ledger import build_trade_ledger, ledger_statistics
     from realchains.vol_premium import (
         STRUCTURE_SPECS,
+        excess_over_cash_statistics,
         run_real_structure_overlay,
-        short_vol_statistics,
     )
     spec = STRUCTURE_SPECS['short_vol']
     params = {'target_delta': 0.25, 'dte': 30, 'capital': 100_000,
@@ -445,7 +445,7 @@ def random_entry_scout(
                                  shares=100 * s['num_contracts'],
                                  risk_basis='premium_collected')
         st = ledger_statistics(led)
-        nw = short_vol_statistics(eq, s['capital'], rf=params['risk_free_rate'])
+        nw = excess_over_cash_statistics(eq, s['capital'], rf=params['risk_free_rate'])
         return {'n': st['n'], 'expectancy_r': st['expectancy_r'],
                 'win_rate': st['win_rate'],
                 'worst_mae_r': st['mae_r_distribution']['worst'],
@@ -502,7 +502,10 @@ def portfolio_scout() -> dict[str, Any]:
         REGISTERED_CLEAN_START,
         run_real_cc_overlay,
     )
-    from realchains.vol_premium import run_real_short_vol_overlay, short_vol_statistics
+    from realchains.vol_premium import (
+        excess_over_cash_statistics,
+        run_real_short_vol_overlay,
+    )
 
     sv_params = {'target_delta': 0.25, 'dte': 30, 'capital': 100_000,
                  'risk_free_rate': 0.045, 'hedge_cost_bps': 0.0}
@@ -521,7 +524,7 @@ def portfolio_scout() -> dict[str, Any]:
     dates, prices, store = _market('SPY', str(data_path('spy_option_dailies.csv')),
                                    '2026-06-06', start=REGISTERED_CLEAN_START['SPY'])
     s, _, eq = run_real_short_vol_overlay(dates, prices, store, dict(sv_params))
-    t = short_vol_statistics(eq, s['capital'], rf=0.045)['t_stat_newey_west']
+    t = excess_over_cash_statistics(eq, s['capital'], rf=0.045)['t_stat_newey_west']
     assert abs(t - 2.54) < 0.02, f'SPY short-vol drift: NW t {t} != pinned +2.54'
     streams['spy_sv'] = eq
     del store
@@ -532,7 +535,7 @@ def portfolio_scout() -> dict[str, Any]:
                                    extra=[str(data_path('qqq_option_dailies_2011_2016.csv'))],
                                    start=CHAIN_CLEAN_START.get('QQQ'))
     s, _, eq = run_real_short_vol_overlay(dates, prices, store, dict(sv_params))
-    t = short_vol_statistics(eq, s['capital'], rf=0.045)['t_stat_newey_west']
+    t = excess_over_cash_statistics(eq, s['capital'], rf=0.045)['t_stat_newey_west']
     assert abs(t - 2.07) < 0.02, f'QQQ short-vol drift: NW t {t} != pinned +2.07'
     streams['qqq_sv'] = eq
     del store
@@ -543,7 +546,7 @@ def portfolio_scout() -> dict[str, Any]:
                                    extra=[str(data_path('msft_option_dailies_2008_2016.csv'))],
                                    start=CHAIN_CLEAN_START['MSFT'])
     s, _, eq = run_real_short_vol_overlay(dates, prices, store, dict(sv_params))
-    t = short_vol_statistics(eq, s['capital'], rf=0.045)['t_stat_newey_west']
+    t = excess_over_cash_statistics(eq, s['capital'], rf=0.045)['t_stat_newey_west']
     assert abs(t - (-0.26)) < 0.02, f'MSFT short-vol drift: NW t {t} != pinned -0.26'
     streams['msft_sv'] = eq
     del store
@@ -554,8 +557,8 @@ def portfolio_scout() -> dict[str, Any]:
     s, _, eq = run_real_cc_overlay(dates, prices, store, dict(NAKED_PARAMS))
     pnl = s['net_overlay_pnl']
     assert abs(pnl - (-183_552.34)) < 1.0, f'MSFT CC drift: {pnl} != pinned -183552.34'
-    from engine.cc_backtest import compute_statistics
-    t = compute_statistics(eq, num_contracts=s['num_contracts'],
+    from engine.cc_backtest import excess_over_buy_hold_statistics
+    t = excess_over_buy_hold_statistics(eq, num_contracts=s['num_contracts'],
                            cash=s['cash'])['t_stat_newey_west']
     assert abs(t - (-1.73)) < 0.02, f'MSFT CC drift: excess NW t {t} != pinned -1.73'
     streams['msft_cc'] = eq

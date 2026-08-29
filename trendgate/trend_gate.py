@@ -657,7 +657,7 @@ def common_base_nw_t(record_eq: Any, baseline_summary: dict[str, Any]) -> dict[s
     """§6.4: daily common-base excess Newey-West t on the record arm,
     e_t = (ΔE_gated − ΔE_bh) / E_bh,t−1 — zero by construction on uncovered
     days. The estimator is the shared common.stats.newey_west_summary — the
-    same Bartlett-weighted NW block compute_statistics uses, byte-identical
+    same Bartlett-weighted NW block excess_over_buy_hold_statistics uses, byte-identical
     to the mirror formerly inlined here; descriptive only."""
     shares = baseline_summary['num_contracts'] * 100
     cash = baseline_summary['cash']

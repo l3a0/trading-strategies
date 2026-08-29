@@ -359,7 +359,7 @@ fixed, and locate the pinned delta-targeted baseline inside its own 20-career ra
 (`RANDOM_ENTRY_SEED = 20260714 + i`) plus a baseline re-run through the same harness, each career the
 short_vol spec verbatim with only the selector swapped (zero engine changes: the jitter is a stateful
 closure through the existing `select=` seam, delegating the pick to the baseline selector itself).
-Measured through the Gap A ledger (per-trade `expectancy_r` primary) and `short_vol_statistics` (hedged
+Measured through the Gap A ledger (per-trade `expectancy_r` primary) and `excess_over_cash_statistics` (hedged
 NW t, secondary — jittered careers hold more flat days, a mechanical dilution). All pinned in
 `TestRandomEntryScout`; the selector mechanics, including the k=0 baseline-identity anchor and the
 emission-keyed desync convention, in `TestRandomEntryMechanics`.
@@ -571,8 +571,8 @@ The reconciliation, itemized — same option, same daily delta hedge, three
 wrapper differences: (1) **the exit rule**, worth roughly half the gap
 (+0.41 → +0.79 at hold): the CC frame takes profit at 75% and force-buys
 deep-ITM calls back *into rallies at the ask*, where the short-vol overlay
-rides every cycle to settlement; (2) **the yardstick**: `short_vol_statistics`
-answers "did the option book beat cash, rf netted," `compute_statistics`
+rides every cycle to settlement; (2) **the yardstick**: `excess_over_cash_statistics`
+answers "did the option book beat cash, rf netted," `excess_over_buy_hold_statistics`
 answers "did the hedged book beat the stock, zero-interest" — two
 estimators, two questions, t-stats not interchangeable across them;
 (3) **the cadence**: 325 round trips here vs the short-vol book's 174, each

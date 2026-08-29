@@ -224,7 +224,7 @@ def score_composition(composition: Composition, ticker: str, dates: list[str], p
     name (a structure can't survive on a lucky t-stat alone if its mechanism is incoherent). A non-trading
     composition is `measurement_invalid` (p=None -> e=0), the campaign analog of the equivalence test's
     must-trade guard. Phase 3b/3c — the per-cell scorer the menu-walker and the Phase-4 author feed into."""
-    from realchains.vol_premium import short_vol_statistics
+    from realchains.vol_premium import excess_over_cash_statistics
     from search.edge_search import _asymptotic_p
     p = {**(params or {}), 'capital': capital}
     summary, trades, eq = run_composition(composition, dates, prices, store, p,
@@ -238,7 +238,7 @@ def score_composition(composition: Composition, ticker: str, dates: list[str], p
                 'no_trades': True, 't_stat_newey_west': None, 'sign_ok': False, 'p_value': None}
     sig = _entry_signature(composition, dates, prices, store, p)
     family = derive_family(sig) if sig is not None else None  # the inline mechanism gate
-    st = short_vol_statistics(eq, summary['capital'], rf=summary['risk_free_rate'])
+    st = excess_over_cash_statistics(eq, summary['capital'], rf=summary['risk_free_rate'])
     t_nw = float(st['t_stat_newey_west'])
     t_sign = (t_nw > 0) - (t_nw < 0)                          # +1 / -1 / 0, matching np.sign
     # fail-closed: a mechanism-incoherent composition (family None) keeps its t-stat for transparency but

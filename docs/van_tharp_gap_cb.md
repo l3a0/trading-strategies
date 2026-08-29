@@ -80,9 +80,9 @@ Consequences of the replay design:
   `shares = 100 * num_contracts` at engine/cc_backtest.py:259-265, realchains/real_cc_backtest.py:314-317,
   and realchains/vol_premium.py:826-829, with the loops starting at :308, :338, and :848 respectively.
   Position exposure therefore never compounds — each trade's dollar P&L comes off the same contract
-  count. One denominator nuance: `short_vol_statistics` measures returns against constant capital
+  count. One denominator nuance: `excess_over_cash_statistics` measures returns against constant capital
   (`np.diff(eq) / capital`, the "FIXED deployed-capital base" comment, realchains/vol_premium.py:184),
-  while `compute_statistics` divides by prior-day equity (engine/cc_backtest.py:679-680) — but the
+  while `excess_over_buy_hold_statistics` divides by prior-day equity (engine/cc_backtest.py:679-680) — but the
   flat-exposure fact holds in both. The engines' convention is the constant-dollar-risk baseline (a fixed
   dollar R every trade, P&L adding rather than compounding); the replay generalizes it to risk that
   scales with equity.
@@ -332,8 +332,8 @@ and the monotonicity verdict. These are Experiment 1's first pinned measurements
   flagged hypotheses, and none is flagged here. If a sizing-conditioned strategy ever emerges from these
   distributions, it becomes a new exploratory scout under the usual rails (the explorations pattern, the
   campaign FDR if automated) — never a promoted finding of this work.
-- **One significance authority.** The daily Newey-West HAC t (`compute_statistics` /
-  `short_vol_statistics`) remains the sole authority, unchanged. Every sizing output is reported, never a
+- **One significance authority.** The daily Newey-West HAC t (`excess_over_buy_hold_statistics` /
+  `excess_over_cash_statistics`) remains the sole authority, unchanged. Every sizing output is reported, never a
   gate — the ledger's own pinned posture (common/trade_ledger.py:9-13).
 - **Kelly is a reference point.** `kelly_fraction` locates a bag on the growth curve; it is never a
   recommendation.

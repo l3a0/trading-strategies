@@ -47,7 +47,7 @@ review (docs/vol_premium.md) gives it a STRONG PRIOR of ~0 on these
 single-name / one-index, post-2010, call-only inputs.
 
 PINNED & AUDITED. The accounting was adversarially audited (engine bookkeeping
-clean; one benchmark-base bug in short_vol_statistics found and fixed), and the
+clean; one benchmark-base bug in excess_over_cash_statistics found and fixed), and the
 SPY headline is pinned by TestSpyShortVolRegression: the rate-invariant
 Bakshi-Kapadia delta-hedged premium is +2.54 (Sharpe 0.52) and survives SPY's
 realistic transaction costs. Phase B (the put side) is the remaining open work.
@@ -139,7 +139,7 @@ def run_real_short_vol_overlay(
     return run_structure_via_spec('short_vol', dates, prices, store, params)
 
 
-def short_vol_statistics(
+def excess_over_cash_statistics(
     daily_equity: pd.DataFrame, capital: float,
     rf: float = 0.045, periods_per_year: int = 252,
 ) -> dict[str, Any]:
@@ -179,7 +179,7 @@ def short_vol_statistics(
     Fallback: a hand-built equity curve with no `rf_credit` column subtracts a flat
     rf/periods_per_year (the legacy synthetic path); `rf` is used only there. The
     engine path ignores `rf` and uses the recorded credit. Same Newey-West HAC
-    convention as compute_statistics.
+    convention as excess_over_buy_hold_statistics.
     """
     eq = daily_equity['equity'].to_numpy(dtype=float)
     ret = np.diff(eq) / capital  # FIXED deployed-capital base (not grown equity)
@@ -384,7 +384,7 @@ def run_real_iron_condor_overlay(
 # of this one loop and, post-Stage-B, thin DELEGATES to it (run_structure_via_spec): a single
 # cash account, the per-day rf credit, the gap<=4 settlement, the mark
 # equity = cash + hedge*price + sum(sign*mid)*shares, and the [date, equity, price, rf_credit]
-# schema short_vol_statistics consumes. They differ only in three parameterized knobs: the entry
+# schema excess_over_cash_statistics consumes. They differ only in three parameterized knobs: the entry
 # guard, the hedge mode, and management. The unifying leg math (verified per overlay):
 #   entry credit  = sum over legs of (-sign * entry_net)   [short: sell-comm; long: buy+comm]
 #   settle cash   = sum over legs of ( sign * intrinsic)
@@ -874,7 +874,7 @@ def run_real_structure_overlay(
     `select(day, params)`, each {sign(+1 long/-1 short), right, strike, contract,
     entry_net, mid, delta, expiration}. Returns (summary, trades, daily_equity): `trades` is one
     record per enter/settle/close (non-empty iff the structure traded — what a caller's must_trade
-    / measurement_invalid guard keys off), and daily_equity uses the schema short_vol_statistics
+    / measurement_invalid guard keys off), and daily_equity uses the schema excess_over_cash_statistics
     consumes.
 
     Parameterized differences from the shared skeleton:
@@ -947,7 +947,7 @@ def run_real_structure_overlay(
     for i, (date, price) in enumerate(zip(dates, prices)):
         day = store.get(date)
 
-        # 1. rf on yesterday's cash (recorded for rf-netting in short_vol_statistics).
+        # 1. rf on yesterday's cash (recorded for rf-netting in excess_over_cash_statistics).
         day_rf_credit = 0.0
         if i > 0:
             day_rf_credit = cash * daily_rf
@@ -1347,7 +1347,7 @@ def _cli() -> None:
     td = float(sys.argv[2]) if len(sys.argv) > 2 else 0.50
     params = {'target_delta': td, 'dte': 30, 'capital': 100_000}
     summary, _, eq = run_real_short_vol_overlay(dates, prices, store, params)
-    stats = short_vol_statistics(eq, summary['capital'], rf=summary['risk_free_rate'])
+    stats = excess_over_cash_statistics(eq, summary['capital'], rf=summary['risk_free_rate'])
     print(f'{ticker} delta-neutral short call, target_delta={td}  ({dates[0]} -> {dates[-1]})')
     print(f'  contracts {summary["num_contracts"]}  sold {summary["num_calls_sold"]}  '
           f'win% {summary["win_rate"]}  maxDD {summary["max_drawdown_pct"]}%')

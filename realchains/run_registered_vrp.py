@@ -5,7 +5,7 @@ delta-neutral short PUT at target delta -0.25, 30 DTE, hold-to-expiry, sold at t
 bid, hedged with SHORT stock rebalanced daily on the signed vendor delta, on real
 SPY (primary) and IWM (out-of-sample) chains over each ticker's REGISTERED_CLEAN_START
 clean span. The verdict (§4) is the rate-invariant Bakshi-Kapadia delta-hedged-gain
-Newey-West t (short_vol_statistics) at hedge_cost_bps=0.5; the 0/0.2/1.0 bp t's are
+Newey-West t (excess_over_cash_statistics) at hedge_cost_bps=0.5; the 0/0.2/1.0 bp t's are
 the reported cost curve. Pass rule §5, outcome language §6.
 
 This is the analysis code the results PR cites. The engine and the significance
@@ -23,9 +23,9 @@ from realchains.real_cc_backtest import (
     load_unadjusted_prices,
 )
 from realchains.vol_premium import (
+    excess_over_cash_statistics,
     run_real_short_vol_overlay,
     run_real_straddle_overlay,
-    short_vol_statistics,
 )
 
 COSTS = [0.0, 0.2, 0.5, 1.0]
@@ -47,7 +47,7 @@ def run_put(daily_path: str, ticker: str, rf: float = 0.045) -> tuple[list[str],
             dts, pxs, store,
             {'target_delta': -0.25, 'dte': 30, 'capital': 100_000,
              'option_type': 'put', 'risk_free_rate': rf, 'hedge_cost_bps': bps})
-        out[bps] = (s, short_vol_statistics(eq, s['capital'], rf=rf))
+        out[bps] = (s, excess_over_cash_statistics(eq, s['capital'], rf=rf))
     return days, out
 
 
@@ -86,7 +86,7 @@ def run_straddle(paths: list[str], ticker: str, rf: float = 0.045) -> tuple[list
             dts, pxs, store,
             {'dte': 30, 'capital': 100_000, 'call_delta': 0.50, 'put_delta': -0.50,
              'risk_free_rate': rf, 'hedge_cost_bps': bps})
-        out[bps] = (s, short_vol_statistics(eq, s['capital'], rf=rf))
+        out[bps] = (s, excess_over_cash_statistics(eq, s['capital'], rf=rf))
     return dts, out  # the actual run dates (a merged store can extend past them)
 
 

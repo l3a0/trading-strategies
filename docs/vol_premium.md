@@ -103,7 +103,7 @@ wings per day):
 
 The engine credits rf on the cash collateral and charges the share-hedge
 half-spread (commission-free shares, per Schwab). The significance helper,
-`short_vol_statistics`, had a benchmark bug: it subtracted a flat risk-free rate
+`excess_over_cash_statistics`, had a benchmark bug: it subtracted a flat risk-free rate
 on the *deployed capital* ($100K), but the engine only ever credits rf on the
 *cash* balance — which the hedge holds far below capital (mean \~$68K on the SPY
 run, and negative on the days the hedge drains it). Removing rf on a base larger
@@ -431,7 +431,7 @@ guard across the search tickers, and every pin is byte-identical), but a *future
 net-credit-near-zero entry guard would need to confirm it can't flip there. The point of generalizing is
 to make an arbitrary grammar-reachable structure *runnable* — the precondition for a larger,
 mechanism-typed menu of short-vol structures (roll / stop / spread / calendar variants),
-each still scored by the same `short_vol_statistics` HAC-t and judged by the same FDR ledger.
+each still scored by the same `excess_over_cash_statistics` HAC-t and judged by the same FDR ledger.
 
 ## Remaining limitations
 

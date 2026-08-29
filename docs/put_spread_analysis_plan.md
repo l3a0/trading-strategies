@@ -56,7 +56,7 @@ function + no I/O), specialized to the registered pipeline:
   `day['candidates'][…][0]`; returns None when ≤ 22, else the baseline's leg
   list unmodified (delegation-pure, the Gap F invariance pattern).
 - `_excess(daily_eq, capital)` — `np.diff(equity)/capital` minus
-  `rf_credit[1:]/capital` (the `short_vol_statistics` recipe; the array is
+  `rf_credit[1:]/capital` (the `excess_over_cash_statistics` recipe; the array is
   not exposed by that function and `common/portfolio.py`'s extractor is
   private, so the driver owns its three-line copy, equivalence-tested).
 - `walk_forward_structure(dates, prices, store, *, cells, train_years,

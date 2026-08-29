@@ -154,7 +154,7 @@ does not bend the cheap re-tag gate:
   straddle/iron-condor/risk-reversal/credit-spread by merging the separate SPY puts file at load
   since the canonical SPY store is calls-only).
 - **A HAC-t kill-gate with a closed-form null.** The score is
-  `short_vol_statistics`'s Newey-West (HAC) t-stat on the daily rate-netted P&L,
+  `excess_over_cash_statistics`'s Newey-West (HAC) t-stat on the daily rate-netted P&L,
   whose asymptotic null is standard normal — so the p-value is closed-form
   (`erfc(t/√2)/2`, one-sided for the predicted positive premium) and there is
   *no* per-candidate permutation. The cost is N engine runs plus one

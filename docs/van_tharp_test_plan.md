@@ -58,7 +58,7 @@ Tharp's native units: the **R-multiple** (a trade's P&L expressed in multiples o
 
 These are closer than they look. The SQN is `sqrt(N) * mean(R) / std(R)` — literally the one-sample
 t-statistic of the R-multiple distribution. The repo's Newey-West t-stat
-(`short_vol_statistics`, realchains/vol_premium.py:140; `compute_statistics`, engine/cc_backtest.py:601) is
+(`excess_over_cash_statistics`, realchains/vol_premium.py:140; `excess_over_buy_hold_statistics`, engine/cc_backtest.py:601) is
 already a stronger, HAC-robust version of the same quantity: it corrects for the serial dependence a naive
 SQN ignores. So the engine does not need a new significance authority. It needs the two **inputs** that the
 SQN and expectancy require and the engine never computes:
@@ -94,7 +94,7 @@ realchains/vol_premium.py. Max adverse excursion (MAE), the worst intratrade mar
 either: `worst` appears only in `sensitivity_analysis` (a param-sweep statistic, engine/cc_backtest.py:1290)
 and a drawdown comment; the structure mark loop updates `leg['mid']` per day (realchains/vol_premium.py:935)
 but never records a running low-water mark. Both statistics functions discard the trade list entirely and
-reconstruct everything from the daily equity DataFrame (`short_vol_statistics` reads `daily_equity['equity']`
+reconstruct everything from the daily equity DataFrame (`excess_over_cash_statistics` reads `daily_equity['equity']`
 at realchains/vol_premium.py:182). The need is a common per-trade record — `{entry_date, close_date, pnl,
 initial_risk_R, mae}` — emitted by every overlay. `initial_risk_R` is free for the defined-risk structures
 (the credit spread and iron condor: long-wing width minus net credit), though that width is never computed
@@ -222,7 +222,7 @@ the edge survives.
 **What exists.** Every overlay emits a daily equity stream — the structure engine builds
 `daily_equity` with columns `['date', 'equity', 'price', 'rf_credit']` (realchains/vol_premium.py:985), the
 real CC engine emits `['date', 'equity', 'price']` (realchains/real_cc_backtest.py:515), and the simulated
-CC engine returns a daily curve for `compute_statistics`. Every consumer is single-strategy.
+CC engine returns a daily curve for `excess_over_buy_hold_statistics`. Every consumer is single-strategy.
 
 **What's missing.** As of this plan, a harness existed nowhere — a repo-wide grep for
 `corrcoef|\.corr(|cov_matrix|correlation_matrix|portfolio_weight|risk_parity|combine_streams` found only a

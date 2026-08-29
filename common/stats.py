@@ -2,8 +2,8 @@
 
 ``newey_west_summary`` is the single home of the repo's naive-vs-Newey-West
 significance arithmetic. Every surface that reports a HAC t consumes it:
-``engine.cc_backtest.compute_statistics`` (the proxy engine's excess-return
-block), ``realchains.vol_premium.short_vol_statistics`` (the structure
+``engine.cc_backtest.excess_over_buy_hold_statistics`` (the proxy engine's excess-return
+block), ``realchains.vol_premium.excess_over_cash_statistics`` (the structure
 engine's, feeding every campaign cell), ``factor/factor_backend`` (the daily
 IC series), and ``common/trade_ledger`` (the per-trade R-multiple series).
 It lives here — not in any of those packages — because ``common/`` is the

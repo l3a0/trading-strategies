@@ -152,7 +152,7 @@ def ic_to_row(ic: np.ndarray, family: str | None, predicted_sign: int, key: str,
                 't_stat_newey_west': None, 'sign_ok': False, 'p_value': None}
     # The IC t-stat, NEWEY-WEST HAC-corrected for the IC series' autocorrelation (adjacent days share most
     # of the cross-section) — so the shared honest-core field `t_stat_newey_west` is now LITERALLY accurate
-    # for factors, the same HAC convention the option path uses (cc_backtest.compute_statistics).
+    # for factors, the same HAC convention the option path uses (cc_backtest.excess_over_buy_hold_statistics).
     t_ic = newey_west_t(ic)
     t_sign = (t_ic > 0) - (t_ic < 0)
     gated_out = require_mechanism and family is None       # opt-in foil-paper gate: keep t, never flag
