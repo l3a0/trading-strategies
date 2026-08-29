@@ -174,7 +174,7 @@ def run_cell(
 # --- the excess stream and its statistics ------------------------------------
 
 def excess_stream(daily_eq: pd.DataFrame, capital: float) -> np.ndarray:
-    """The rf-netted per-capital daily excess (the short_vol_statistics
+    """The rf-netted per-capital daily excess (the excess_over_cash_statistics
     recipe, which does not expose its array): diff(equity)/capital minus the
     engine's actual per-day rf credit (off by one: the credit inside
     eq[k+1]-eq[k] was applied at the start of day k+1)."""

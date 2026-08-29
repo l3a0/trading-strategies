@@ -71,7 +71,7 @@ from typing import Any, ClassVar
 import pytest
 
 from common.paths import DATA_DIR
-from engine.cc_backtest import compute_statistics, run_cc_overlay
+from engine.cc_backtest import excess_over_buy_hold_statistics, run_cc_overlay
 from realchains.real_cc_backtest import (
     CHAIN_CLEAN_START,
     _unsplit_factor,
@@ -544,7 +544,7 @@ class TestQqqRealChainRegression:
     def test_significance(self, real) -> None:
         """NW t = -1.78: the real overlay's harm is near-significant."""
         s, _, eq = real
-        st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
+        st = excess_over_buy_hold_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
         assert st['t_stat_newey_west'] == pytest.approx(-1.78, abs=0.02)
         assert st['sharpe_excess'] == pytest.approx(-0.53, abs=0.01)
         assert st['passes_t_2'] is False
@@ -559,7 +559,7 @@ class TestQqqRealChainRegression:
         """
         dates, prices, store = market
         s, _, eq = run_real_cc_overlay(dates, prices, store, {**_PARAMS, 'fill': 'mid'})
-        st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
+        st = excess_over_buy_hold_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
         assert s['net_overlay_pnl'] == pytest.approx(-144_735.30, abs=1.0)
         assert s['num_calls_sold'] == 210
         assert st['t_stat_newey_west'] == pytest.approx(-1.76, abs=0.02)
@@ -574,7 +574,7 @@ class TestQqqRealChainRegression:
         import numpy as np
         s, _, eq = run_cc_overlay(dates, np.array(prices),
                                   {**_PARAMS, 'dte': 21})  # engine dte is trading days
-        st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
+        st = excess_over_buy_hold_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
         assert s['net_overlay_pnl'] == pytest.approx(120_216.68, abs=1.0)
         assert st['t_stat_newey_west'] == pytest.approx(0.14, abs=0.02)
 
@@ -668,7 +668,7 @@ class TestQqqRealRiskManagedRegression:
         annualized excess return is +0.16% — there is no volatility premium
         to isolate at real QQQ quote levels under worst-case fills."""
         s, _, eq = hedged
-        st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
+        st = excess_over_buy_hold_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
         assert st['ann_excess_return_pct'] == pytest.approx(0.164, abs=0.005)
         assert st['ann_excess_vol_pct'] == pytest.approx(3.06, abs=0.02)
         assert st['sharpe_excess'] == pytest.approx(0.054, abs=0.005)
@@ -683,7 +683,7 @@ class TestQqqRealRiskManagedRegression:
         s, _, eq = run_real_cc_overlay(
             dates, prices, store,
             {**_PARAMS, 'fill': 'mid', 'delta_hedge': 1.0})
-        st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
+        st = excess_over_buy_hold_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
         assert s['net_overlay_pnl'] == pytest.approx(129.15, abs=1.0)
         assert s['num_calls_sold'] == 210  # mid fills shift entries, as in the naive variant
         assert st['sharpe_excess'] == pytest.approx(0.091, abs=0.005)
@@ -700,7 +700,7 @@ class TestQqqRealRiskManagedRegression:
         import numpy as np
         s, _, eq = run_cc_overlay(dates, np.array(prices),
                                   {**_PARAMS, 'dte': 21, 'delta_hedge': 1.0})
-        st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
+        st = excess_over_buy_hold_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
         assert s['net_overlay_pnl'] == pytest.approx(217_689.50, abs=2.0)
         assert s['premium_retention_pct'] == pytest.approx(42.1, abs=0.1)
         assert st['sharpe_excess'] == pytest.approx(0.386, abs=0.005)
@@ -785,7 +785,7 @@ class TestMsftRealChainRegression:
         of the t=2 bar this repo holds every result to (and -0.90 at mid —
         noise). The defensible claim is 'no edge, sign now negative'."""
         s, _, eq = real
-        st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
+        st = excess_over_buy_hold_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
         assert st['t_stat_newey_west'] == pytest.approx(-1.73, abs=0.02)
         assert st['sharpe_excess'] == pytest.approx(-0.49, abs=0.01)
         # The naive side of the README's "excess vol cut from 6.64% to 4.80%"
@@ -798,7 +798,7 @@ class TestMsftRealChainRegression:
         """Mid fills recover ~$108K but still lose: spread hurts, economics decide."""
         dates, prices, store = market
         s, _, eq = run_real_cc_overlay(dates, prices, store, {**_PARAMS, 'fill': 'mid'})
-        st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
+        st = excess_over_buy_hold_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
         assert s['net_overlay_pnl'] == pytest.approx(-75_988.84, abs=1.0)
         assert s['num_calls_sold'] == 195
         assert st['t_stat_newey_west'] == pytest.approx(-0.90, abs=0.02)
@@ -815,7 +815,7 @@ class TestMsftRealChainRegression:
         import numpy as np
         s, _, eq = run_cc_overlay(dates, np.array(prices),
                                   {**_PARAMS, 'dte': 21})  # engine dte is trading days
-        st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
+        st = excess_over_buy_hold_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
         assert s['net_overlay_pnl'] == pytest.approx(269_948.12, abs=1.0)
         assert st['t_stat_newey_west'] == pytest.approx(0.58, abs=0.02)
 
@@ -909,7 +909,7 @@ class TestMsftRealRiskManagedRegression:
         annualized excess return is -0.30% — there is no volatility premium
         to isolate at real MSFT quote levels under worst-case fills."""
         s, _, eq = hedged
-        st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
+        st = excess_over_buy_hold_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
         assert st['ann_excess_return_pct'] == pytest.approx(-0.297, abs=0.005)
         assert st['ann_excess_vol_pct'] == pytest.approx(4.80, abs=0.02)
         assert st['sharpe_excess'] == pytest.approx(-0.062, abs=0.005)
@@ -924,7 +924,7 @@ class TestMsftRealRiskManagedRegression:
         s, _, eq = run_real_cc_overlay(
             dates, prices, store,
             {**_PARAMS, 'fill': 'mid', 'delta_hedge': 1.0})
-        st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
+        st = excess_over_buy_hold_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
         assert s['net_overlay_pnl'] == pytest.approx(16_637.63, abs=1.0)
         assert s['num_calls_sold'] == 195  # mid fills shift entries, as in the naive variant
         assert st['sharpe_excess'] == pytest.approx(0.199, abs=0.005)
@@ -941,7 +941,7 @@ class TestMsftRealRiskManagedRegression:
         import numpy as np
         s, _, eq = run_cc_overlay(dates, np.array(prices),
                                   {**_PARAMS, 'dte': 21, 'delta_hedge': 1.0})
-        st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
+        st = excess_over_buy_hold_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
         assert s['net_overlay_pnl'] == pytest.approx(289_266.98, abs=2.0)
         assert s['premium_retention_pct'] == pytest.approx(30.9, abs=0.1)
         assert st['sharpe_excess'] == pytest.approx(0.49, abs=0.005)
@@ -1108,7 +1108,7 @@ class TestMsftExtendedSpanRegression:
     def test_significance(self, real) -> None:
         """NW t = -1.28: no edge, sign negative, 16 years of data."""
         s, _, eq = real
-        st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
+        st = excess_over_buy_hold_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
         assert st['t_stat_newey_west'] == pytest.approx(-1.28, abs=0.02)
         assert st['sharpe_excess'] == pytest.approx(-0.303, abs=0.005)
         assert st['passes_t_2'] is False
@@ -1119,7 +1119,7 @@ class TestMsftExtendedSpanRegression:
         import numpy as np
         s, _, eq = run_cc_overlay(dates, np.array(prices),
                                   {**_PARAMS, 'dte': 21})  # engine dte is trading days
-        st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
+        st = excess_over_buy_hold_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
         assert s['net_overlay_pnl'] == pytest.approx(533_159.94, abs=1.0)
         assert s['num_calls_sold'] == 301
         assert st['t_stat_newey_west'] == pytest.approx(0.20, abs=0.02)
@@ -1194,7 +1194,7 @@ class TestMsftStopLossRegression:
         dates, prices, store = self._ten_year(market)
         s, trades, eq = run_real_cc_overlay(dates, prices, store,
                                             {**_PARAMS, 'stop_loss_mult': 2.0})
-        st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
+        st = excess_over_buy_hold_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
         assert s['net_overlay_pnl'] == pytest.approx(-251_775.94, abs=1.0)
         assert s['total_premium_collected'] == pytest.approx(1_000_234.80, abs=1.0)
         assert s['num_calls_sold'] == 256
@@ -1213,7 +1213,7 @@ class TestMsftStopLossRegression:
         dates, prices, store = market
         s, trades, eq = run_real_cc_overlay(dates, prices, store,
                                             {**_PARAMS, 'stop_loss_mult': 2.0})
-        st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
+        st = excess_over_buy_hold_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
         assert s['net_overlay_pnl'] == pytest.approx(-514_187.18, abs=1.0)
         assert s['num_calls_sold'] == 388
         assert [t['action'] for t in trades].count('close_stop') == 168
@@ -1307,7 +1307,7 @@ class TestMsftRealCallSpreadRegression:
         dates, prices, store = market
         s, trades, eq = run_real_cc_overlay(
             dates, prices, store, {**_PARAMS, 'cap_delta': cap_delta})
-        st = compute_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
+        st = excess_over_buy_hold_statistics(eq, num_contracts=s['num_contracts'], cash=s['cash'])
         itm = sum(t['pnl'] for t in trades if t['action'] == 'close_itm')
         worst = min(t['pnl'] for t in trades
                     if t['action'] in ('close', 'close_itm', 'expiration'))

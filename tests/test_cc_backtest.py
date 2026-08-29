@@ -19,8 +19,8 @@ from engine.cc_backtest import (
     bs_price,
     calc_rolling_volatility,
     classify_regime,
-    compute_statistics,
     degrees_of_freedom,
+    excess_over_buy_hold_statistics,
     find_strike_for_delta,
     monte_carlo_shuffle,
     normal_cdf,
@@ -666,14 +666,14 @@ class TestScenarioEquityFinalState:
 
 
 # ====================
-# compute_statistics
+# excess_over_buy_hold_statistics
 # ====================
 
 def _build_daily_equity(
     equity_series: list[float],
     price_series: list[float],
 ) -> pd.DataFrame:
-    """Build a daily_equity payload in the shape compute_statistics expects."""
+    """Build a daily_equity payload in the shape excess_over_buy_hold_statistics expects."""
     dates = _fake_dates(len(equity_series))
     return pd.DataFrame(
         {'date': dates, 'equity': equity_series, 'price': price_series}
@@ -692,7 +692,7 @@ class TestComputeStatistics:
         equity = [10_000.0] * 50
         daily_equity = _build_daily_equity(equity, prices)
 
-        stats = compute_statistics(daily_equity, num_contracts=1, cash=0.0)
+        stats = excess_over_buy_hold_statistics(daily_equity, num_contracts=1, cash=0.0)
 
         assert stats['t_stat_naive'] == pytest.approx(0.0, abs=1e-9)
         assert stats['t_stat_newey_west'] == pytest.approx(0.0, abs=1e-9)
@@ -718,7 +718,7 @@ class TestComputeStatistics:
         equity = [float(2 ** i) for i in range(n)]
         daily_equity = _build_daily_equity(equity, prices)
 
-        stats = compute_statistics(daily_equity, num_contracts=1, cash=0.0)
+        stats = excess_over_buy_hold_statistics(daily_equity, num_contracts=1, cash=0.0)
 
         assert stats['t_stat_naive'] == pytest.approx(0.0, abs=1e-9)
         assert stats['t_stat_newey_west'] == pytest.approx(0.0, abs=1e-9)
@@ -737,7 +737,7 @@ class TestComputeStatistics:
             equity.append(equity[-1] * (1 + r))
         daily_equity = _build_daily_equity(equity, prices)
 
-        stats = compute_statistics(daily_equity, num_contracts=1, cash=0.0)
+        stats = excess_over_buy_hold_statistics(daily_equity, num_contracts=1, cash=0.0)
 
         # With 500 days of +5 bps mean and 3 bps noise, t-stat should be very large
         assert stats['t_stat_naive'] > 10.0
@@ -758,7 +758,7 @@ class TestComputeStatistics:
             equity.append(equity[-1] * (1 + r))
         daily_equity = _build_daily_equity(equity, prices)
 
-        stats = compute_statistics(daily_equity, num_contracts=1, cash=0.0)
+        stats = excess_over_buy_hold_statistics(daily_equity, num_contracts=1, cash=0.0)
 
         # Independently reconstruct excess returns and compute naive t-stat
         equity_arr = np.array(equity)
@@ -779,7 +779,7 @@ class TestComputeStatistics:
         for r in excess:
             equity.append(equity[-1] * (1 + r))
         dail = _build_daily_equity(equity, prices)
-        stats_strong = compute_statistics(dail, num_contracts=1, cash=0.0)
+        stats_strong = excess_over_buy_hold_statistics(dail, num_contracts=1, cash=0.0)
 
         assert stats_strong['passes_t_2'] == (abs(stats_strong['t_stat_newey_west']) > 2.0)
         assert stats_strong['passes_t_3'] == (abs(stats_strong['t_stat_newey_west']) > 3.0)
@@ -791,7 +791,7 @@ class TestComputeStatistics:
         equity = [10_000.0 + i * 0.1 for i in range(n_equity)]
         daily_equity = _build_daily_equity(equity, prices)
 
-        stats = compute_statistics(daily_equity, num_contracts=1, cash=0.0)
+        stats = excess_over_buy_hold_statistics(daily_equity, num_contracts=1, cash=0.0)
 
         # n=2513 excess returns (one less than daily_equity length)
         n_returns = n_equity - 1
@@ -803,7 +803,7 @@ class TestComputeStatistics:
         # Only 1 equity point → 0 returns → should raise
         daily_equity = _build_daily_equity([10_000.0], [100.0])
         with pytest.raises(ValueError, match="at least 2"):
-            compute_statistics(daily_equity, num_contracts=1, cash=0.0)
+            excess_over_buy_hold_statistics(daily_equity, num_contracts=1, cash=0.0)
 
     def test_includes_all_expected_keys(self) -> None:
         """Return dict should include all metrics the caller needs."""
@@ -811,7 +811,7 @@ class TestComputeStatistics:
             [10_000.0 + i for i in range(100)],
             [100.0] * 100,
         )
-        stats = compute_statistics(daily_equity, num_contracts=1, cash=0.0)
+        stats = excess_over_buy_hold_statistics(daily_equity, num_contracts=1, cash=0.0)
 
         expected_keys = {
             'n_days', 'years_of_data',
@@ -822,7 +822,7 @@ class TestComputeStatistics:
         assert set(stats.keys()) == expected_keys
 
     def test_integrates_with_run_cc_overlay(self) -> None:
-        """compute_statistics should consume run_cc_overlay output directly."""
+        """excess_over_buy_hold_statistics should consume run_cc_overlay output directly."""
         # 60 days of mild oscillation — generates real overlay activity
         prices = np.array(
             [100.0 + (0.5 if i % 2 == 0 else -0.5) for i in range(60)],
@@ -835,7 +835,7 @@ class TestComputeStatistics:
         }
         summary, _, daily_equity = run_cc_overlay(dates, prices, params)
 
-        stats = compute_statistics(
+        stats = excess_over_buy_hold_statistics(
             daily_equity,
             num_contracts=summary['num_contracts'],
             cash=summary['cash'],
@@ -929,7 +929,7 @@ class TestRiskManagedCoveredCall:
         base_params: dict[str, float],
     ) -> None:
         """summary['cash'] must report the *initial* idle cash even under delta_hedge=True so
-        compute_statistics' buy-and-hold reconstruction (shares × prices + cash) stays correct."""
+        excess_over_buy_hold_statistics' buy-and-hold reconstruction (shares × prices + cash) stays correct."""
         dates, prices = rising_market
         naive_summary, _, _ = run_cc_overlay(dates, prices, base_params)
         hedge_summary, _, _ = run_cc_overlay(dates, prices, {**base_params, 'delta_hedge': 1.0})
@@ -948,10 +948,10 @@ class TestRiskManagedCoveredCall:
         hedge_summary, _, hedge_eq = run_cc_overlay(
             dates, prices, {**base_params, 'delta_hedge': 1.0}
         )
-        naive_stats = compute_statistics(
+        naive_stats = excess_over_buy_hold_statistics(
             naive_eq, num_contracts=naive_summary['num_contracts'], cash=naive_summary['cash']
         )
-        hedge_stats = compute_statistics(
+        hedge_stats = excess_over_buy_hold_statistics(
             hedge_eq, num_contracts=hedge_summary['num_contracts'], cash=hedge_summary['cash']
         )
         # Excess vol should drop substantially — the variance source we hedged away is large
@@ -993,7 +993,7 @@ class TestMsftRiskManagedRegression:
         dates, prices = data
         hedge_params: dict[str, float] = {**_TUTORIAL_PARAMS, 'delta_hedge': 1.0}
         summary, _, daily_equity = run_cc_overlay(dates, prices, hedge_params)
-        stats = compute_statistics(
+        stats = excess_over_buy_hold_statistics(
             daily_equity, num_contracts=summary['num_contracts'], cash=summary['cash']
         )
         return summary, stats
@@ -1147,7 +1147,7 @@ class TestQqqTenYearRegression:
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         dates, prices = data
         summary, _, daily_equity = run_cc_overlay(dates, prices, _TUTORIAL_PARAMS)
-        stats = compute_statistics(
+        stats = excess_over_buy_hold_statistics(
             daily_equity,
             num_contracts=summary['num_contracts'],
             cash=summary['cash'],
@@ -1245,7 +1245,7 @@ class TestQqqRiskManagedRegression:
         dates, prices = data
         hedge_params: dict[str, float] = {**_TUTORIAL_PARAMS, 'delta_hedge': 1.0}
         summary, _, daily_equity = run_cc_overlay(dates, prices, hedge_params)
-        stats = compute_statistics(
+        stats = excess_over_buy_hold_statistics(
             daily_equity, num_contracts=summary['num_contracts'], cash=summary['cash']
         )
         return summary, stats
@@ -1351,7 +1351,7 @@ class TestMsftTenYearRegression:
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         dates, prices = data
         summary, _, daily_equity = run_cc_overlay(dates, prices, _TUTORIAL_PARAMS)
-        stats = compute_statistics(
+        stats = excess_over_buy_hold_statistics(
             daily_equity,
             num_contracts=summary['num_contracts'],
             cash=summary['cash'],

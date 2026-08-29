@@ -988,7 +988,7 @@ class TestProposerPrompt:
         # ARG; the builder loads nothing — so there is no answer key in scope to format into text.
         names = (set(build_proposer_prompt.__code__.co_names)
                  | set(_render_grammar_menu.__code__.co_names))
-        for forbidden in ('load_idea_ledger', 'structure_kill_gate', 'short_vol_statistics',
+        for forbidden in ('load_idea_ledger', 'structure_kill_gate', 'excess_over_cash_statistics',
                           'run_real_structure_overlay', 'load_chain_store'):
             assert forbidden not in names
 

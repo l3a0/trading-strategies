@@ -55,7 +55,7 @@ from typing import Any, TextIO
 import pandas as pd
 
 from common.paths import data_path
-from engine.cc_backtest import compute_statistics, run_cc_overlay
+from engine.cc_backtest import excess_over_buy_hold_statistics, run_cc_overlay
 
 COMMISSION_PER_SHARE = 0.0065  # $0.65 per 100-share contract, both legs (engine convention)
 
@@ -541,7 +541,7 @@ def run_real_cc_overlay(
         'capital': round(capital, 2),
         'num_contracts': num_contracts,
         'initial_stock_cost': round(shares * initial_price, 2),
-        # Initial leftover cash, NOT the working balance — compute_statistics
+        # Initial leftover cash, NOT the working balance — excess_over_buy_hold_statistics
         # rebuilds the buy-and-hold curve from shares × prices + cash, which
         # only makes sense with the constant initial cash. Under delta_hedge
         # the working cash drifts as hedge trades execute; that drift reaches
@@ -606,9 +606,9 @@ def main() -> None:
     real_sum, _real_trades, real_eq = run_real_cc_overlay(dates, prices, store, real_params)
     import numpy as np
     proxy_sum, _, proxy_eq = run_cc_overlay(dates, np.array(prices), params)
-    real_st = compute_statistics(real_eq, num_contracts=real_sum['num_contracts'],
+    real_st = excess_over_buy_hold_statistics(real_eq, num_contracts=real_sum['num_contracts'],
                                  cash=real_sum['cash'])
-    proxy_st = compute_statistics(proxy_eq, num_contracts=proxy_sum['num_contracts'],
+    proxy_st = excess_over_buy_hold_statistics(proxy_eq, num_contracts=proxy_sum['num_contracts'],
                                   cash=proxy_sum['cash'])
 
     print(f"\n=== {ticker} covered-call overlay: REAL chains vs PROXY (same unadjusted series) ===")

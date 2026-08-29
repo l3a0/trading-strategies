@@ -30,9 +30,9 @@ and `close_itm` (engine/cc_backtest.py:457); the structure engine emits `enter`
 field recorded is realized dollar P&L. No trade carries an initial-risk basis, and max adverse excursion
 (MAE) is tracked nowhere — the structure mark loop refreshes `leg['mid']` every day
 (realchains/vol_premium.py:935) but never keeps a running low-water mark. Both statistics functions then
-discard the trade list and rebuild everything from the daily equity curve: `compute_statistics`
+discard the trade list and rebuild everything from the daily equity curve: `excess_over_buy_hold_statistics`
 reconstructs its return series from `daily_equity['equity']` and `daily_equity['price']`
-(engine/cc_backtest.py:657-669), and `short_vol_statistics` does `np.diff(eq)/capital` on
+(engine/cc_backtest.py:657-669), and `excess_over_cash_statistics` does `np.diff(eq)/capital` on
 `daily_equity['equity']` (realchains/vol_premium.py:182-188). Neither ever sees `trades`.
 
 Gap A supplies the missing substrate: a uniform per-trade record carrying dollar P&L, an initial-risk basis
@@ -242,9 +242,9 @@ labelled columns; only the last is an authority.
   lag 1 is one \~30-day cycle, not one day. Dependency note: `common/trade_ledger.py` cannot import from
   `factor/` without inverting the leaf-module direction, so the function was HOISTED into the leaf —
   `common/stats.py` (`newey_west_summary` / `newey_west_t`) is the single definition, consumed by the
-  ledger, `factor/factor_backend.py`, and both daily judges (`compute_statistics` /
-  `short_vol_statistics`), each of which previously carried its own copy.
-- The **daily Newey-West HAC t** (`short_vol_statistics` / `compute_statistics`) remains the sole
+  ledger, `factor/factor_backend.py`, and both daily judges (`excess_over_buy_hold_statistics` /
+  `excess_over_cash_statistics`), each of which previously carried its own copy.
+- The **daily Newey-West HAC t** (`excess_over_cash_statistics` / `excess_over_buy_hold_statistics`) remains the sole
   significance authority, unchanged, for three reasons. The daily series carries thousands of observations
   against the ledger's low-hundreds of trade cycles, and NW is asymptotic — its standard errors bias down
   in small samples, so the trade-level t is the weaker instrument. The daily series sees the intratrade

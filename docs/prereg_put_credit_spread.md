@@ -109,7 +109,7 @@ raw P&L = interest on cash (rf)
 The first term is replicable with T-bills. The second is replicable with a
 small SPY position. Only the third is an *options* edge, and the engine
 already isolates it: `run_real_structure_overlay` with the `combined` daily
-delta hedge plus `short_vol_statistics`' rf-netting produces a daily excess
+delta hedge plus `excess_over_cash_statistics`' rf-netting produces a daily excess
 series that is exactly the strategy's return over its cash-plus-delta-matched
 replication (the Bakshi-Kapadia delta-hedged gain, rate-invariant by
 construction). **The verdict of this experiment lives on that residual.** The
@@ -352,7 +352,7 @@ cannot be chosen after seeing which windows are affected.
 Within each training window, each qualified cell is scored by the
 **annualized Sharpe of its daily hedged-excess stream**, computed unrounded
 from the same rf-netted excess array the verdict uses — not from
-`short_vol_statistics`' rounded summary fields (identical window lengths make
+`excess_over_cash_statistics`' rounded summary fields (identical window lengths make
 this rank-equivalent to the naive t; it is the `walk_forward_real` convention
 adapted to the excess stream). Training and test runs both execute at the
 §3.4 frictions (bid/ask fills, 0.5 bp hedge) — no friction asymmetry between
@@ -393,7 +393,7 @@ exits-add-nothing diagnostic).
 
 The verdict object is built exactly one way: **the concatenation, in window
 order, of each test window's per-day rf-netted excess array**
-(`short_vol_statistics`' excess series — `np.diff(equity)/capital` minus the
+(`excess_over_cash_statistics`' excess series — `np.diff(equity)/capital` minus the
 engine's actual per-day rf credit), with SKIPPED windows contributing zeros
 (§5.2). Never diff across window boundaries — the $100K restarts would inject
 seam spikes. Two seam accounting rules, fixed now: (a) each window's final

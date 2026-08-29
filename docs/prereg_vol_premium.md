@@ -45,7 +45,7 @@ index VRP — or fail to, which would itself be the informative post-2010 result
 registration (`prereg_trend_gate.md`), this statistic has a standard inferential
 framework. The verdict is the mean of the daily delta-hedged-gain series tested
 against zero; consecutive 30-day cycles overlap, so the dependence is absorbed by
-the Newey-West HAC correction (Bartlett weights, the Andrews lag `short_vol_statistics`
+the Newey-West HAC correction (Bartlett weights, the Andrews lag `excess_over_cash_statistics`
 already uses) — the same correction every other significance number in this repo
 uses, and the one the call pin uses. A stationary block bootstrap is added as a
 reported robustness check (§7), not the verdict.
@@ -68,7 +68,7 @@ a SPY pass is confirmed out-of-sample.
 
 The statistic is the engine's existing rate-invariant delta-hedged gain: build the
 daily equity series of `run_real_short_vol_overlay` with the §2 short-put
-instrument, and pass it to `short_vol_statistics`, which nets the engine's *actual*
+instrument, and pass it to `excess_over_cash_statistics`, which nets the engine's *actual*
 per-day risk-free credit on the cash base it was earned on (the audited rf-base
 fix) and returns the Newey-West t-statistic of the resulting vol-P&L. This measures
 the Bakshi-Kapadia (2003) delta-hedged gain — "was the seller paid for bearing
@@ -195,7 +195,7 @@ hedge uses the same committed half-spread.
   `capital = $100,000`, `dte = 30`, `risk_free_rate = 0.045` (the measure is
   rate-invariant, so this value does not affect the verdict — it is fixed only for
   reproducibility).
-- Significance: `short_vol_statistics` unchanged — the rf-credit netting and the
+- Significance: `excess_over_cash_statistics` unchanged — the rf-credit netting and the
   Andrews Newey-West lag, exactly as pinned.
 
 ### 3.3 Cost band (committed now, before any put number)
@@ -218,7 +218,7 @@ off whichever spread assumption clears t = 2.
 
 ## 4. The verdict statistic
 
-`t_put = short_vol_statistics(...)['t_stat_newey_west']` on the §2 SPY short-put
+`t_put = excess_over_cash_statistics(...)['t_stat_newey_west']` on the §2 SPY short-put
 run at `hedge_cost_bps = 0.5`. Reported alongside, ex ante: the gross (0 bp) t, the
 0.2 bp and 1 bp t, the Sharpe, the vol-P&L dollars, the Newey-West lag, and the
 pinned call-wing comparison (+2.54 gross; +2.42 / +2.25 / +1.97 at 0.2 / 0.5 / 1 bp).
@@ -380,7 +380,7 @@ to the data:
 
 - Internal: the pinned call-wing result (`TestSpyShortVolRegression`) and the
   engine it shares (`realchains/vol_premium.py`, `run_real_short_vol_overlay` /
-  `short_vol_statistics`); the audit and caveats in `docs/vol_premium.md`; the
+  `excess_over_cash_statistics`); the audit and caveats in `docs/vol_premium.md`; the
   covered-call null this builds on (`TestMsftRealRiskManagedRegression` /
   `TestQqqRealRiskManagedRegression`, delta-hedged t \~0) and its exploration-log
   entry; the data pipeline in `pipeline/download_option_dailies.py`.
@@ -388,7 +388,7 @@ to the data:
   *Journal of Derivatives*); the put-wing / skew premium follows Bondarenko,
   Broadie-Chernov-Johannes, and Constantinides-Jackwerth-Savov (2013); the
   post-2010 tradeable-premium decline follows Dew-Becker & Giglio (2025); the
-  Newey-West HAC convention is as implemented in `compute_statistics`.
+  Newey-West HAC convention is as implemented in `excess_over_buy_hold_statistics`.
 - Precedent: the call-wing phase of this same experiment (merged in the
   delta-neutral short-vol PR), which established the engine, the rf-base audit, and
   the cost-curve method this registration reuses.

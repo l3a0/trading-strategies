@@ -60,7 +60,7 @@ second backend that implements it. The option backend is unchanged; the honest c
 | `canonical_key` | `canonical_key` (sha256 of sorted leg tokens) | SymPy-normalize → sha256 (partial — see caveats) |
 | `mechanism` | `derive_family` (greek signature → family) | **no greek analog** — built via a loading-regression check (see caveats) |
 | `lineage` | `_data_lineage_hash` | sha over the equity panel checksum + engine version |
-| `score` | `run_real_structure_overlay` + `short_vol_statistics` | Qlib `D.features` (eval formula → signal) + alphalens `calc_ic` → IC-t |
+| `score` | `run_real_structure_overlay` + `excess_over_cash_statistics` | Qlib `D.features` (eval formula → signal) + alphalens `calc_ic` → IC-t |
 
 **What the factor backend reuses:**
 
@@ -70,7 +70,7 @@ second backend that implements it. The option backend is unchanged; the honest c
   per-name-per-day signal. The engine + eval are usable **standalone** (decoupled from Qlib's ML pipeline).
   The data layer (`.bin`/CSV/Parquet, `dump_bin.py`, US + CN universes) is the panel.
 - **Scoring: alphalens-reloaded** (the actively-maintained Quantopian fork). `compute_ic` (Spearman / rank
-  IC), quantile / long-short returns, the IC t-stat — the factor analog of `short_vol_statistics`. The
+  IC), quantile / long-short returns, the IC t-stat — the factor analog of `excess_over_cash_statistics`. The
   `score` row emits `{statistic: IC-t, p_value, sign_ok, measurement_invalid, family}` so the honest core
   is untouched.
 - **Canonicalization: SymPy** (normalize commutative/associative/idempotent forms) → sha256 — the
@@ -81,7 +81,7 @@ second backend that implements it. The option backend is unchanged; the honest c
 flowchart TB
     HC["honest core — unchanged, hypothesis-blind<br/>e-LOND · ledger · numberless oracle · seal · holdout"]:::keep
     PR["backend protocol — formalized<br/>enumerate · canonical_key · validate · score to t,p,family · lineage"]:::new
-    OB["option backend — existing<br/>generative_grammar + vol_premium + short_vol_statistics"]:::keep
+    OB["option backend — existing<br/>generative_grammar + vol_premium + excess_over_cash_statistics"]:::keep
     FB["factor backend — new<br/>Qlib grammar + engine · alphalens IC/t · SymPy dedup"]:::new
     GAP["mechanism gate — no greek to read<br/>build a loading-regression check; holdout still binds"]:::gap
     HC --> PR
@@ -164,7 +164,7 @@ when the gate is built.
 | Component | Verdict | Why |
 | --- | --- | --- |
 | honest core (`evalue_fdr` e-LOND, `edge_search` ledger/oracle, `read_gate_wire` seal, the holdout) | **keep / reuse as-is** | audited, the repo's contribution, hypothesis-blind |
-| option backend (`generative_grammar`, `generative_engine`, `vol_premium`, `short_vol_statistics`) | **keep** | audited + pinned (`TestSpyShortVolRegression` t=2.54); the rf-netted vol-P&L is load-bearing |
+| option backend (`generative_grammar`, `generative_engine`, `vol_premium`, `excess_over_cash_statistics`) | **keep** | audited + pinned (`TestSpyShortVolRegression` t=2.54); the rf-netted vol-P&L is load-bearing |
 | `_data_lineage_hash`, `canonical_key`, `judge_against_lifetime_stream`, `assert_numberless` | **keep** | primitives / design choices, audited; no faster-or-better swap |
 | Benjamini-Yekutieli, the Newey-West lag rule | **keep** for options | pinned to the published ledger; the factor backend uses libraries from the start |
 | data loading (`load_chain_store` / `select_entry`, CSV→tuple parsing) | **replace** for factors | Qlib data layer / Parquet + polars — faster, standard, the bottleneck once you score thousands of factors daily (the option path stays; a Parquet swap there is perf-only) |
@@ -211,7 +211,7 @@ t-stat-for-t-stat).
 4. **e-LOND power, again.** An open factor space saturates the FDR budget fast (we saw t≥6.6 by cell 145);
    the harness will mostly *kill*. A tiny, mechanism-prioritized menu retains power, which a formula space
    resists by nature.
-5. **Audit-trail constraint.** `short_vol_statistics`, the Newey-West lag, and BY are pinned to the
+5. **Audit-trail constraint.** `excess_over_cash_statistics`, the Newey-West lag, and BY are pinned to the
    published ledger — do not swap them for the option path; the factor path uses libraries from the start.
 6. **Qlib is a real dependency to vet** — MIT, ~45k stars, but v0.9.7 (Aug 2024), uneven cadence, and the
    standalone-expression-eval path is under-documented.

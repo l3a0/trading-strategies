@@ -84,7 +84,7 @@ code and data the proposer must be able to run — so fencing the files where it
 *stored* changes nothing. Five EXPLOITABLE bypasses, several verified live on this repo:
 
 1. **Re-derive by re-running the engine** — the central failure. `structure_kill_gate` /
-   `run_structure_campaign` recompute `t_stat_newey_west` and `p_value` from `short_vol_statistics`
+   `run_structure_campaign` recompute `t_stat_newey_west` and `p_value` from `excess_over_cash_statistics`
    on the committed chains. None of `search/edge_search.py`, `realchains/vol_premium.py`, the chain CSVs, or `python`
    itself can be in the deny list — they *are* the proposer's own scoring step. Verified:
    `python -c "import edge_search; print(edge_search.run_structure_campaign())"` reproduces the
@@ -217,7 +217,7 @@ a file-hiding read-gate would be theater and must not be built or claimed as a c
 
 - **Private recomputation is unpreventable inside a shared checkout.** Even a "no score without
   record" change to the *sanctioned* API (`run_proposer_round`) does not stop a proposer calling the
-  raw `structure_kill_gate` / `short_vol_statistics`. A process boundary would close this for an
+  raw `structure_kill_gate` / `excess_over_cash_statistics`. A process boundary would close this for an
   untrusted-*code* proposer; short of it the honesty is honor-system and the proposer must be unable
   to recompute — either trusted-by-construction (the deterministic menu-walker, or a
   coordinate-emitting LLM that holds no engine) or isolated. The decided LLM is the former.

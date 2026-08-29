@@ -192,7 +192,7 @@ for p in periods:
 # + forces the sign).
 print(f"\\nChained OOS compound return: {cumulative - 1.0:+.0%}")''',
     "#### The Code": '''\
-# compute_statistics already ran in the data-prep cell — these are its real
+# excess_over_buy_hold_statistics already ran in the data-prep cell — these are its real
 # outputs (exactly what the next section, "What MSFT Actually Says", quotes):
 import math
 
@@ -275,7 +275,7 @@ for r in ("bull", "bear", "sideways", "unknown"):
 # (naive) and TestMsftRiskManagedRegression.test_significance_uplift (hedged).
 def _excess_stats(p):
     s, _, eq = run_cc_overlay(dates, prices, p)
-    return compute_statistics(eq, num_contracts=s["num_contracts"], cash=s["cash"])
+    return excess_over_buy_hold_statistics(eq, num_contracts=s["num_contracts"], cash=s["cash"])
 
 naive = _excess_stats(params)
 managed = _excess_stats({**params, "delta_hedge": 1.0})
@@ -318,7 +318,7 @@ from engine.cc_backtest import (
     bs_delta,
     bs_price,
     calc_rolling_volatility,
-    compute_statistics,
+    excess_over_buy_hold_statistics,
     detect_regime,
     estimate_iv,
     find_strike_for_delta,
@@ -361,7 +361,7 @@ params = {
     "capital": 100_000,
 }
 summary, trades, daily_equity = run_cc_overlay(dates, prices, params)
-stats = compute_statistics(
+stats = excess_over_buy_hold_statistics(
     daily_equity,
     num_contracts=summary["num_contracts"],
     cash=summary["cash"],

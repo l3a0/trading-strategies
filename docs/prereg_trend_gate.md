@@ -517,10 +517,10 @@ low-volatility gate" on every surface that reports it.
 - The daily common-base excess Newey-West t on the record arm is reported:
   `(ΔE_gated − ΔE_bh) / E_bh,t−1`, which is zero by construction on
   uncovered days — avoiding the flat-day base-offset artifact in
-  `compute_statistics` (its overlay and buy-and-hold returns are computed
+  `excess_over_buy_hold_statistics` (its overlay and buy-and-hold returns are computed
   on different equity bases, so uncovered days contribute nonzero excess
   once the bases diverge). Lag: the Andrews rule as implemented in
-  `compute_statistics` (`L = floor(4 × (n/100)^(2/9))`). Descriptive only;
+  `excess_over_buy_hold_statistics` (`L = floor(4 × (n/100)^(2/9))`). Descriptive only;
   the placebo p-value is the verdict, chosen ex ante on power and validity
   grounds (§9).
 - The Family S percentile is reported with its effective-N caveat stated.

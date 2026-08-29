@@ -61,9 +61,9 @@ from common.stats import newey_west_lag
 from engine.cc_backtest import (
     bs_delta,
     calc_rolling_volatility,
-    compute_statistics,
     detect_regime,
     estimate_iv,
+    excess_over_buy_hold_statistics,
     find_strike_for_delta,
     monte_carlo_shuffle,
     regime_analysis,
@@ -898,7 +898,7 @@ def main() -> None:
         "capital": 100_000,
     }
     summary, trades, daily_equity = run_cc_overlay(dates, prices, params)
-    stats = compute_statistics(
+    stats = excess_over_buy_hold_statistics(
         daily_equity,
         num_contracts=summary["num_contracts"],
         cash=summary["cash"],

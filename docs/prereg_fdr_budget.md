@@ -48,7 +48,7 @@ penalty** for the ≈ 0.8-correlated cells (e-BH; Wang & Ramdas 2022 — kept he
 as a within-campaign diagnostic, §2).
 
 **Why "staged."** A cell's evidence rests on its daily P&L, which is serially
-autocorrelated — the reason `short_vol_statistics` uses a Newey-West HAC t. The
+autocorrelated — the reason `excess_over_cash_statistics` uses a Newey-West HAC t. The
 purest e-value design rebuilds that per-cell test as a *betting test martingale*
 (absorbing the autocorrelation exactly, nonasymptotically). This registration does
 **not** do that. It keeps the HAC-t p-value the repo already ships and tests, and
@@ -90,7 +90,7 @@ the exact recurrence is committed in the implementation and pinned by a test
 against the cited reference (the `onlineFDR` R package / the papers' worked
 examples).
 
-1. **Per-cell — reuse + calibrate.** Keep `short_vol_statistics`' HAC-t p-value
+1. **Per-cell — reuse + calibrate.** Keep `excess_over_cash_statistics`' HAC-t p-value
    `p_i` unchanged. Calibrate to an e-value with an **admissible Vovk-Wang (2021)
    calibrator** from the family `f(p) = κ · p^(κ−1)`, `κ ∈ (0,1)` (decreasing in
    `p`, `∫₀¹ f = 1`); registered default `κ = 0.5`, i.e. `e_i = 1/(2·√p_i)`. The

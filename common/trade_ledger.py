@@ -8,7 +8,7 @@ sibling ``r_newey_west_t``.
 
 Epistemic status: measurement substrate only. Any number this ledger produces
 is EXPLORATORY (sample-spending, kill-or-justify — docs/explorations.md); the
-daily Newey-West HAC t in ``short_vol_statistics`` / ``compute_statistics``
+daily Newey-West HAC t in ``excess_over_cash_statistics`` / ``excess_over_buy_hold_statistics``
 remains the repo's sole significance authority. ``sqn`` and ``r_newey_west_t``
 are reported, never gates.
 

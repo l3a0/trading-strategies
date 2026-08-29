@@ -40,7 +40,10 @@ from realchains.real_cc_backtest import (
     load_unadjusted_prices,
     open_dailies,
 )
-from realchains.vol_premium import run_real_credit_spread_overlay, short_vol_statistics
+from realchains.vol_premium import (
+    excess_over_cash_statistics,
+    run_real_credit_spread_overlay,
+)
 from realchains.walk_forward_structure import (
     BOOTSTRAP_SEED,
     CENTRAL_CELL,
@@ -82,7 +85,7 @@ def c1_drift_alarm() -> float:
     params = {'dte': 30, 'short_delta': 0.25, 'wing_delta': 0.10,
               'capital': STRUCTURE_CAPITAL}
     summary, _, eq = run_real_credit_spread_overlay(dates, prices, store, params)
-    stats = short_vol_statistics(eq, summary['capital'])
+    stats = excess_over_cash_statistics(eq, summary['capital'])
     t = stats['t_stat_newey_west']
     print(f'C1 drift alarm: campaign-coordinate NW t = {t:+.2f} '
           f'(expected {C1_EXPECTED_T:+.2f} +/- {C1_TOLERANCE})')

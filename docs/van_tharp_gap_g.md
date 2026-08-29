@@ -151,10 +151,10 @@ leg-specific missing date simply drops from the join — alignment is exact, nev
 
 ### stream_correlations — pairwise Pearson on per-capital daily P&L
 
-The per-leg basis is the `short_vol_statistics` normalization: daily dollar P&L over the FIXED deployed
+The per-leg basis is the `excess_over_cash_statistics` normalization: daily dollar P&L over the FIXED deployed
 capital, `np.diff(eq) / capital` (realchains/vol_premium.py:185 — the inline comment reads "FIXED
 deployed-capital base (not grown equity)"). The alternative convention — prior-day-equity returns, as
-`compute_statistics` uses (`np.diff(equity) / equity[:-1]`, engine/cc_backtest.py:679-680) — is the
+`excess_over_buy_hold_statistics` uses (`np.diff(equity) / equity[:-1]`, engine/cc_backtest.py:679-680) — is the
 wrong basis for a portfolio: each stream's denominator embeds its own compounding history, so a sum of
 such returns is the return of no actual portfolio. Dollars add; compounding returns do not. The Gap C+B
 doc already contrasts exactly these two conventions (docs/van_tharp_gap_cb.md:84-85); Gap G picks the
@@ -180,7 +180,7 @@ Why naive cross-stream equity summing lies, in three parts, each grounded in the
   :250). A naive sum silently blends rf-inclusive and rf-free P&L.
 
 **The rf convention, decided:** a structure leg's per-day credit is netted out —
-`rf_credit[1:] / capital` subtracted from the diffs, with the same off-by-one `short_vol_statistics`
+`rf_credit[1:] / capital` subtracted from the diffs, with the same off-by-one `excess_over_cash_statistics`
 uses, because the credit lands at the start of the following day (realchains/vol_premium.py:186-190).
 The presence of the `rf_credit` column is itself the switch: a leg carrying it is netted, a leg without
 it passes through raw — no per-engine flags, so the schema asymmetry is implementable exactly as
@@ -192,7 +192,7 @@ $100K**, and the structure legs sit on their published statistical basis. The ca
 pins: the CC engines' idle cash genuinely earned nothing, an engine simplification the harness inherits
 rather than introduces. One inherited day-0 convention is also kept: diffs start at day 1, so each
 leg's day-0 entry half-spread (the structure stream's `eq[0]` is already struck at the entry mid,
-realchains/vol_premium.py:165-174) stays out of the summed P&L, exactly as `short_vol_statistics`
+realchains/vol_premium.py:165-174) stays out of the summed P&L, exactly as `excess_over_cash_statistics`
 treats it.
 
 On that basis, `stream_correlations(panel)` is pairwise Pearson over the aligned per-capital series.

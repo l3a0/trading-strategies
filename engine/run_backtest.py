@@ -29,8 +29,8 @@ import pandas as pd
 
 from engine.cc_backtest import (
     _param_combinations,
-    compute_statistics,
     degrees_of_freedom,
+    excess_over_buy_hold_statistics,
     monte_carlo_shuffle,
     regime_analysis,
     run_cc_overlay,
@@ -89,7 +89,7 @@ def report_overlay(s: dict) -> None:
 
 def report_significance(s: dict, daily_equity) -> None:
     section('Statistical Significance  (H0: overlay adds zero value vs. buy & hold)')
-    st = compute_statistics(daily_equity, num_contracts=s['num_contracts'], cash=s['cash'])
+    st = excess_over_buy_hold_statistics(daily_equity, num_contracts=s['num_contracts'], cash=s['cash'])
     print(f"  Days / Years:        {st['n_days']} / {st['years_of_data']}")
     print(f"  Ann. Excess Return:  {st['ann_excess_return_pct']:>+8.3f}%")
     print(f"  Ann. Excess Vol:     {st['ann_excess_vol_pct']:>8.2f}%")
@@ -101,9 +101,9 @@ def report_significance(s: dict, daily_equity) -> None:
 
 def report_risk_managed(dates, prices, params, s: dict, daily_equity) -> None:
     section('Risk-Managed (Delta-Hedged) vs. Naive  — Israelov & Nielsen (2015)')
-    naive = compute_statistics(daily_equity, num_contracts=s['num_contracts'], cash=s['cash'])
+    naive = excess_over_buy_hold_statistics(daily_equity, num_contracts=s['num_contracts'], cash=s['cash'])
     hs, _, h_daily = run_cc_overlay(dates, prices, {**params, 'delta_hedge': 1.0})
-    hedged = compute_statistics(h_daily, num_contracts=hs['num_contracts'], cash=hs['cash'])
+    hedged = excess_over_buy_hold_statistics(h_daily, num_contracts=hs['num_contracts'], cash=hs['cash'])
     print(f"  {'Metric':<24}{'Naive':>14}{'Risk-Managed':>16}")
     print(f"  {'-' * 24}{'-' * 14}{'-' * 16}")
     print(f"  {'Excess Return / yr':<24}{naive['ann_excess_return_pct']:>+13.3f}%{hedged['ann_excess_return_pct']:>+15.3f}%")
