@@ -19,6 +19,6 @@ pytest-xdist
 # bump raised 337 findings here with no code change. The repo's standard is
 # written down now, so a ruff release can change its defaults without changing
 # ours. Widening the rule set is a separate, deliberate change.
-ruff==0.16.4
+ruff==0.16.5
 pyright==1.1.411
 pandas-stubs
