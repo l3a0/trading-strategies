@@ -85,7 +85,7 @@ The relationship the book documented was real. It also had a shelf life.
 
 The two-window table is the compressed version. The full picture is a rolling test. Slide a one-year window across the whole history and compute the statistic in each. Where it dips below the 10% critical line, the pair cointegrates in that window.
 
-[![Two-panel regime map of GLD versus GDX from 2007 to 2026. The top panel plots the rolling one-year CADF t-statistic, which dips below the −3.04 critical line only in scattered windows clustered in the early years. The bottom panel shows Chan's through-origin hedge drifting upward from about 1.64 to a peak near 6.6 around 2016.](figures/reproduction_regime_map.png)](figures/reproduction_regime_map.png)
+[![Two-panel regime map of GLD versus GDX from 2007 to 2026. The top panel plots the rolling one-year CADF t-statistic, which dips below the −3.04 critical line only in scattered windows clustered in the early years. The bottom panel shows Chan's through-origin hedge drifting upward from about 1.64 to a peak near 6.6 around 2016.](../docs/figures/reproduction_regime_map.png)](../docs/figures/reproduction_regime_map.png)
 
 *Rolling one-year cointegration test on as-traded GLD/GDX closes, 2007–2026. Green bands mark the windows that clear the 10% critical value (−3.04). Only 31 of 231 windows clear it, and they cluster before 2015. Below, Chan's through-origin hedge drifts from \~1.64 to above 4, so there is no single ratio a fixed pair trade could have held.*
 
