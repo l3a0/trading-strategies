@@ -91,7 +91,7 @@ Repo result: the disagreement is real and explained. Python's `statsmodels`
 defaults to `autolag='aic'`, which picks a different lag count and a different
 statistic. Pinning the lag (`maxlag=1, autolag=None`) reproduces the fixed-lag
 convention MATLAB and R use. Written up in
-[docs/reproduction_lessons.md](reproduction_lessons.md).
+[docs/gld-gdx-cointegration-lessons.md](gld-gdx-cointegration-lessons.md).
 
 ### 1.4 Conditional Parameter Optimization (CPO): Buildable
 

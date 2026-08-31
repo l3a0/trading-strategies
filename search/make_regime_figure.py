@@ -1,4 +1,4 @@
-"""Figure for docs/reproduction_lessons.md section 6 -- the GLD/GDX regime map.
+"""Figure for docs/gld-gdx-cointegration-lessons.md section 6 -- the GLD/GDX regime map.
 
 A rolling-window CADF scan over the full as-traded (raw) GLD/GDX history: a
 one-year window stepped monthly, each window's cointegrating augmented
@@ -30,7 +30,7 @@ from common.paths import FIGURES_DIR
 from common.timeseries import EG_CRIT_N2
 from search.pair_cointegration import aligned_closes, rolling_cointegration
 
-# Essay palette -- docs/reproduction_lessons.html :root tokens.
+# Essay palette -- docs/gld-gdx-cointegration-lessons.html :root tokens.
 SURFACE = "#FEFDFA"  # figure ground
 GROUND = "#F7F5EF"  # axes ground
 INK = "#23201A"

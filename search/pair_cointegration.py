@@ -159,7 +159,7 @@ def rolling_cointegration(
     through-origin hedge become time series. Each window's entry is stamped with
     the index of its LAST day (``end_idx``), which the caller maps back to a date
     through the aligned frame. This is the machinery behind the regime map in
-    docs/reproduction_lessons.md -- it makes "cointegration is a property of a
+    docs/gld-gdx-cointegration-lessons.md -- it makes "cointegration is a property of a
     window" a picture instead of a caveat.
     """
     ends: list[int] = []
