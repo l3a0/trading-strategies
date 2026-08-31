@@ -1,4 +1,4 @@
-"""Figure for docs/gld-gdx-cointegration-lessons.md section 6 -- the GLD/GDX regime map.
+"""Figure for blog/gld-gdx-cointegration-lessons.md section 6 -- the GLD/GDX regime map.
 
 A rolling-window CADF scan over the full as-traded (raw) GLD/GDX history: a
 one-year window stepped monthly, each window's cointegrating augmented
