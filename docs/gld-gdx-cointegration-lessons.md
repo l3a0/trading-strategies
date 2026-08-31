@@ -1,16 +1,19 @@
-# What I learned testing GLD/GDX for cointegration
+# Lessons from testing GLD/GDX for cointegration
 
-The published hedge ratio in a 2009 quant-trading book never reproduced exactly, no matter whose data I used. The reason is a data-vintage story, not a mistake. The pair itself had a shelf life.
+The published hedge ratio in a 2009 quant-trading book never reproduced exactly, no matter whose data went in. The reason is a data-vintage story, not a mistake. The pair itself had a shelf life.
 
 Ernest Chan's *Quantitative Trading* opens its pairs-trading chapter with an example. Buy gold, short the gold miners, and the two prices tend to drift back toward each other.
 
-The book runs a **cointegration test** on the pair. That is a statistical check for whether a long-short combination of two prices stays range-bound instead of wandering off on its own. It reports two numbers. A **hedge ratio** of 1.6766, meaning short 1.6766 dollars of miners per dollar of gold. And a test statistic of −3.18, where more negative means the spread mean-reverts more convincingly.
+The book runs a **cointegration test** on the pair. That is a statistical check for whether a long-short combination of two prices stays range-bound instead of wandering off on its own. It reports two numbers:
 
-I set out to rebuild both from scratch, in Python, on data I pulled myself. I reproduced the test statistic, but not the hedge ratio. My data kept landing on 1.6379, not the book's 1.6766. So did [the independent reproduction I found](https://aushaff.github.io/2018/04/06/e_chan_ex7.2.html), and [Chan's own data](https://github.com/burakbayramli/books/tree/master/Quantitative_Trading_Chan) when re-run today.
+1. A **hedge ratio** of 1.6766, meaning short 1.6766 dollars of miners per dollar of gold.
+2. A test statistic of −3.18, where more negative means the spread mean-reverts more convincingly.
 
-Here is the ledger of what reproduced and what didn't, and then the six detours it took to understand why.
+Using Python and the latest data reproduced the test statistic, but not the hedge ratio. The hedge ratio kept landing on 1.6379, not the book's 1.6766. So did [the independent reproduction](https://aushaff.github.io/2018/04/06/e_chan_ex7.2.html) and [Chan's own data](https://github.com/burakbayramli/books/tree/master/Quantitative_Trading_Chan) when re-run today.
 
-| Quantity | Book → mine | Status |
+Here is the ledger of what reproduced and what didn't, then the six detours that explain why.
+
+| Quantity | Book → reproduced | Status |
 | --- | --- | --- |
 | Hedge ratio (through-origin) | 1.6766 → 1.6379 | vintage drift |
 | CADF test statistic (full / training) | −3.36 / −3.18 → −3.45 / −3.09 | reproduced |
@@ -19,32 +22,32 @@ Here is the ledger of what reproduced and what didn't, and then the six detours 
 
 ## Six detours
 
-### 1. One "result" can be a collage of two runs
+### 1. The test statistic and hedge ratio came from two different runs
 
 The hedge ratio and the test statistic do not come from the same computation. The hedge ratio is from a full-window run in Chapter 7. The test statistic is from a Chapter 3 example that drops the last 60 days and tests only the first 252.
 
-The book prints them near each other. It is easy to read them as one result. They are two, on two different windows. Trace every quoted number to its own run before you try to match it.
+The book prints them near each other. It is easy to read them as one result. They are two, on two different windows. Trace every quoted number to its own run before trying to match it.
 
-### 2. The hedge you quote and the test you run need not share a regression
+### 2. Two regressions, two different hedge ratios
 
-My hedge ratio came out at 1.3905, nowhere near the book's 1.6766. The answer was buried in Chan's `example7_2.m`.
+The hedge ratio from the test's own regression came out at 1.3905, nowhere near the book's 1.6766. The answer was buried in Chan's `example7_2.m`.
 
 Chan's hedge ratio comes from a regression forced through the origin, with no intercept. His test statistic comes from a *separate* regression that includes one. Same pair, two regressions, two different slopes. Through the origin the slope is 1.6379. With an intercept it is 1.3905. Read the spec, not just the result.
 
 ### 3. "Adjusted close" is not a fixed number
 
-The exact 1.6766 cannot be reproduced from any download you make today.
+The exact 1.6766 cannot be reproduced from any download made today.
 
-Prices come in two flavors. **Raw** prices are what traded. **Adjusted** prices are re-scaled backward to fold dividends in, as if you had reinvested every payout, so a chart reflects total return. The catch is that the series is pinned to the latest price. So every new dividend scales the whole earlier history down another notch.
+Prices come in two flavors. **Raw** prices are what traded. **Adjusted** prices are re-scaled backward to fold dividends in, as if every payout were reinvested, so a chart reflects total return. The catch is that the series is pinned to the latest price. So every new dividend scales the whole earlier history down another notch.
 
-GDX has paid dividends for nineteen years since 2007. So today's adjusted 2006 price sits about 15% below the number Chan saw. His 2007-vintage adjusted price is closest to today's *raw* price, because the miners had barely paid a dividend yet. Adjusted close is not a property of a date. It is a function of when you pressed download.
+GDX has paid dividends for nineteen years since 2007. So today's adjusted 2006 price sits about 15% below the number Chan saw. His 2007-vintage adjusted price is closest to today's *raw* price, because the miners had barely paid a dividend yet. Adjusted close is a function of the download date.
 
-You could sidestep the drift by anchoring the series at a fixed start instead of today. That gives a total-return index that never rewrites its past. Simpler still, a raw as-traded price is already fixed. A given day's close is a historical fact, whatever dividends come later. That is the series I used.
+Anchoring the series at a fixed start, instead of today, sidesteps the drift. That gives a total-return index that never rewrites its past. Simpler still, a raw as-traded price is already fixed. A given day's close is a historical fact, whatever dividends come later. That is the series this reproduction uses.
 
 | Reproduction | Hedge ratio | Note |
 | --- | --- | --- |
 | Book, 2007 vintage | 1.6766 | not reproducible from any modern download |
-| Everyone since | \~1.6379 | independent reproductions converge here, mine included |
+| Everyone since | \~1.6379 | independent reproductions converge here, this one included |
 
 ### 4. Separate the fragile estimate from the robust conclusion
 
@@ -54,7 +57,7 @@ The trade signal survived. The hedge ratio slipped about two percent, from 1.676
 
 ### 5. An independent implementation separates data bugs from code bugs
 
-I wrote the test twice. Once by hand, in fifteen lines of numpy. Once by calling a standard statistics library. They agreed to four decimal places. That agreement was the proof that my remaining gap was data, not a bug in my arithmetic.
+The test ran twice. Once by hand, in fifteen lines of numpy. Once through a standard statistics library. The two agreed to four decimal places. That agreement was the proof that the remaining gap was data, not a bug in the arithmetic.
 
 Chan hit the same fork and drew the opposite lesson. His Python test disagreed with his MATLAB and R tests on this pair, and he concluded that Python's statistics packages could not be trusted. They were fine. All three ran the same test on different default settings.
 
@@ -86,7 +89,7 @@ The two-window table is the compressed version. The full picture is a rolling te
 
 *Rolling one-year cointegration test on as-traded GLD/GDX closes, 2007–2026. Green bands mark the windows that clear the 10% critical value (−3.04). Only 31 of 231 windows clear it, and they cluster before 2015. Below, Chan's through-origin hedge drifts from \~1.64 to above 4, so there is no single ratio a fixed pair trade could have held.*
 
-Cointegration flickers on and off, and just 31 of the 231 windows clear even the 10% bar. They cluster in the early years, around Chan's own window. In the decade from 2015, only 10 of 139 windows reject. The lower panel says why the fixed trade was doomed regardless. The hedge that balances the spread climbs from Chan's \~1.64 to above 4, and briefly past 6. There was never one ratio to hold.
+Cointegration flickers on and off, and just 31 of the 231 windows clear even the 10% bar. They cluster in the early years, around Chan's own window. In the decade from 2015, only 10 of 139 windows reject. The lower panel shows why the fixed trade was doomed regardless. The hedge that balances the spread climbs from Chan's \~1.64 to above 4, and briefly past 6. There was never one ratio to hold.
 
 ## The two runs, reproduced
 
@@ -99,8 +102,8 @@ Cointegration flickers on and off, and just 31 of the 231 windows clear even the
 
 ## So what
 
-If you backtest from a paper or a book, budget most of your reproduction time for data provenance, not method. The method is usually in the open. The exact prices are not. Which vintage, which adjustment, which vendor's later revisions. A reproduction that lands the conclusion but misses the last digit is usually a data-vintage story, not a mistake.
+When backtesting from a paper or a book, budget more time for data provenance than method. The method is usually in the open. The exact prices are not. Which vintage, which adjustment, which vendor's later revisions. A reproduction that lands the conclusion but misses the last digit is usually a data-vintage story, not a mistake.
 
-The clean version of this project would have printed 1.6766 and moved on. The messy version taught me how a published number ages. The method holds. The data drifts. And the relationship itself can quietly dissolve. Reproducing a result is less about matching digits than understanding why they move. The number I couldn't reproduce told me more than the ones I could.
+The clean version of this project would have printed 1.6766 and moved on. The messy version shows how a published number ages. The method holds. The data drifts. And the relationship itself can quietly dissolve. Reproducing a result is less about matching digits than understanding why they move.
 
 *Reproduced with a numpy-only Engle-Granger / CADF test, cross-checked against statsmodels. Source: Ernest P. Chan, Quantitative Trading, rev. ed., `example7_2.m` and `example3_6_1.m`, GLD & GDX daily closes.*
