@@ -23,6 +23,7 @@ as a computed result.
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from common.timeseries import EG_CRIT_N2
@@ -31,8 +32,10 @@ from search.pair_cointegration import (
     BOOK_START,
     BOOK_TRAIN_END,
     CointResult,
+    RollingCoint,
     aligned_closes,
     engle_granger,
+    rolling_cointegration,
     selftest,
 )
 
@@ -132,3 +135,61 @@ class TestGldGdxReproduction:
         assert full_span.nobs == 5028
         assert full_span.adf_stat == pytest.approx(-1.45, abs=1e-2)
         assert full_span.adf_stat > EG_CRIT_N2["10%"]
+
+
+# ============================================================
+# Layer 3 — the rolling-window regime scan (the essay's regime map)
+# ============================================================
+class TestRollingRegime:
+    """Freeze the rolling-window scan behind the essay's regime map
+    (docs/figures/reproduction_regime_map.png, drawn by
+    search/make_regime_figure.py). Always-run: the raw GLD/GDX CSVs are
+    committed. These are the numbers section 6 of the reproduction essay quotes;
+    a re-download that shifts the vintage moves the map and these pins together.
+
+    A one-year window (252 trading days) stepped monthly (21 days) over the full
+    as-traded history, ``origin=True`` so Chan's through-origin hedge rides along.
+    """
+
+    @pytest.fixture(scope="class")
+    def scan(self) -> tuple[RollingCoint, pd.DatetimeIndex]:
+        df = aligned_closes("GLD", "GDX", unadjusted=True)
+        a = df["GLD"].to_numpy(dtype=float)
+        b = df["GDX"].to_numpy(dtype=float)
+        return rolling_cointegration(a, b, window=252, step=21, lags=1), df.index
+
+    def test_cointegration_is_episodic(self, scan: tuple[RollingCoint, pd.DatetimeIndex]) -> None:
+        """Only ~1 window in 8 clears even the 10% bar — the map's headline."""
+        roll, _ = scan
+        adf = roll.adf_stat
+        assert len(adf) == 231
+        assert int((adf < EG_CRIT_N2["10%"]).sum()) == 31
+        assert int((adf < EG_CRIT_N2["5%"]).sum()) == 14
+
+    def test_first_window_reproduces_chans_era(
+        self, scan: tuple[RollingCoint, pd.DatetimeIndex]
+    ) -> None:
+        """The first rolling window ≈ Chan's Ch.3 training set: it rejects, with
+        a through-origin hedge near his ~1.64 (hedge at 5 sig figs)."""
+        roll, _ = scan
+        assert roll.adf_stat[0] == pytest.approx(-3.18, abs=1e-2)
+        assert roll.origin_hedge[0] == pytest.approx(1.6286, abs=5e-4)
+        assert roll.adf_stat[0] < EG_CRIT_N2["10%"]
+
+    def test_hedge_drifts_far_past_the_book(
+        self, scan: tuple[RollingCoint, pd.DatetimeIndex]
+    ) -> None:
+        """Chan's hedge does not hold: the through-origin ratio peaks past 6."""
+        roll, _ = scan
+        assert roll.origin_hedge.max() == pytest.approx(6.6152, abs=5e-4)
+
+    def test_cointegration_fades_after_the_early_years(
+        self, scan: tuple[RollingCoint, pd.DatetimeIndex]
+    ) -> None:
+        """The early cluster is the whole story: in the decade from 2015 only
+        10 of 139 windows reject."""
+        roll, idx = scan
+        years = idx[roll.end_idx].year.to_numpy()
+        post = years >= 2015
+        assert int(post.sum()) == 139
+        assert int((roll.adf_stat[post] < EG_CRIT_N2["10%"]).sum()) == 10

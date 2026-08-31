@@ -93,6 +93,24 @@ class CointResult:
     origin_hedge: float | None = None
 
 
+@dataclass(frozen=True)
+class RollingCoint:
+    """A rolling-window CADF scan of one pair -- parallel arrays, one entry per
+    window, indexed by the window's END position in the aligned series.
+
+    A single full-history verdict hides regime changes: a pair can cointegrate
+    for a stretch and then detach, and the whole-span statistic averages the two
+    away. This turns the CADF t-statistic into a time series so the map of WHEN
+    the relationship held is visible. ``origin_hedge`` is Chan's through-origin
+    hedge in each window; its drift is the "the relationship moved" signal.
+    """
+
+    end_idx: NDArray[np.int64]
+    adf_stat: NDArray[np.float64]
+    origin_hedge: NDArray[np.float64]
+    half_life: NDArray[np.float64]
+
+
 def engle_granger(
     a: NDArray[np.float64], b: NDArray[np.float64], lags: int = 1, *, origin: bool = False
 ) -> CointResult:
@@ -123,6 +141,44 @@ def engle_granger(
         nobs=nobs,
         half_life=ou_half_life(spread),
         origin_hedge=origin_hedge,
+    )
+
+
+def rolling_cointegration(
+    a: NDArray[np.float64],
+    b: NDArray[np.float64],
+    *,
+    window: int = 252,
+    step: int = 21,
+    lags: int = 1,
+) -> RollingCoint:
+    """Slide a fixed window across a pair and run the CADF test in each.
+
+    Re-runs ``engle_granger`` on every ``window``-day slice (default ~1 trading
+    year), stepped by ``step`` days (~1 month), so the CADF t-statistic and the
+    through-origin hedge become time series. Each window's entry is stamped with
+    the index of its LAST day (``end_idx``), which the caller maps back to a date
+    through the aligned frame. This is the machinery behind the regime map in
+    docs/reproduction_lessons.md -- it makes "cointegration is a property of a
+    window" a picture instead of a caveat.
+    """
+    ends: list[int] = []
+    adf: list[float] = []
+    hedge: list[float] = []
+    half: list[float] = []
+    n = len(a)
+    for e in range(window, n + 1, step):
+        r = engle_granger(a[e - window : e], b[e - window : e], lags=lags, origin=True)
+        oh = r.origin_hedge  # origin=True -> always a float; narrow for the checker
+        ends.append(e - 1)
+        adf.append(r.adf_stat)
+        hedge.append(oh if oh is not None else float("nan"))
+        half.append(r.half_life)
+    return RollingCoint(
+        end_idx=np.array(ends, dtype=np.int64),
+        adf_stat=np.array(adf, dtype=np.float64),
+        origin_hedge=np.array(hedge, dtype=np.float64),
+        half_life=np.array(half, dtype=np.float64),
     )
 
 

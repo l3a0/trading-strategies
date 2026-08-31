@@ -1,6 +1,6 @@
-# The number that wouldn't reproduce
+# What I learned testing GLD/GDX for cointegration
 
-I re-ran a cointegration test from a 2009 quant-trading book. The published hedge ratio never reproduced exactly. Chasing the gap taught me more than a clean match would have.
+The published hedge ratio in a 2009 quant-trading book never reproduced exactly, no matter whose data I used. The reason is a data-vintage story, not a mistake. The pair itself had a shelf life.
 
 Ernest Chan's *Quantitative Trading* opens its pairs-trading chapter with an example. Buy gold, short the gold miners, and the two prices tend to drift back toward each other.
 
@@ -79,6 +79,14 @@ The statistic drops to −1.45, well short of significance. The spread's half-li
 | 2006–2026 | −1.45 | not cointegrated |
 
 The relationship the book documented was real. It also had a shelf life.
+
+The two-window table is the compressed version. The full picture is a rolling test. Slide a one-year window across the whole history and compute the statistic in each. Where it dips below the 10% critical line, the pair cointegrates in that window.
+
+[![Two-panel regime map of GLD versus GDX from 2007 to 2026. The top panel plots the rolling one-year CADF t-statistic, which dips below the −3.04 critical line only in scattered windows clustered in the early years. The bottom panel shows Chan's through-origin hedge drifting upward from about 1.64 to a peak near 6.6 around 2016.](figures/reproduction_regime_map.png)](figures/reproduction_regime_map.png)
+
+*Rolling one-year cointegration test on as-traded GLD/GDX closes, 2007–2026. Green bands mark the windows that clear the 10% critical value (−3.04). Only 31 of 231 windows clear it, and they cluster before 2015. Below, Chan's through-origin hedge drifts from \~1.64 to above 4, so there is no single ratio a fixed pair trade could have held.*
+
+Cointegration flickers on and off, and just 31 of the 231 windows clear even the 10% bar. They cluster in the early years, around Chan's own window. In the decade from 2015, only 10 of 139 windows reject. The lower panel says why the fixed trade was doomed regardless. The hedge that balances the spread climbs from Chan's \~1.64 to above 4, and briefly past 6. There was never one ratio to hold.
 
 ## The two runs, reproduced
 
