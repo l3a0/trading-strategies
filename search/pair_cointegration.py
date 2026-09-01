@@ -218,33 +218,41 @@ def rolling_cointegration(
     )
 
 
-def load_close(ticker: str, *, unadjusted: bool = False) -> pd.Series:
+def load_close(ticker: str, *, unadjusted: bool = False, chan: bool = False) -> pd.Series:
     """Load a ticker's daily close as a date-indexed Series.
 
-    Reads ``data/{ticker}_20yr_prices.csv`` (Yahoo dividend-adjusted, the repo
-    default) or ``..._20yr_prices_unadjusted.csv`` (raw close) when
-    ``unadjusted=True``. Both are written by yfinance with a 3-row multi-index
-    header (Price/Close, Ticker/SYM, Date/blank); rather than hard-code the
-    skip count we drop every leading row whose first field is not a parseable
-    date, so either header shape loads.
+    Two sources, by filename:
+
+    - The yfinance set (default): ``data/{ticker}_20yr_prices.csv`` (Yahoo
+      dividend-adjusted) or ``..._20yr_prices_unadjusted.csv`` (raw close) when
+      ``unadjusted=True``.
+    - Chan's book-companion set (``chan=True``): ``data/{ticker}_chan.csv`` --
+      the adjusted-close column of Chan's own ``.xls`` for that ticker. There is
+      no unadjusted twin, so ``unadjusted`` is ignored when ``chan=True``.
+
+    All are written with a 3-row multi-index header (Price/Close, Ticker/SYM,
+    Date/blank); rather than hard-code the skip count we drop every leading row
+    whose first field is not a parseable date, so either header shape loads.
 
     The basis matters for cross-ticker levels: GLD pays no dividend, so its
     adjusted close already equals its raw close, but GDX's dividends put today's
     adjusted history ~15% below raw. Chan's 2007-vintage adjusted close was near
     raw (few GDX dividends by then), so raw is the closest modern proxy for
-    reproducing the book -- which is why ``--ch7``/``--ch3`` and ``--unadjusted``
-    use it.
+    reproducing the book from yfinance -- which is why ``--ch7``/``--ch3`` and
+    ``--unadjusted`` use it.
     """
     # Provenance: GLD/GDX fetched from yfinance on 2026-08-27 (PR #195); the
-    # *_unadjusted files use auto_adjust=False. KO/PEP are a DIFFERENT source --
-    # the adjusted-close columns of Chan's own KO.xls/PEP.xls companion files
-    # (no *_unadjusted twin), which is why they reproduce his printed figures
-    # exactly; see the KO/PEP note above KOPEP_REF for the mirror and checksums.
-    # All deliberately frozen -- there is no regeneration script, and the pinned
-    # tests freeze these exact bytes against each source's drifting vintage (a
-    # re-download would fail the reproduction).
-    suffix = "_20yr_prices_unadjusted.csv" if unadjusted else "_20yr_prices.csv"
-    path = data_path(f"{ticker.lower()}{suffix}")
+    # *_unadjusted files use auto_adjust=False. The *_chan.csv files are a
+    # DIFFERENT source -- the adjusted-close columns of Chan's own companion
+    # .xls files; see the KO/PEP note above KOPEP_REF for the mirror and
+    # checksums. All deliberately frozen -- there is no regeneration script, and
+    # the pinned tests freeze these exact bytes against each source's drifting
+    # vintage (a re-download would fail the reproduction).
+    if chan:
+        path = data_path(f"{ticker.lower()}_chan.csv")
+    else:
+        suffix = "_20yr_prices_unadjusted.csv" if unadjusted else "_20yr_prices.csv"
+        path = data_path(f"{ticker.lower()}{suffix}")
     raw = pd.read_csv(path, header=None, names=["date", "close"], usecols=[0, 1])
     with warnings.catch_warnings():
         # The header rows ("Date", "Ticker") don't parse as dates; coerce drops
@@ -267,11 +275,14 @@ def aligned_closes(
     start: str | None = None,
     end: str | None = None,
     unadjusted: bool = False,
+    chan: bool = False,
 ) -> pd.DataFrame:
     """Inner-join two tickers' closes on their common trading days, optionally
-    clipped to the inclusive window ``[start, end]`` (both ``YYYY-MM-DD``)."""
+    clipped to the inclusive window ``[start, end]`` (both ``YYYY-MM-DD``).
+    ``chan=True`` loads both legs from Chan's committed companion data."""
     joined = pd.concat(
-        [load_close(a, unadjusted=unadjusted), load_close(b, unadjusted=unadjusted)],
+        [load_close(a, unadjusted=unadjusted, chan=chan),
+         load_close(b, unadjusted=unadjusted, chan=chan)],
         axis=1,
         join="inner",
     ).dropna()
@@ -302,9 +313,10 @@ def run(
     origin: bool = False,
     reference: str | None = None,
     show_correlation: bool = False,
+    chan: bool = False,
 ) -> None:
     """Load the pair, run the test, and print a book-style report."""
-    closes = aligned_closes(a, b, start=start, end=end, unadjusted=unadjusted)
+    closes = aligned_closes(a, b, start=start, end=end, unadjusted=unadjusted, chan=chan)
     if len(closes) < 30:
         raise SystemExit(
             f"only {len(closes)} common trading days in the window -- need >= 30 "
@@ -423,8 +435,8 @@ BOOK_REF_TRAIN = "example3_6_1.m (Ch.3, p.63): cadf t=-3.18, ~90%"
 # Chan's KO/PEP counter-example (example7_3.m, Ch.7): correlated but NOT
 # cointegrated -- the demonstration that correlation and cointegration differ.
 # Unlike GLD/GDX, this runs on Chan's OWN committed companion data:
-# data/ko_20yr_prices.csv and pep_20yr_prices.csv are the adjusted-close columns
-# of his KO.xls/PEP.xls, so the reproduction hits his printed figures exactly --
+# data/ko_chan.csv and pep_chan.csv are the adjusted-close columns of his
+# KO.xls/PEP.xls, so the reproduction hits his printed figures exactly --
 #   full KO-PEP intersection 1977-01-03..2008-01-18 (7833 obs after the 1 lag),
 #   through-origin hedge 1.0114, cadf t=-2.14 (above the 10% crit -> fails to
 #   reject), daily-return correlation 0.4849 (significant).
@@ -468,6 +480,7 @@ def main() -> None:
         args.start, args.end, args.unadjusted, args.origin, None
     )
     show_correlation = args.correlation
+    chan = False
     if args.ch7:
         start, end, unadjusted, origin, reference = (
             BOOK_START, BOOK_END, True, True, BOOK_REF_FULL
@@ -480,10 +493,10 @@ def main() -> None:
         # KO/PEP runs on Chan's committed adjusted-close data over the full
         # intersection, with the correlation check alongside the CADF.
         a_tick, b_tick = "KO", "PEP"
-        origin, show_correlation, reference = True, True, KOPEP_REF
+        origin, show_correlation, reference, chan = True, True, KOPEP_REF, True
     run(a_tick, b_tick, args.lags, start=start, end=end,
         unadjusted=unadjusted, origin=origin, reference=reference,
-        show_correlation=show_correlation)
+        show_correlation=show_correlation, chan=chan)
 
 
 if __name__ == "__main__":

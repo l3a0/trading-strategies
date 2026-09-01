@@ -136,8 +136,8 @@ critical value, so it fails to reject), and the daily-return correlation is
 with `python -m search.pair_cointegration --ko-pep`.
 
 Data: the adjusted-close columns of Chan's KO.xls/PEP.xls, committed as
-[data/ko_20yr_prices.csv](../data/ko_20yr_prices.csv) and
-[pep_20yr_prices.csv](../data/pep_20yr_prices.csv). Unlike the yfinance route
+[data/ko_chan.csv](../data/ko_chan.csv) and
+[pep_chan.csv](../data/pep_chan.csv). Unlike the yfinance route
 first planned here, Chan's own data reproduces his printed figures to the digit.
 A fresh yfinance download would drift off 0.4849 and 1.0114, the way GLD/GDX
 drifts off the book's 1.6766.

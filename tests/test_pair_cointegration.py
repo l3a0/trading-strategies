@@ -211,23 +211,23 @@ class TestKoPepNonCointegration:
     significantly CORRELATED in daily returns yet does NOT cointegrate — the
     demonstration that correlation and cointegration are different things.
 
-    Always-run: data/ko_20yr_prices.csv and pep_20yr_prices.csv are committed
-    (the adjusted-close columns of Chan's own KO.xls/PEP.xls). Unlike GLD/GDX,
-    this runs on Chan's exact companion data, so it reproduces his printed
-    figures to the digit — the counterpoint to the lost 1.6766 vintage.
+    Always-run: data/ko_chan.csv and pep_chan.csv are committed (the
+    adjusted-close columns of Chan's own KO.xls/PEP.xls). Unlike GLD/GDX, this
+    runs on Chan's exact companion data, so it reproduces his printed figures to
+    the digit — the counterpoint to the lost 1.6766 vintage.
     """
 
     @pytest.fixture(scope="class")
     def kopep(self) -> CointResult:
         """Full KO/PEP intersection, adjusted close — Chan's example7_3.m run."""
-        df = aligned_closes("KO", "PEP")
+        df = aligned_closes("KO", "PEP", chan=True)
         a = df["KO"].to_numpy(dtype=float)
         b = df["PEP"].to_numpy(dtype=float)
         return engle_granger(a, b, lags=1, origin=True)
 
     @pytest.fixture(scope="class")
     def corr(self) -> tuple[float, float, float]:
-        df = aligned_closes("KO", "PEP")
+        df = aligned_closes("KO", "PEP", chan=True)
         a = df["KO"].to_numpy(dtype=float)
         b = df["PEP"].to_numpy(dtype=float)
         return return_correlation(a, b)
