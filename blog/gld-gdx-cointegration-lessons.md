@@ -106,4 +106,4 @@ When backtesting from a paper or a book, budget more time for data provenance th
 
 The clean version of this project would have printed 1.6766 and moved on. The messy version shows how a published number ages. The method holds. The data drifts. And the relationship itself can quietly dissolve. Reproducing a result is less about matching digits than understanding why they move.
 
-*Reproduced with a numpy-only Engle-Granger / CADF test, cross-checked against statsmodels. Source: Ernest P. Chan, Quantitative Trading, rev. ed., `example7_2.m` and `example3_6_1.m`, GLD & GDX daily closes.*
+*Reproduced with a numpy-only Engle-Granger / CADF test, cross-checked against statsmodels. The implementation is open source: [l3a0/trading-strategies](https://github.com/l3a0/trading-strategies), with the [pair engine](https://github.com/l3a0/trading-strategies/blob/main/search/pair_cointegration.py) and its [pinned tests](https://github.com/l3a0/trading-strategies/blob/main/tests/test_pair_cointegration.py). Source: Ernest P. Chan, Quantitative Trading, rev. ed., `example7_2.m` and `example3_6_1.m`, GLD & GDX daily closes.*
