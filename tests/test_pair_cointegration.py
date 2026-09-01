@@ -20,11 +20,15 @@ statsmodels-backed) have their own mechanics tests in
    (example7_3.m): correlated in returns yet not cointegrated in levels. Unlike
    GLD/GDX this runs on Chan's OWN committed companion data, so it reproduces his
    printed figures exactly (origin hedge 1.0114, cadf t -2.14, corr 0.4849).
+5. ``TestGldGdxChanArchive`` — Chan's own committed GLD/GDX data (gld_chan.csv /
+   gdx_chan.csv). Pins that it gives 1.6395 / -3.52, NOT his printed 1.6766: the
+   lost-vintage receipt. The verdict still holds; only the hedge drifted.
 
 The GLD/GDX hedge reproduces at 1.6379 / 1.6283, not Chan's printed 1.6766 — the
 exact book value is a lost data vintage (even Chan's own archived GLD.xls, re-run,
-lands near 1.64). 1.6766 is a cited book target, never asserted as a computed
-result. KO/PEP is the opposite case: Chan's committed data reproduces exactly.
+lands at 1.6395, pinned by layer 5). 1.6766 is a cited book target, never asserted
+as a computed result. KO/PEP is the opposite case: Chan's committed data
+reproduces exactly.
 """
 
 from __future__ import annotations
@@ -254,3 +258,47 @@ class TestKoPepNonCointegration:
         r, _t, p = corr
         assert r == pytest.approx(0.4849, abs=5e-4)
         assert p < 0.05
+
+
+# ============================================================
+# Layer 5 — Chan's own GLD/GDX archive (the lost-vintage receipt)
+# ============================================================
+class TestGldGdxChanArchive:
+    """Freeze what Chan's OWN archived GLD.xls/GDX.xls produce, and pin the fact
+    that they do NOT reproduce his printed 1.6766.
+
+    Always-run: data/gld_chan.csv and gdx_chan.csv are committed (the
+    adjusted-close columns of Chan's own companion .xls, egorpe mirror, last
+    saved by Ernest Chan 2007-12-02). The essay calls the 1.6766 hedge a lost
+    data vintage; this is the receipt. Even Chan's own saved files, re-run, land
+    at 1.6395 — essentially the yfinance 1.6379, not the book. The 2007 book-run
+    vintage is a still-earlier state that no surviving file carries. The
+    cointegration verdict holds (it still rejects at 5%); only the hedge drifted.
+    """
+
+    @pytest.fixture(scope="class")
+    def arch(self) -> CointResult:
+        """Full GLD/GDX intersection from Chan's committed .xls, adjusted close."""
+        df = aligned_closes("GLD", "GDX", chan=True)
+        a = df["GLD"].to_numpy(dtype=float)
+        b = df["GDX"].to_numpy(dtype=float)
+        return engle_granger(a, b, lags=1, origin=True)
+
+    def test_reproduces_chans_archive(self, arch: CointResult) -> None:
+        """Chan's own data gives 1.6395 / -3.52 over 2006-05-23..2007-11-30."""
+        assert arch.nobs == 383
+        assert arch.origin_hedge == pytest.approx(1.6395, abs=5e-4)
+        assert arch.hedge_ratio == pytest.approx(1.3865, abs=5e-4)
+        assert arch.adf_stat == pytest.approx(-3.52, abs=1e-2)
+        assert arch.half_life == pytest.approx(10.3, abs=0.1)
+
+    def test_hedge_is_not_the_lost_book_vintage(self, arch: CointResult) -> None:
+        """The whole point of committing this archive: even Chan's own saved
+        files miss his printed 1.6766. The 2007 book-run vintage is gone."""
+        assert arch.origin_hedge is not None
+        assert abs(arch.origin_hedge - 1.6766) > 0.03
+
+    def test_verdict_survives_the_drift(self, arch: CointResult) -> None:
+        """The vintage moved the hedge but not the conclusion: the pair still
+        cointegrates at the 5% level, the same verdict --ch7 reaches on yfinance."""
+        assert arch.adf_stat < EG_CRIT_N2["5%"]

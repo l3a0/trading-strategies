@@ -73,6 +73,15 @@ re-runs converge near 1.6379. Pinned by `TestGldGdxReproduction` in
 engine is [search/pair_cointegration.py](../search/pair_cointegration.py) on the
 statsmodels-backed [common/timeseries.py](../common/timeseries.py).
 
+Chan's own companion data is committed too, as the receipt for that lost vintage:
+[data/gld_chan.csv](../data/gld_chan.csv) and
+[gdx_chan.csv](../data/gdx_chan.csv), the adjusted close of his GLD.xls/GDX.xls.
+Run through the same engine they give a through-origin hedge of 1.6395 and a CADF
+t of −3.52, not his printed 1.6766 / −3.357. So even Chan's own saved files miss
+the book number. The 2007 book-run vintage is a still-earlier state no file
+carries. The cointegration verdict still holds; only the hedge drifted. Pinned by
+`TestGldGdxChanArchive`.
+
 ### 1.2 Half-life: Done
 
 The Ornstein-Uhlenbeck half-life sets the expected holding period. The book
