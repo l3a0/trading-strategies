@@ -448,6 +448,17 @@ BOOK_REF_TRAIN = "example3_6_1.m (Ch.3, p.63): cadf t=-3.18, ~90%"
 # would drift off 1.0114/0.4849 the way it drifts off GLD/GDX's 1.6766.
 KOPEP_REF = "example7_3.m (Ch.7): hedge 1.0114, cadf t=-2.14, corr 0.4849 -- NOT cointegrated"
 
+# Chan's GLD/GDX companion data is ALSO committed, as the lost-vintage receipt:
+# data/gld_chan.csv and gdx_chan.csv (adjusted close of his GLD.xls/GDX.xls, same
+# egorpe mirror, last saved by Ernest Chan 2007-12-02). Loaded via
+# aligned_closes(..., chan=True) and pinned by TestGldGdxChanArchive, they give
+# origin hedge 1.6395 and cadf t=-3.52 over 2006-05-23..2007-11-30 -- NOT the
+# book's 1.6766/-3.357. Even Chan's OWN saved files miss his printed number: the
+# 2007 book-run adjusted-close vintage is gone. There is no CLI mode for this; the
+# yfinance --ch7 path stays the interactive GLD/GDX reproduction.
+#   GLD.xls sha256 3b866a8a43bf52f915ed73209ab542434c85ef033e5b9f01d57ff508820f4563
+#   GDX.xls sha256 757aa109b0617bbe1d6983456c4c397ffdc946e417ce3ac98e3ef255d740df34
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Daily cointegration test for a pair of tickers")
