@@ -30,7 +30,7 @@ blocked until that data is sourced.
 
 ## Progress at a glance
 
-Ordered by the recommended work sequence: done items first, then Steps 1-7, then
+Ordered by the recommended work sequence: done items first, then Steps 1-6, then
 the data-blocked ones. Each row maps to a detail section below by name. The detail
 sections stay grouped by the book's categories, so the section numbers (§) run in
 book order, not work order.
@@ -40,13 +40,13 @@ book order, not work order.
 | ✓ | GLD/GDX cointegration test | Ch.3 / Ch.7 | on hand | **Done** |
 | ✓ | GLD/GDX half-life | Ch.3 | on hand | **Done** |
 | ✓ | Python-vs-MATLAB stat detour | Ch.3 | on hand | **Done** |
-| 1 | KO vs PEP non-cointegration | Ch.2 | free to fetch | **Ready** |
-| 2 | Kelly / SPY leverage | Ex. 6.2 | on hand | **Ready** |
-| 3 | The coin-flip game | Ex. 6.1 | synthetic | **Ready** |
-| 4 | Risk parity | Ch.6 | on hand | **Ready** |
-| 5 | Khandani-Lo linear reversal | Ex. 3.6 / 3.7 | daily panel needed | Buildable |
-| 6 | Equity seasonals | Ex. 7.6 / 7.7 | on hand | Buildable |
-| 7 | Conditional Parameter Optimization | new-edition centerpiece | 1-min archive | Buildable |
+| ✓ | KO vs PEP non-cointegration | Ex. 7.3 | committed (Chan) | **Done** |
+| 1 | Kelly / SPY leverage | Ex. 6.2 | on hand | **Ready** |
+| 2 | The coin-flip game | Ex. 6.1 | synthetic | **Ready** |
+| 3 | Risk parity | Ch.6 | on hand | **Ready** |
+| 4 | Khandani-Lo linear reversal | Ex. 3.6 / 3.7 | daily panel needed | Buildable |
+| 5 | Equity seasonals | Ex. 7.6 / 7.7 | on hand | Buildable |
+| 6 | Conditional Parameter Optimization | new-edition centerpiece | 1-min archive | Buildable |
 | — | Other stationary-spread candidates | Ch.2 | mixed | Blocked / Ready |
 | — | Post-earnings announcement drift | Ch.7 | earnings data | Blocked |
 | — | PCA statistical factor model | Ch.7 | S&P 600 panel | Blocked |
@@ -121,17 +121,26 @@ yfinance. The build is a cross-sectional ranking backtest with a cost model. The
 lesson to reproduce is the collapse from 4.47 to 0.25 to −3.19, not a headline
 edge.
 
-### 2.2 KO vs PEP non-cointegration: Ready
+### 2.2 KO vs PEP non-cointegration: Done
 
 A deliberate counter-example. Coca-Cola and Pepsi are correlated (0.4849,
 significant) but do **not** cointegrate. It shows that correlation and
 cointegration are different things.
 
-Data: KO and PEP daily prices, free to fetch from yfinance like GLD and GDX.
-Build: reuse [search/pair_cointegration.py](../search/pair_cointegration.py)
-directly. Run the correlation and the cointegration test on the pair and confirm
-the pair correlates but fails to cointegrate. This is the smallest next step and
-reuses the flagship's engine.
+Repo result: reproduced from Chan's own `example7_3.m` companion data, exactly.
+The through-origin hedge is 1.0114, the CADF t-statistic is −2.14 (above the 10%
+critical value, so it fails to reject), and the daily-return correlation is
+0.4849 (t ≈ 49, significant). Over the full KO/PEP intersection, 1977-01-03 to
+2008-01-18. Pinned by `TestKoPepNonCointegration` in
+[tests/test_pair_cointegration.py](../tests/test_pair_cointegration.py). Run it
+with `python -m search.pair_cointegration --ko-pep`.
+
+Data: the adjusted-close columns of Chan's KO.xls/PEP.xls, committed as
+[data/ko_chan.csv](../data/ko_chan.csv) and
+[pep_chan.csv](../data/pep_chan.csv). Unlike the yfinance route
+first planned here, Chan's own data reproduces his printed figures to the digit.
+A fresh yfinance download would drift off 0.4849 and 1.0114, the way GLD/GDX
+drifts off the book's 1.6766.
 
 ### 2.3 Other stationary-spread candidates: Blocked / Ready
 
@@ -227,13 +236,13 @@ equity streams, so the plumbing exists.
 
 ## Notes on the order
 
-The table's Step column is the recommended sequence. Steps 1-4 are quick. KO/PEP
-reuses `pair_cointegration` directly, and risk parity reuses `portfolio`'s
-stream-combining. Kelly and the coin-flip are small standalone builds. They share
-the log-growth idea behind `position_sizing`'s `kelly_fraction`, but reproduce
-Chan's continuous-leverage and ensemble-vs-time forms, which the repo does not
-carry. Steps 5-7 are larger builds whose data is on hand. The blocked rows wait
-until their data is sourced.
+The table's Step column is the recommended sequence. KO/PEP is now done. It
+reused `pair_cointegration` directly, on Chan's own committed data. Steps 1-3 are
+quick. Risk parity reuses `portfolio`'s stream-combining. Kelly and the coin-flip
+are small standalone builds. They share the log-growth idea behind
+`position_sizing`'s `kelly_fraction`, but reproduce Chan's continuous-leverage and
+ensemble-vs-time forms, which the repo does not carry. Steps 4-6 are larger builds
+whose data is on hand. The blocked rows wait until their data is sourced.
 
 Each experiment carries the same epistemic label as the rest of the repo's
 exploratory work. Reproducing the book's number is the goal. A reproduced edge is a

@@ -41,10 +41,19 @@ The OLS, ADF, and OU primitives come from ``statsmodels`` via
 ``common/timeseries.py``, run at a FIXED lag (``maxlag=1, autolag=None``), not
 statsmodels' AIC default.
 
+Chan's KO vs PEP counter-example (``--ko-pep``, Example 7.3) is the mirror
+image. ``return_correlation`` and the CADF run together to show a pair that is
+significantly CORRELATED in daily returns (r = 0.4849) yet does NOT cointegrate
+(CADF t = -2.14, fails to reject). Correlation is the short-term co-movement of
+returns. Cointegration is the long-term tethering of price levels. A pair can
+have one without the other. Unlike GLD/GDX, KO/PEP reproduces Chan's printed
+figures exactly, on his own committed companion data (see the KO/PEP note below).
+
 Usage:
     python -m search.pair_cointegration                    # GLD vs GDX, full history
     python -m search.pair_cointegration --ch7              # Chan's Ch.7 full-window run
     python -m search.pair_cointegration --ch3              # Chan's Ch.3 / p.63 run
+    python -m search.pair_cointegration --ko-pep           # Chan's KO/PEP counter-example
     python -m search.pair_cointegration --a SPY --b IVV --origin
     python -m search.pair_cointegration --selftest         # verify the math
 """
@@ -59,6 +68,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
+from scipy import stats
 
 from common.paths import data_path
 from common.timeseries import (
@@ -144,6 +154,32 @@ def engle_granger(
     )
 
 
+def return_correlation(
+    a: NDArray[np.float64], b: NDArray[np.float64]
+) -> tuple[float, float, float]:
+    """Pearson correlation of the two legs' DAILY RETURNS, with a significance
+    test -- Chan's ``corrcoef(dailyReturns)`` in example7_3.m.
+
+    This is the other half of the KO/PEP counter-example, and the reason
+    correlation and cointegration are not the same thing. Correlation measures
+    the short-term co-movement of *returns*: do the two move together day to
+    day? Cointegration (``engle_granger`` above) measures the long-term
+    tethering of *price levels*: does a fixed combination of the two stay
+    range-bound? A pair can have either without the other -- KO and PEP are
+    significantly correlated (r ~ 0.48) yet do not cointegrate.
+
+    Returns ``(r, t, p)``: the correlation, its t-statistic
+    ``r*sqrt((n-2)/(1-r^2))``, and the two-sided p-value under ``t_{n-2}``.
+    """
+    ra = np.diff(a) / a[:-1]
+    rb = np.diff(b) / b[:-1]
+    r = float(np.corrcoef(ra, rb)[0, 1])
+    n = len(ra)
+    t = r * math.sqrt((n - 2) / (1.0 - r * r))
+    p = float(2.0 * stats.t.sf(abs(t), df=n - 2))
+    return r, t, p
+
+
 def rolling_cointegration(
     a: NDArray[np.float64],
     b: NDArray[np.float64],
@@ -182,29 +218,41 @@ def rolling_cointegration(
     )
 
 
-def load_close(ticker: str, *, unadjusted: bool = False) -> pd.Series:
+def load_close(ticker: str, *, unadjusted: bool = False, chan: bool = False) -> pd.Series:
     """Load a ticker's daily close as a date-indexed Series.
 
-    Reads ``data/{ticker}_20yr_prices.csv`` (Yahoo dividend-adjusted, the repo
-    default) or ``..._20yr_prices_unadjusted.csv`` (raw close) when
-    ``unadjusted=True``. Both are written by yfinance with a 3-row multi-index
-    header (Price/Close, Ticker/SYM, Date/blank); rather than hard-code the
-    skip count we drop every leading row whose first field is not a parseable
-    date, so either header shape loads.
+    Two sources, by filename:
+
+    - The yfinance set (default): ``data/{ticker}_20yr_prices.csv`` (Yahoo
+      dividend-adjusted) or ``..._20yr_prices_unadjusted.csv`` (raw close) when
+      ``unadjusted=True``.
+    - Chan's book-companion set (``chan=True``): ``data/{ticker}_chan.csv`` --
+      the adjusted-close column of Chan's own ``.xls`` for that ticker. There is
+      no unadjusted twin, so ``unadjusted`` is ignored when ``chan=True``.
+
+    All are written with a 3-row multi-index header (Price/Close, Ticker/SYM,
+    Date/blank); rather than hard-code the skip count we drop every leading row
+    whose first field is not a parseable date, so either header shape loads.
 
     The basis matters for cross-ticker levels: GLD pays no dividend, so its
     adjusted close already equals its raw close, but GDX's dividends put today's
     adjusted history ~15% below raw. Chan's 2007-vintage adjusted close was near
     raw (few GDX dividends by then), so raw is the closest modern proxy for
-    reproducing the book -- which is why ``--ch7``/``--ch3`` and ``--unadjusted``
-    use it.
+    reproducing the book from yfinance -- which is why ``--ch7``/``--ch3`` and
+    ``--unadjusted`` use it.
     """
-    # Provenance: fetched from yfinance on 2026-08-27 (PR #195); the *_unadjusted
-    # files use auto_adjust=False. Deliberately frozen -- there is no regeneration
-    # script, and the pinned tests freeze these exact bytes against Yahoo's
-    # drifting adjusted-close vintage (a re-download would fail the reproduction).
-    suffix = "_20yr_prices_unadjusted.csv" if unadjusted else "_20yr_prices.csv"
-    path = data_path(f"{ticker.lower()}{suffix}")
+    # Provenance: GLD/GDX fetched from yfinance on 2026-08-27 (PR #195); the
+    # *_unadjusted files use auto_adjust=False. The *_chan.csv files are a
+    # DIFFERENT source -- the adjusted-close columns of Chan's own companion
+    # .xls files; see the KO/PEP note above KOPEP_REF for the mirror and
+    # checksums. All deliberately frozen -- there is no regeneration script, and
+    # the pinned tests freeze these exact bytes against each source's drifting
+    # vintage (a re-download would fail the reproduction).
+    if chan:
+        path = data_path(f"{ticker.lower()}_chan.csv")
+    else:
+        suffix = "_20yr_prices_unadjusted.csv" if unadjusted else "_20yr_prices.csv"
+        path = data_path(f"{ticker.lower()}{suffix}")
     raw = pd.read_csv(path, header=None, names=["date", "close"], usecols=[0, 1])
     with warnings.catch_warnings():
         # The header rows ("Date", "Ticker") don't parse as dates; coerce drops
@@ -227,11 +275,14 @@ def aligned_closes(
     start: str | None = None,
     end: str | None = None,
     unadjusted: bool = False,
+    chan: bool = False,
 ) -> pd.DataFrame:
     """Inner-join two tickers' closes on their common trading days, optionally
-    clipped to the inclusive window ``[start, end]`` (both ``YYYY-MM-DD``)."""
+    clipped to the inclusive window ``[start, end]`` (both ``YYYY-MM-DD``).
+    ``chan=True`` loads both legs from Chan's committed companion data."""
     joined = pd.concat(
-        [load_close(a, unadjusted=unadjusted), load_close(b, unadjusted=unadjusted)],
+        [load_close(a, unadjusted=unadjusted, chan=chan),
+         load_close(b, unadjusted=unadjusted, chan=chan)],
         axis=1,
         join="inner",
     ).dropna()
@@ -261,9 +312,11 @@ def run(
     unadjusted: bool = False,
     origin: bool = False,
     reference: str | None = None,
+    show_correlation: bool = False,
+    chan: bool = False,
 ) -> None:
     """Load the pair, run the test, and print a book-style report."""
-    closes = aligned_closes(a, b, start=start, end=end, unadjusted=unadjusted)
+    closes = aligned_closes(a, b, start=start, end=end, unadjusted=unadjusted, chan=chan)
     if len(closes) < 30:
         raise SystemExit(
             f"only {len(closes)} common trading days in the window -- need >= 30 "
@@ -289,7 +342,7 @@ def run(
     print(f"  hedge ratio beta = {result.hedge_ratio:.4f}    intercept alpha = {result.intercept:.4f}")
     print(f"  => spread z = {au} - {result.hedge_ratio:.4f}*{bu} {-result.intercept:+.4f}")
     if result.origin_hedge is not None:
-        note = "   <- Chan quotes this (his ols); book value 1.6766" if reference is not None else ""
+        note = "   <- Chan quotes this (his ols convention)" if reference is not None else ""
         print(f"  through-origin hedge (no intercept, ols({au},{bu})) = {result.origin_hedge:.4f}{note}")
     print()
     print(f"Engle-Granger / CADF test (ADF on residual spread, {lags} lag, no const):")
@@ -305,6 +358,14 @@ def run(
     else:
         print(f"  half-life = {result.half_life:.1f} trading days")
     print()
+    if show_correlation:
+        r, t, p = return_correlation(av, bv)
+        sig = "significant" if p < 0.05 else "not significant"
+        print("Daily-return correlation (Chan's corrcoef check):")
+        print(f"  r = {r:.4f}   (t = {t:.1f}, p = {p:.2e} -> {sig})")
+        print("  Correlated returns do not imply cointegrated prices: the pair")
+        print("  can co-move day to day yet drift apart in the long run.")
+        print()
     print("Caveats: asymptotic critical values (a fitted hedge ratio biases the")
     print("stat toward rejection) and a single fixed hedge ratio over the whole")
     print("span. Cointegration is window-dependent, so a borderline verdict")
@@ -371,6 +432,22 @@ BOOK_TRAIN_END = "2007-05-23"  # first ~252 trading days -> Ch.3 / p.63 run
 BOOK_REF_FULL = "example7_2.m (Ch.7): hedge 1.6766, cadf t=-3.357, ~95%"
 BOOK_REF_TRAIN = "example3_6_1.m (Ch.3, p.63): cadf t=-3.18, ~90%"
 
+# Chan's KO/PEP counter-example (example7_3.m, Ch.7): correlated but NOT
+# cointegrated -- the demonstration that correlation and cointegration differ.
+# Unlike GLD/GDX, this runs on Chan's OWN committed companion data:
+# data/ko_chan.csv and pep_chan.csv are the adjusted-close columns of his
+# KO.xls/PEP.xls, so the reproduction hits his printed figures exactly --
+#   full KO-PEP intersection 1977-01-03..2008-01-18 (7833 obs after the 1 lag),
+#   through-origin hedge 1.0114, cadf t=-2.14 (above the 10% crit -> fails to
+#   reject), daily-return correlation 0.4849 (significant).
+# Provenance: KO.xls/PEP.xls last saved by Ernest Chan 2008-01-23, from the
+# public book-code mirror github.com/egorpe/EPChan-QuantitativeTrading
+#   KO.xls  sha256 33c09f771c141793bf6c4fa355299f7aec4fe51b330b692064760d2efa3e87bc
+#   PEP.xls sha256 fdc0deefb3beeaec4dacf729f63be3457bed59df7589a312b93badb58ced7053
+# A frozen vintage (no regeneration script), like the GLD/GDX CSVs. yfinance
+# would drift off 1.0114/0.4849 the way it drifts off GLD/GDX's 1.6766.
+KOPEP_REF = "example7_3.m (Ch.7): hedge 1.0114, cadf t=-2.14, corr 0.4849 -- NOT cointegrated"
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Daily cointegration test for a pair of tickers")
@@ -387,6 +464,10 @@ def main() -> None:
                         help=f"reproduce Chan's Chapter 7 full-window run ({BOOK_START}..{BOOK_END}, raw, origin)")
     parser.add_argument("--ch3", action="store_true",
                         help=f"reproduce Chan's Chapter 3 (p.63) training-set run ({BOOK_START}..{BOOK_TRAIN_END}, raw, origin)")
+    parser.add_argument("--ko-pep", dest="ko_pep", action="store_true",
+                        help="reproduce Chan's KO/PEP counter-example (example7_3.m): correlated but NOT cointegrated")
+    parser.add_argument("--correlation", action="store_true",
+                        help="also report the daily-return correlation (Chan's corrcoef check)")
     parser.add_argument("--selftest", action="store_true", help="verify the ADF/coint math on synthetic data")
     args = parser.parse_args()
 
@@ -394,9 +475,12 @@ def main() -> None:
         selftest()
         return
 
+    a_tick, b_tick = args.a, args.b
     start, end, unadjusted, origin, reference = (
         args.start, args.end, args.unadjusted, args.origin, None
     )
+    show_correlation = args.correlation
+    chan = False
     if args.ch7:
         start, end, unadjusted, origin, reference = (
             BOOK_START, BOOK_END, True, True, BOOK_REF_FULL
@@ -405,8 +489,14 @@ def main() -> None:
         start, end, unadjusted, origin, reference = (
             BOOK_START, BOOK_TRAIN_END, True, True, BOOK_REF_TRAIN
         )
-    run(args.a, args.b, args.lags, start=start, end=end,
-        unadjusted=unadjusted, origin=origin, reference=reference)
+    elif args.ko_pep:
+        # KO/PEP runs on Chan's committed adjusted-close data over the full
+        # intersection, with the correlation check alongside the CADF.
+        a_tick, b_tick = "KO", "PEP"
+        origin, show_correlation, reference, chan = True, True, KOPEP_REF, True
+    run(a_tick, b_tick, args.lags, start=start, end=end,
+        unadjusted=unadjusted, origin=origin, reference=reference,
+        show_correlation=show_correlation, chan=chan)
 
 
 if __name__ == "__main__":

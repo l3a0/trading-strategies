@@ -1,11 +1,11 @@
 # pyright: reportPrivateUsage=false
 """Regression tests for search/pair_cointegration.py.
 
-Two always-run layers (no dataset gate — the GLD/GDX price CSVs are committed
-to git, not release-sized option chains). The shared OLS / ADF / OU primitives
-(now statsmodels-backed) have their own mechanics tests in
+Always-run layers (no dataset gate — the price CSVs are committed to git, not
+release-sized option chains). The shared OLS / ADF / OU primitives (now
+statsmodels-backed) have their own mechanics tests in
 ``tests/test_timeseries.py``; this file tests the pair-specific two-step
-``engle_granger`` and the reproduction.
+``engle_granger``, the return correlation, and the reproductions.
 
 1. ``TestEngleGranger`` — the two-step cointegration test on synthetic pairs
    with known answers (a shared-factor pair rejects, independent walks do not),
@@ -15,9 +15,16 @@ to git, not release-sized option chains). The shared OLS / ADF / OU primitives
    full-history decay). These are the numbers the reproduction essay quotes. The
    test is what freezes the yfinance vintage: a future re-download that shifts
    the adjusted-close basis moves these numbers and fails CI.
-The reproduced hedge is 1.6379 / 1.6283, not Chan's printed 1.6766 — the exact
-book value is a lost data vintage. 1.6766 is a cited book target, never asserted
-as a computed result.
+3. ``TestRollingRegime`` — the rolling-window scan behind the essay's regime map.
+4. ``TestKoPepNonCointegration`` — pins Chan's KO/PEP counter-example
+   (example7_3.m): correlated in returns yet not cointegrated in levels. Unlike
+   GLD/GDX this runs on Chan's OWN committed companion data, so it reproduces his
+   printed figures exactly (origin hedge 1.0114, cadf t -2.14, corr 0.4849).
+
+The GLD/GDX hedge reproduces at 1.6379 / 1.6283, not Chan's printed 1.6766 — the
+exact book value is a lost data vintage (even Chan's own archived GLD.xls, re-run,
+lands near 1.64). 1.6766 is a cited book target, never asserted as a computed
+result. KO/PEP is the opposite case: Chan's committed data reproduces exactly.
 """
 
 from __future__ import annotations
@@ -35,6 +42,7 @@ from search.pair_cointegration import (
     RollingCoint,
     aligned_closes,
     engle_granger,
+    return_correlation,
     rolling_cointegration,
     selftest,
 )
@@ -193,3 +201,56 @@ class TestRollingRegime:
         post = years >= 2015
         assert int(post.sum()) == 139
         assert int((roll.adf_stat[post] < EG_CRIT_N2["10%"]).sum()) == 10
+
+
+# ============================================================
+# Layer 4 — Chan's KO/PEP counter-example (committed Chan data)
+# ============================================================
+class TestKoPepNonCointegration:
+    """Freeze Chan's KO/PEP counter-example (example7_3.m, Ch.7): the pair is
+    significantly CORRELATED in daily returns yet does NOT cointegrate — the
+    demonstration that correlation and cointegration are different things.
+
+    Always-run: data/ko_chan.csv and pep_chan.csv are committed (the
+    adjusted-close columns of Chan's own KO.xls/PEP.xls). Unlike GLD/GDX, this
+    runs on Chan's exact companion data, so it reproduces his printed figures to
+    the digit — the counterpoint to the lost 1.6766 vintage.
+    """
+
+    @pytest.fixture(scope="class")
+    def kopep(self) -> CointResult:
+        """Full KO/PEP intersection, adjusted close — Chan's example7_3.m run."""
+        df = aligned_closes("KO", "PEP", chan=True)
+        a = df["KO"].to_numpy(dtype=float)
+        b = df["PEP"].to_numpy(dtype=float)
+        return engle_granger(a, b, lags=1, origin=True)
+
+    @pytest.fixture(scope="class")
+    def corr(self) -> tuple[float, float, float]:
+        df = aligned_closes("KO", "PEP", chan=True)
+        a = df["KO"].to_numpy(dtype=float)
+        b = df["PEP"].to_numpy(dtype=float)
+        return return_correlation(a, b)
+
+    def test_hedge_matches_chan_exactly(self, kopep: CointResult) -> None:
+        """Chan's through-origin hedge 1.0114 reproduces to the digit (his .xls
+        data, not a modern download). The with-intercept hedge is 0.9209."""
+        assert kopep.nobs == 7833
+        assert kopep.origin_hedge == pytest.approx(1.0114, abs=5e-4)
+        assert kopep.hedge_ratio == pytest.approx(0.9209, abs=5e-4)
+
+    def test_fails_to_cointegrate(self, kopep: CointResult) -> None:
+        """CADF t = -2.14 (Chan's -2.14258438), well above the 10% crit: the
+        pair fails to reject the no-cointegration null. The OU 'half-life' of
+        ~619 days confirms the spread barely mean-reverts."""
+        assert kopep.adf_stat == pytest.approx(-2.14, abs=1e-2)
+        assert kopep.adf_stat > EG_CRIT_N2["10%"]
+        assert kopep.half_life > 100
+
+    def test_returns_are_correlated(self, corr: tuple[float, float, float]) -> None:
+        """The other half of the counter-example: daily returns ARE
+        significantly correlated (Chan's r = 0.4849), even though the prices do
+        not cointegrate."""
+        r, _t, p = corr
+        assert r == pytest.approx(0.4849, abs=5e-4)
+        assert p < 0.05
