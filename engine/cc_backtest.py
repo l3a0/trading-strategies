@@ -6,8 +6,8 @@ from typing import Any, cast
 
 import numpy as np
 import pandas as pd
+from ithildincore.stats import newey_west_summary
 from numpy.typing import NDArray
-from quantcore.stats import newey_west_summary
 
 from common.paths import data_path
 
@@ -688,7 +688,7 @@ def excess_over_buy_hold_statistics(
         raise ValueError(f"Need at least 2 daily observations, got {n}")
 
     # The naive/NW pair, Bartlett weights, auto-lag, and guards live in
-    # quantcore.stats.newey_west_summary — the single shared definition
+    # ithildincore.stats.newey_west_summary — the single shared definition
     # (byte-identical to the block formerly inlined here).
     s = newey_west_summary(excess)
 

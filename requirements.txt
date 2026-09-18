@@ -3,13 +3,13 @@ pandas
 matplotlib
 yfinance
 statsmodels
-# The shared estimators. quantcore holds the OLS, ADF, half-life and
+# The shared estimators. ithildincore holds the OLS, ADF, half-life and
 # Newey-West work this repo used to carry in common/timeseries.py and
 # common/stats.py, and shares it with the sibling quantitative-trading
 # repo, so one calculation has one implementation.
 #
 # Pinned to a commit, and pinned for a different reason than the linters
-# below. A linter release breaks CI with no code change. A quantcore release
+# below. A linter release breaks CI with no code change. A ithildincore release
 # would change a number with no code change, and every pinned figure in this
 # repo's significance blocks traces to that arithmetic.
 #
@@ -28,7 +28,7 @@ statsmodels
 #      this pin now moves it while sitting outside that hash. Without the bump
 #      a re-scored campaign keeps its old lineage id, which is the stale
 #      answer-key row the hash exists to prevent.
-quantcore @ git+https://github.com/l3a0/quant-core@d088015176a74f38d1f1e1240f8371b5637d5db2
+ithildincore @ git+https://github.com/l3a0/ithildin-core@9d39ae35c9dd9931ad3f4021aa09153d85f12912
 pytest
 pytest-cov
 pytest-xdist

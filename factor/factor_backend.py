@@ -39,7 +39,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from quantcore.stats import (
+from ithildincore.stats import (
     newey_west_t,  # the shared Bartlett-weighted HAC t (one definition, leaf-homed)
 )
 

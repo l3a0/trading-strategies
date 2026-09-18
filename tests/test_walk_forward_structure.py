@@ -20,7 +20,7 @@ from typing import Any, ClassVar
 import numpy as np
 import pandas as pd
 import pytest
-from quantcore.stats import newey_west_summary
+from ithildincore.stats import newey_west_summary
 
 from common.paths import DATA_DIR
 from realchains.real_cc_backtest import COMMISSION_PER_SHARE

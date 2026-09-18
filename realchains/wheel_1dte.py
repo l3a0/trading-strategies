@@ -46,7 +46,7 @@ from collections.abc import Sequence
 from datetime import date as _date
 from typing import Any
 
-from quantcore.stats import newey_west_summary
+from ithildincore.stats import newey_west_summary
 
 from common.paths import data_path
 from common.position_sizing import kelly_fraction, simulate_sizing

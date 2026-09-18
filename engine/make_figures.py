@@ -52,10 +52,10 @@ import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from ithildincore.stats import newey_west_lag
 from matplotlib.figure import Figure
 from matplotlib.ticker import FuncFormatter
 from numpy.typing import NDArray
-from quantcore.stats import newey_west_lag
 
 from common.paths import data_path
 from engine.cc_backtest import (

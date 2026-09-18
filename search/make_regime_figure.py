@@ -24,8 +24,8 @@ on both its light and dark surfaces.
 from __future__ import annotations
 
 import matplotlib.dates as mdates
+from ithildincore.timeseries import EG_CRIT_N2
 from matplotlib.figure import Figure
-from quantcore.timeseries import EG_CRIT_N2
 
 from common.paths import FIGURES_DIR
 from search.pair_cointegration import aligned_closes, rolling_cointegration

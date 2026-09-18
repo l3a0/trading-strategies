@@ -74,7 +74,7 @@ jobs:
       # was ~900s serial and dominated the whole CI wall-clock; two Monte-Carlo
       # files (test_tharp_random_entry, test_tharp_sr_replication) were ~69% of
       # it. The list was twelve files until tests/test_timeseries.py moved to
-      # the quantcore repo with the code it covered, which also brings the
+      # the ithildincore repo with the code it covered, which also brings the
       # count back in step with this comment. The suite is synthetic (no chain stores), so the workers are
       # memory-light — none of the OOM pressure that made the scout-buckets
       # process-pool a wash on the 7GB runner. Coverage is dropped here on

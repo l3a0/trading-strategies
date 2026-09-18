@@ -14,7 +14,7 @@ are reported, never gates.
 
 Dependency direction: ``common/`` is the leaf package both ``engine/`` and
 ``realchains/`` import (via ``common.paths``), so this module imports nothing
-above ``common/`` — stdlib plus the external ``quantcore.stats``, whose
+above ``common/`` — stdlib plus the external ``ithildincore.stats``, whose
 ``newey_west_t`` (numpy-vectorized Bartlett weights, auto-lag
 ``L = int(4·(n/100)^(2/9))``, ddof-1 zero-variance guard) is the repo's single
 Newey-West definition, shared with ``factor/factor_backend`` and (via
@@ -51,7 +51,7 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
-from quantcore.stats import newey_west_t
+from ithildincore.stats import newey_west_t
 
 ENTRY_ACTIONS = frozenset({'sell', 'enter'})
 TERMINAL_ACTIONS = frozenset({'expiration', 'close', 'close_itm', 'close_stop', 'settle'})

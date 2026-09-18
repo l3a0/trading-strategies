@@ -39,7 +39,7 @@ from typing import Any, NamedTuple
 
 import numpy as np
 import pandas as pd
-from quantcore.stats import newey_west_summary
+from ithildincore.stats import newey_west_summary
 
 from realchains.real_cc_backtest import COMMISSION_PER_SHARE
 from realchains.vol_premium import STRUCTURE_SPECS, run_real_structure_overlay

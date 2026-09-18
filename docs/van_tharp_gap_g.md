@@ -220,8 +220,8 @@ exercise or a campaign, never a quiet extension of this one (the reclassificatio
 Consumers of the combined stream:
 
 - `newey_west_summary` for the combined stream's descriptive t — the single home of the repo's
-  naive-vs-Newey-West arithmetic. It now lives in `quantcore.stats`, in the shared
-  [quant-core](https://github.com/l3a0/quant-core) package, so the line numbers this bullet used to
+  naive-vs-Newey-West arithmetic. It now lives in `ithildincore.stats`, in the shared
+  [ithildin-core](https://github.com/l3a0/ithildin-core) package, so the line numbers this bullet used to
   carry are gone and the symbols are the reference: `NeweyWestSummary` and `newey_west_summary`. Lag
   units are the caller's series index, calendar days here. The arithmetic did not change on the way
   out, so nothing this doc measured moved.
@@ -256,7 +256,7 @@ significance authority (common/trade_ledger.py:237-242).
 
 `common/portfolio.py` will be the first pandas import in the leaf package, and that is acceptable — the
 leaf rule is about import direction, not third-party dependencies. The significance block that used to
-make that argument has since moved to `quantcore.stats`, which settles it in the other direction: an
+make that argument has since moved to `ithildincore.stats`, which settles it in the other direction: an
 external package sits below every package here rather than beside one, and nothing forbids external
 libraries. pandas is a first-class repo dependency (requirements.txt carries
 pandas and pandas-stubs), and `daily_equity` is already a DataFrame from all three producers, so a
