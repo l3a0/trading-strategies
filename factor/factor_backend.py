@@ -39,10 +39,10 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-
-from common.stats import (
+from quantcore.stats import (
     newey_west_t,  # the shared Bartlett-weighted HAC t (one definition, leaf-homed)
 )
+
 from factor.factor_mechanism import loading_family
 from search.evalue_fdr import (
     _asymptotic_p,  # the shared asymptotic-p convention (one definition; option-independent)

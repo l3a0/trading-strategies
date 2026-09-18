@@ -25,9 +25,9 @@ from __future__ import annotations
 
 import matplotlib.dates as mdates
 from matplotlib.figure import Figure
+from quantcore.timeseries import EG_CRIT_N2
 
 from common.paths import FIGURES_DIR
-from common.timeseries import EG_CRIT_N2
 from search.pair_cointegration import aligned_closes, rolling_cointegration
 
 # Essay palette -- docs/gld-gdx-cointegration-lessons.html :root tokens.

@@ -68,16 +68,16 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
-from scipy import stats
-
-from common.paths import data_path
-from common.timeseries import (
+from quantcore.timeseries import (
     ADF_CRIT_CONST,
     EG_CRIT_N2,
     adf_tstat,
     ols,
     ou_half_life,
 )
+from scipy import stats
+
+from common.paths import data_path
 
 # The OLS / ADF / OU primitives and the MacKinnon critical values live in the
 # leaf module common/timeseries.py; factor/factor_mechanism.py shares the same

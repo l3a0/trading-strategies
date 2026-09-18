@@ -3,6 +3,17 @@ pandas
 matplotlib
 yfinance
 statsmodels
+# The shared estimators. quantcore holds the OLS, ADF, half-life and
+# Newey-West work this repo used to carry in common/timeseries.py and
+# common/stats.py, and shares it with the sibling quantitative-trading
+# repo, so one calculation has one implementation.
+#
+# Pinned to a tag rather than floating, and pinned for a different reason
+# than the linters below. A linter release breaks CI with no code change.
+# A quantcore release would change a number with no code change, and every
+# pinned figure in this repo's significance blocks traces to that
+# arithmetic. Moving this pin is a re-pin, not a bump.
+quantcore @ git+https://github.com/l3a0/quant-core@v0.1.0
 pytest
 pytest-cov
 pytest-xdist

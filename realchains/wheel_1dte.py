@@ -46,9 +46,10 @@ from collections.abc import Sequence
 from datetime import date as _date
 from typing import Any
 
+from quantcore.stats import newey_west_summary
+
 from common.paths import data_path
 from common.position_sizing import kelly_fraction, simulate_sizing
-from common.stats import newey_west_summary
 from common.trade_ledger import TradeRecord, build_trade_ledger, ledger_statistics
 from realchains.real_cc_backtest import load_chain_store, load_unadjusted_prices
 

@@ -664,13 +664,14 @@ amendment's, per §10.
   Gap A/D ledger and regimes (`common/trade_ledger.py`); Gap C+B sizing
   (`common/position_sizing.py`); the walk-forward precedents
   (`realchains/walk_forward_real.py`, `TestSpyRealWalkForwardRegression`,
-  `TestMsftRealWalkForwardRegression`); the significance block
-  (`common/stats.py`); the closed grammar (`STRUCTURE_GRAMMAR` /
+  `TestMsftRealWalkForwardRegression`); the significance block (registered as
+  `common/stats.py`, since moved to `quantcore.stats` with its arithmetic
+  byte-identical, so the registration stands); the closed grammar (`STRUCTURE_GRAMMAR` /
   `ALLOWED_GRID`, `search/edge_search.py`).
 - Method lineage: walk-forward and the degrees-of-freedom floors follow Pardo
   (2008); the delta-hedged-gain measure follows Bakshi & Kapadia (2003); the
   R-multiple / expectancy frame follows Van Tharp; the add-one Monte Carlo
   convention is Davison & Hinkley (1997); HAC inference is Newey-West with
-  the Andrews lag as implemented in `common/stats.py`; the
+  the Andrews lag as implemented in `quantcore.stats`; the
   selection-vs-verdict discipline follows the data-snooping reality-check
   family (White, 2000).

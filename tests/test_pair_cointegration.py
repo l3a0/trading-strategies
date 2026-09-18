@@ -36,8 +36,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
+from quantcore.timeseries import EG_CRIT_N2
 
-from common.timeseries import EG_CRIT_N2
 from search.pair_cointegration import (
     BOOK_END,
     BOOK_START,
