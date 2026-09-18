@@ -10,6 +10,10 @@
 # todo are Alpha-Vantage gap days). Key parsed from ~/.zshrc, never printed.
 # Resumable: download_option_dailies.py skips days already in the output, so a
 # re-run picks up where a socket timeout left off.
+# Both tickers take their trading-day calendar from data/tlt_20yr_prices.csv.
+# GLD used to read data/gld_20yr_prices.csv, which left with the Chan
+# reproduction. --dates-from accepts any US-listed calendar file and the two
+# spans were identical, so nothing about the fetch changed.
 cd "${0:A:h}/.." || exit 1  # repo root (data/, packages on path)
 LOG=logs/gld_tlt_fetch.log
 
@@ -35,6 +39,6 @@ fetch_one() {  # $1=ticker $2=out $3=dates-from $4=start $5=end
   done
 }
 
-fetch_one GLD data/gld_option_dailies.csv data/gld_20yr_prices.csv 2010-12-01 2026-06-05
+fetch_one GLD data/gld_option_dailies.csv data/tlt_20yr_prices.csv 2010-12-01 2026-06-05
 fetch_one TLT data/tlt_option_dailies.csv data/tlt_20yr_prices.csv 2010-12-01 2026-06-05
 echo "[ALL] FETCH COMPLETE $(date +%H:%M:%S): GLD + TLT both wings" >> $LOG
