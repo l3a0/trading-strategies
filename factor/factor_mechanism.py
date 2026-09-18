@@ -11,7 +11,7 @@ H1a (this module) is the mechanism COMPUTATION, additive and standalone (it take
 the panel, never imports the backends). H1b wires it into `FactorBackend.mechanism` /
 `GrammarFactorBackend.mechanism` and the score gate, turning today's `family=None` into a derived family.
 
-The loading regression is a plain OLS through the shared `common.timeseries.ols`
+The loading regression is a plain OLS through the shared `quantcore.timeseries.ols`
 (statsmodels-backed). The loading t-stat is all the gate needs, and a normal-tailed
 |t| hurdle matches the repo's `_asymptotic_p` convention.
 
@@ -31,8 +31,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-
-from common.timeseries import ols
+from quantcore.timeseries import ols
 
 REGISTERED_PREMIA: tuple[str, ...] = ('trend', 'lowvol')   # the committed factor families (base styles)
 PREMIUM_WINDOW = 20                                          # lookback for the base signals (the momentum window)
@@ -76,7 +75,7 @@ def registered_premia(prices: pd.DataFrame, window: int = PREMIUM_WINDOW) -> pd.
 
 def _ols_tstats(y: np.ndarray, x: np.ndarray) -> np.ndarray:
     """Plain OLS t-stats for `y ~ [1, x]`: the column t-stats `beta / se(beta)`,
-    via the shared `common.timeseries.ols` (statsmodels-backed). Returns the
+    via the shared `quantcore.timeseries.ols` (statsmodels-backed). Returns the
     t-stat vector (index 0 the intercept). Raises `np.linalg.LinAlgError` on a
     rank-deficient (collinear) design so `loading_family` fails closed: the
     statsmodels OLS would otherwise pinv through the singularity instead of

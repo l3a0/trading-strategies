@@ -62,9 +62,9 @@ from multiprocessing import Pool
 from typing import Any
 
 import numpy as np
+from quantcore.stats import newey_west_summary
 
 from common.paths import data_path
-from common.stats import newey_west_summary
 from engine.intraday_continuation import (
     FIRST_BAR,
     LAST_BAR,

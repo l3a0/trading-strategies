@@ -82,8 +82,8 @@ function + no I/O), specialized to the registered pipeline:
   only the entry calendar (`k = 10`), selection never re-run.
 - `stationary_bootstrap(x, block=21, B=10_000, seed)` and
   `loyo_nw(excess, dates)` — both new (the repo has neither; the trend
-  gate's LOYO is cycle-level). They live here, not `common/stats.py`, so the
-  pinned shared significance block is untouched.
+  gate's LOYO is cycle-level). They live here, not in `quantcore.stats`, so
+  the pinned shared significance block is untouched.
 
 ### 1.2 `realchains/run_prereg_put_spread.py` — the registered runner
 

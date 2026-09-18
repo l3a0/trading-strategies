@@ -125,8 +125,8 @@ rules are out of scope here and would be a separate, engine-touching design.
 
 A new stdlib-only leaf module, sibling of `common/trade_ledger.py`, with the same dependency direction
 (`common/` imports nothing above `common/` — the rule the ledger's docstring states,
-common/trade_ledger.py:15-23) and the same import discipline (the ledger's imports are stdlib plus the
-sibling `common.stats`, common/trade_ledger.py:48-54; the sizer needs only `random`, `math`, and
+common/trade_ledger.py:15-23) and the same import discipline (the ledger's imports are stdlib plus
+`quantcore.stats`, common/trade_ledger.py:48-54; the sizer needs only `random`, `math`, and
 `statistics`). Its module docstring carries the same epistemics language the ledger pins: measurement
 substrate only, every output exploratory, reported never a gate.
 

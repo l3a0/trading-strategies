@@ -20,9 +20,9 @@ from typing import Any, ClassVar
 import numpy as np
 import pandas as pd
 import pytest
+from quantcore.stats import newey_west_summary
 
 from common.paths import DATA_DIR
-from common.stats import newey_west_summary
 from realchains.real_cc_backtest import COMMISSION_PER_SHARE
 from realchains.vol_premium import STRUCTURE_SPECS, run_real_structure_overlay
 from realchains.walk_forward_structure import (

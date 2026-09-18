@@ -491,13 +491,14 @@ def portfolio_scout() -> dict[str, Any]:
     own $100K (structure legs rf-netted to their published basis by the
     rf_credit column switch; CC legs rf-free by engine construction).
     """
+    from quantcore.stats import newey_west_summary
+
     from common.portfolio import (
         align_streams,
         combine_streams,
         max_drawdown_pct,
         stream_correlations,
     )
-    from common.stats import newey_west_summary
     from realchains.real_cc_backtest import (
         REGISTERED_CLEAN_START,
         run_real_cc_overlay,

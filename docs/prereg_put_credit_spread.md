@@ -649,6 +649,45 @@ amendment's, per §10.
 
 ---
 
+### Amendment 2 — 2026-09-18 (the registered significance block moved repositories)
+
+**What changed:** §12 named the significance block as `common/stats.py`. That
+file now lives outside this repository, as `quantcore.stats` in the shared
+[quant-core](https://github.com/l3a0/quant-core) package, and both §12
+references were updated to say so while keeping the registered name visible.
+
+**Why:** the same module existed in this repo and in the sibling
+`quantitative-trading` repo, and two copies of one calculation drift without
+either one looking wrong. Sharing it removes the copy.
+
+**What did not change:** the arithmetic. The moved body is byte-identical to
+the registered one, verified by stripping docstrings from both and confirming
+they parse to the same tree. The Bartlett weights, the Andrews lag rule, the
+`ddof=1` variance and both guards are the same floating-point operations in
+the same order, so every figure this registration commits to is computed by
+the code it was registered against.
+
+**Demotions:** none. No claim is affected, because no computed value moves. A
+relocation that changed a result would be a different amendment and would
+demote everything downstream of it.
+
+**Why this is recorded rather than treated as a reference update:** §11 says
+silent edits void the registration and draws no exception for a pointer that
+still points at the same arithmetic. Two earlier post-registration edits to
+this file did go unrecorded, a mechanical rename and a Markdown respacing, so
+the practice here has been looser than the text. This one is different in a
+way worth the entry: the referenced code left the repository, so a future
+reader cannot resolve it by reading this repo at all. That is what the record
+below is for.
+
+**The pin that makes this checkable:** `requirements.txt` names the exact
+commit of `quant-core`, not the tag, because this repo keeps no lockfile and a
+tag can be moved on the remote. Moving that pin is itself a re-pin and carries
+a `STRUCTURE_ENGINE_VERSION` bump, which `requirements.txt` states at the point
+of edit.
+
+---
+
 ## 12. Lineage and references
 
 - Internal, the family's record: `select_credit_spread` /
@@ -664,13 +703,15 @@ amendment's, per §10.
   Gap A/D ledger and regimes (`common/trade_ledger.py`); Gap C+B sizing
   (`common/position_sizing.py`); the walk-forward precedents
   (`realchains/walk_forward_real.py`, `TestSpyRealWalkForwardRegression`,
-  `TestMsftRealWalkForwardRegression`); the significance block
-  (`common/stats.py`); the closed grammar (`STRUCTURE_GRAMMAR` /
+  `TestMsftRealWalkForwardRegression`); the significance block (registered as
+  `common/stats.py`, since moved to `quantcore.stats` with its arithmetic
+  byte-identical, so the registration stands); the closed grammar (`STRUCTURE_GRAMMAR` /
   `ALLOWED_GRID`, `search/edge_search.py`).
 - Method lineage: walk-forward and the degrees-of-freedom floors follow Pardo
   (2008); the delta-hedged-gain measure follows Bakshi & Kapadia (2003); the
   R-multiple / expectancy frame follows Van Tharp; the add-one Monte Carlo
   convention is Davison & Hinkley (1997); HAC inference is Newey-West with
-  the Andrews lag as implemented in `common/stats.py`; the
+  the Andrews lag as implemented in `quantcore.stats` (registered as
+  `common/stats.py`, relocated byte-identical under Amendment 2); the
   selection-vs-verdict discipline follows the data-snooping reality-check
   family (White, 2000).

@@ -125,5 +125,5 @@ each of those is a new registration, not an extension of this one.
   `python -m realchains.run_prereg_put_spread`.
 - **Method lineage:** as registered — Pardo (walk-forward, the floors),
   Bakshi-Kapadia (the hedged-gain measure), Politis-Romano (the bootstrap),
-  Newey-West/Andrews via `common/stats.py`, and the White reality-check
+  Newey-West/Andrews via `quantcore.stats`, and the White reality-check
   discipline of judging only the pre-committed statistic.

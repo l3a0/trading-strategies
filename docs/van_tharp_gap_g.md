@@ -108,7 +108,7 @@ cross-sectional Spearman across names (factor/factor_backend.py:105-124), the IV
 Spearman pools cycles within one stream (search/explorations.py:344-346), the ACF figure computes
 single-series autocovariances (engine/make_figures.py:274), and the closest align-two-series precedent
 joins a factor's long-short returns to the registered premia, never overlay equity
-(factor/factor_mechanism.py:105). The walk-forward's concat chains OOS windows of one strategy
+(factor/factor_mechanism.py:104). The walk-forward's concat chains OOS windows of one strategy
 (engine/cc_backtest.py:931). The parent plan's Gap G claim is thereby confirmed — with one stale anchor
 noted for the build PR: docs/van_tharp_test_plan.md:230 cites the explorations Spearman at
 search/explorations.py:335, and it now sits at :346.
@@ -220,8 +220,11 @@ exercise or a campaign, never a quiet extension of this one (the reclassificatio
 Consumers of the combined stream:
 
 - `newey_west_summary` for the combined stream's descriptive t — the single home of the repo's
-  naive-vs-Newey-West arithmetic (common/stats.py:3-8; `NeweyWestSummary` at :41-49, the function at
-  :52), with lag units in the caller's series index, calendar days here (:20-23).
+  naive-vs-Newey-West arithmetic. It now lives in `quantcore.stats`, in the shared
+  [quant-core](https://github.com/l3a0/quant-core) package, so the line numbers this bullet used to
+  carry are gone and the symbols are the reference: `NeweyWestSummary` and `newey_west_summary`. Lag
+  units are the caller's series index, calendar days here. The arithmetic did not change on the way
+  out, so nothing this doc measured moved.
 - Max drawdown on the combined cumulative curve, built at the fixed-capital base:
   `capital × (1 + cumsum(pnl))`, drawdown as percent of running peak. Leg drawdowns on the common span
   are computed the same way, so the comparison shares one definition — which also means the common-span
@@ -252,9 +255,10 @@ significance authority (common/trade_ledger.py:237-242).
 ### The pandas decision
 
 `common/portfolio.py` will be the first pandas import in the leaf package, and that is acceptable — the
-leaf rule is about import direction, not third-party dependencies. common/stats.py's docstring defines
-`common/` as the leaf everything else imports without a dependency inversion (common/stats.py:1-11);
-nothing forbids external libraries. pandas is a first-class repo dependency (requirements.txt carries
+leaf rule is about import direction, not third-party dependencies. The significance block that used to
+make that argument has since moved to `quantcore.stats`, which settles it in the other direction: an
+external package sits below every package here rather than beside one, and nothing forbids external
+libraries. pandas is a first-class repo dependency (requirements.txt carries
 pandas and pandas-stubs), and `daily_equity` is already a DataFrame from all three producers, so a
 DataFrame-taking harness inverts nothing. The convention cost is named: today's `common/` interfaces
 are stdlib and numpy — the ledger takes list-of-dict trades, the sizer takes sequences and imports no

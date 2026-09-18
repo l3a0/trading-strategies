@@ -241,7 +241,7 @@ labelled columns; only the last is an authority.
   differences, so the series is better behaved than raw dollar P&L. Its lag lives in trade-index units:
   lag 1 is one \~30-day cycle, not one day. Dependency note: `common/trade_ledger.py` cannot import from
   `factor/` without inverting the leaf-module direction, so the function was HOISTED into the leaf —
-  `common/stats.py` (`newey_west_summary` / `newey_west_t`) is the single definition, consumed by the
+  `common/stats.py` (`newey_west_summary` / `newey_west_t`) was the single definition, consumed by the
   ledger, `factor/factor_backend.py`, and both daily judges (`excess_over_buy_hold_statistics` /
   `excess_over_cash_statistics`), each of which previously carried its own copy.
 - The **daily Newey-West HAC t** (`excess_over_cash_statistics` / `excess_over_buy_hold_statistics`) remains the sole

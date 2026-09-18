@@ -20,7 +20,7 @@ no per-engine flags. CC legs are rf-free by engine construction.
 Epistemic status: descriptive measurement substrate — EXPLORATORY, never a
 registered verdict, never advice. Weights are pre-committed by callers;
 weight optimization is an in-sample search and lives in no function here.
-The daily Newey-West t (``common.stats.newey_west_summary``) stays the one
+The daily Newey-West t (``quantcore.stats.newey_west_summary``) stays the one
 descriptive significance shape; drawdown comparisons carry no significance
 claim at all.
 """

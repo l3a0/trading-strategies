@@ -55,9 +55,9 @@ import pandas as pd
 from matplotlib.figure import Figure
 from matplotlib.ticker import FuncFormatter
 from numpy.typing import NDArray
+from quantcore.stats import newey_west_lag
 
 from common.paths import data_path
-from common.stats import newey_west_lag
 from engine.cc_backtest import (
     bs_delta,
     calc_rolling_volatility,
