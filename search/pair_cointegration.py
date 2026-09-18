@@ -38,7 +38,7 @@ modern proxy to Chan's 2007-era adjusted series (GDX had barely any dividends
 stripped then), so ``--ch7`` and ``--ch3`` use raw.
 
 The OLS, ADF, and OU primitives come from ``statsmodels`` via
-``common/timeseries.py``, run at a FIXED lag (``maxlag=1, autolag=None``), not
+``quantcore.timeseries``, run at a FIXED lag (``maxlag=1, autolag=None``), not
 statsmodels' AIC default.
 
 Chan's KO vs PEP counter-example (``--ko-pep``, Example 7.3) is the mirror
@@ -80,7 +80,7 @@ from scipy import stats
 from common.paths import data_path
 
 # The OLS / ADF / OU primitives and the MacKinnon critical values live in the
-# leaf module common/timeseries.py; factor/factor_mechanism.py shares the same
+# shared quantcore.timeseries; factor/factor_mechanism.py shares the same
 # ols. This module keeps only the pair-specific two-step test below.
 
 

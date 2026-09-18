@@ -42,7 +42,7 @@ import random
 from collections.abc import Sequence
 from typing import Any
 
-# Same-package reuse — one definition, per the NW-hoist lesson (common/stats.py).
+# One definition, reused, per the NW-hoist lesson (now quantcore.stats).
 from common.trade_ledger import _percentile
 
 RUIN_THRESHOLD_25DD = 0.75   # the practitioner 25%-drawdown tolerance (design open question 1)

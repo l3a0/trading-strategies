@@ -4,7 +4,7 @@
 Always-run layers (no dataset gate — the price CSVs are committed to git, not
 release-sized option chains). The shared OLS / ADF / OU primitives (now
 statsmodels-backed) have their own mechanics tests in
-``tests/test_timeseries.py``; this file tests the pair-specific two-step
+quantcore's own suite; this file tests the pair-specific two-step
 ``engle_granger``, the return correlation, and the reproductions.
 
 1. ``TestEngleGranger`` — the two-step cointegration test on synthetic pairs
@@ -58,7 +58,7 @@ from search.pair_cointegration import (
 class TestEngleGranger:
     """The pair-specific two-step cointegration test on synthetic pairs with
     known answers. The underlying OLS / ADF / OU primitives are tested in
-    tests/test_timeseries.py; here the assertions are the verdict engle_granger
+    quantcore's own suite; here the assertions are the verdict engle_granger
     reaches.
     """
 

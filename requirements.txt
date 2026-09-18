@@ -8,12 +8,27 @@ statsmodels
 # common/stats.py, and shares it with the sibling quantitative-trading
 # repo, so one calculation has one implementation.
 #
-# Pinned to a tag rather than floating, and pinned for a different reason
-# than the linters below. A linter release breaks CI with no code change.
-# A quantcore release would change a number with no code change, and every
-# pinned figure in this repo's significance blocks traces to that
-# arithmetic. Moving this pin is a re-pin, not a bump.
-quantcore @ git+https://github.com/l3a0/quant-core@v0.1.0
+# Pinned to a commit, and pinned for a different reason than the linters
+# below. A linter release breaks CI with no code change. A quantcore release
+# would change a number with no code change, and every pinned figure in this
+# repo's significance blocks traces to that arithmetic.
+#
+# The commit rather than the tag `v0.1.0` it belongs to, because this repo
+# installs with pip and keeps no lockfile, so a tag is the only thing between
+# the pinned figures and a force-push. A tag can be moved on the remote. A
+# commit cannot.
+#
+# Moving this pin is a re-pin, not a bump, and it carries two obligations the
+# deleted common/stats.py docstring used to state at the point of edit:
+#
+#   1. Re-pin every figure that traces to the Newey-West block, which is both
+#      daily judges, the factor IC, and the trade ledger.
+#   2. Bump STRUCTURE_ENGINE_VERSION. `_data_lineage_hash` in
+#      search/edge_search.py folds exactly the inputs that move the t-stat, and
+#      this pin now moves it while sitting outside that hash. Without the bump
+#      a re-scored campaign keeps its old lineage id, which is the stale
+#      answer-key row the hash exists to prevent.
+quantcore @ git+https://github.com/l3a0/quant-core@d088015176a74f38d1f1e1240f8371b5637d5db2
 pytest
 pytest-cov
 pytest-xdist
