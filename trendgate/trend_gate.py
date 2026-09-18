@@ -34,7 +34,7 @@ from collections.abc import Iterator, Sequence
 from typing import Any
 
 import numpy as np
-from quantcore.stats import newey_west_summary
+from ithildincore.stats import newey_west_summary
 
 from common.paths import data_path
 from engine.cc_backtest import calc_rolling_volatility, classify_regime
@@ -656,7 +656,7 @@ def loyo_t(per_ticker_cycles: dict[str, list[list[Any]]],
 def common_base_nw_t(record_eq: Any, baseline_summary: dict[str, Any]) -> dict[str, Any]:
     """§6.4: daily common-base excess Newey-West t on the record arm,
     e_t = (ΔE_gated − ΔE_bh) / E_bh,t−1 — zero by construction on uncovered
-    days. The estimator is the shared quantcore.stats.newey_west_summary — the
+    days. The estimator is the shared ithildincore.stats.newey_west_summary — the
     same Bartlett-weighted NW block excess_over_buy_hold_statistics uses, byte-identical
     to the mirror formerly inlined here; descriptive only."""
     shares = baseline_summary['num_contracts'] * 100

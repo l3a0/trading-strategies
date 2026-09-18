@@ -62,7 +62,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from quantcore.stats import newey_west_summary
+from ithildincore.stats import newey_west_summary
 
 from realchains.real_cc_backtest import (
     COMMISSION_PER_SHARE,
@@ -195,7 +195,7 @@ def excess_over_cash_statistics(
         raise ValueError(f'need >=2 daily observations, got {n}')
 
     # The naive/NW pair, Bartlett weights, auto-lag, and guards live in
-    # quantcore.stats.newey_west_summary — the single shared definition
+    # ithildincore.stats.newey_west_summary — the single shared definition
     # (byte-identical to the block formerly inlined here).
     s = newey_west_summary(excess)
 

@@ -688,6 +688,30 @@ of edit.
 
 ---
 
+### Amendment 3 — 2026-09-18 (the shared package was renamed)
+
+**What changed:** the package Amendment 2 named as `quantcore` is now
+`ithildincore`, in the renamed repository
+[ithildin-core](https://github.com/l3a0/ithildin-core), at `v0.2.0`. §12's
+live reference moves with it. Amendment 2 is left as written, because it
+records what was true when it was recorded.
+
+**Why:** `quantcore` is an occupied name on PyPI, an unrelated backtesting
+package whose `0.1.0` release satisfies a `quantcore>=0.1` floor. This repo
+pins by direct URL at a commit, which no index can satisfy, so it was never
+exposed. The pin was the only thing standing between a contributor running
+`pip install -r requirements.txt` with a hand-edited line and someone else's
+code, and a name nobody else has is what stops the question coming back.
+
+**What did not change:** the arithmetic, again. The rename moved no function
+body. `requirements.txt` moves from one exact commit to another, and the
+Bartlett weights, the Andrews lag rule, the `ddof=1` variance and both guards
+are the same floating-point operations in the same order.
+
+**Demotions:** none. No computed value moves.
+
+---
+
 ## 12. Lineage and references
 
 - Internal, the family's record: `select_credit_spread` /
@@ -711,7 +735,8 @@ of edit.
   (2008); the delta-hedged-gain measure follows Bakshi & Kapadia (2003); the
   R-multiple / expectancy frame follows Van Tharp; the add-one Monte Carlo
   convention is Davison & Hinkley (1997); HAC inference is Newey-West with
-  the Andrews lag as implemented in `quantcore.stats` (registered as
-  `common/stats.py`, relocated byte-identical under Amendment 2); the
+  the Andrews lag as implemented in `ithildincore.stats` (registered as
+  `common/stats.py`, relocated byte-identical under Amendment 2, renamed under
+  Amendment 3); the
   selection-vs-verdict discipline follows the data-snooping reality-check
   family (White, 2000).

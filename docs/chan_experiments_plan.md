@@ -71,8 +71,8 @@ training window and −3.45 on the full Ch.7 window, with a through-origin hedge
 re-runs converge near 1.6379. Pinned by `TestGldGdxReproduction` in
 [tests/test_pair_cointegration.py](../tests/test_pair_cointegration.py). The
 engine is [search/pair_cointegration.py](../search/pair_cointegration.py) on the
-statsmodels-backed `quantcore.timeseries`, in the shared
-[quant-core](https://github.com/l3a0/quant-core) package.
+statsmodels-backed `ithildincore.timeseries`, in the shared
+[ithildin-core](https://github.com/l3a0/ithildin-core) package.
 
 Chan's own companion data is committed too, as the receipt for that lost vintage:
 [data/gld_chan.csv](../data/gld_chan.csv) and
