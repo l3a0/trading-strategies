@@ -46,5 +46,5 @@ pytest-xdist
 # written down now, so a ruff release can change its defaults without changing
 # ours. Widening the rule set is a separate, deliberate change.
 ruff==0.16.6
-pyright==1.1.411
+pyright==1.1.414
 pandas-stubs
