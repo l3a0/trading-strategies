@@ -28,9 +28,9 @@ enables **Experiment 2** (docs/van_tharp_test_plan.md:275): hold the exits, the 
 fixed, randomize the entry, and measure whether the system's character survives.
 
 Predecessors are all in: Gap A (the R-multiple ledger, [docs/van_tharp_gap_a.md](van_tharp_gap_a.md),
-merged in #125), Gap D (the six-regime R-distributions, [docs/van_tharp_gap_d.md](van_tharp_gap_d.md),
-merged in #126), Gaps C+B (the fixed-fractional replay + marble-bag resampler,
-[docs/van_tharp_gap_cb.md](van_tharp_gap_cb.md), designed in #127 and built in #128), and Gap E
+merged in [PR #125](https://github.com/l3a0/trading-strategies/pull/125)), Gap D (the six-regime R-distributions, [docs/van_tharp_gap_d.md](van_tharp_gap_d.md),
+merged in [PR #126](https://github.com/l3a0/trading-strategies/pull/126)), Gaps C+B (the fixed-fractional replay + marble-bag resampler,
+[docs/van_tharp_gap_cb.md](van_tharp_gap_cb.md), designed in [PR #127](https://github.com/l3a0/trading-strategies/pull/127) and built in [PR #128](https://github.com/l3a0/trading-strategies/pull/128)), and Gap E
 ([docs/van_tharp_gap_e.md](van_tharp_gap_e.md), BUILT per its Status — its `TestExitMechanics` classes
 are part of this doc's seam evidence).
 
@@ -337,7 +337,7 @@ is already co-bucketed with tests/test_explorations.py in CI.
 **The CI runtime consequence.** The new pins ride the trend-explore bucket (tests/test_trend_gate.py +
 tests/test_explorations.py + tests/test_trade_ledger.py, .github/workflows/ci.yml:195), the lightest of
 the three scout buckets; ci.yml's balancing comment says overall wall-clock is the slowest bucket,
-\~test_vol_premium (:175-179), and the measured 2026-06-24 figures from the #87/#88 CI-perf work put the
+\~test_vol_premium (:175-179), and the measured 2026-06-24 figures from the [PR #87](https://github.com/l3a0/trading-strategies/pull/87)/[PR #88](https://github.com/l3a0/trading-strategies/pull/88) CI-perf work put the
 slow jobs bunched at \~6.5–8 minutes (vol-premium \~7m45s). The ensemble is \~21 registered-span SPY
 passes; at \~20 s per pass — an inference from the vol-premium bucket's pace, not a measured per-pass
 figure — that is \~7 minutes added to the light bucket (the store loads once, in the module fixture, on
@@ -454,11 +454,11 @@ career seeds `RANDOM_ENTRY_SEED + i` for i in 0..19.
 - [docs/van_tharp_gap_e.md](van_tharp_gap_e.md) — the seam's mechanics-test evidence and the
   boundary-argument and pinning-home precedents this design reuses
 - [docs/van_tharp_gap_a.md](van_tharp_gap_a.md) — the R-multiple ledger every career is measured through
-  (merged, #125)
+  (merged, [PR #125](https://github.com/l3a0/trading-strategies/pull/125))
 - [docs/van_tharp_gap_cb.md](van_tharp_gap_cb.md) — the sizing replay open question 3 defers (BUILT per
   its Status)
 - [docs/van_tharp_gap_d.md](van_tharp_gap_d.md) — the six-regime bucketing available to slice career
-  ledgers later (merged, #126)
+  ledgers later (merged, [PR #126](https://github.com/l3a0/trading-strategies/pull/126))
 - [docs/explorations.md](explorations.md) — the scout pattern, the recurring entry-conditioning lesson,
   and the log-entry home for the verdict
 - [docs/trend_gate_results.md](trend_gate_results.md) — the registered entry-conditioning kill in the

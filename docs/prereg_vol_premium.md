@@ -369,7 +369,7 @@ to the data:
   so `CHAIN_CLEAN_START['IWM'] = '2010-12-01'` is the file's first day, not a post-hoc
   trim, and was determined before any result was viewed.
 - **Result:** the run executed once (analysis code `realchains/run_registered_vrp.py`), citing
-  this registration's merge commit (PR #23) and the analysis-code commit. The verdict is
+  this registration's merge commit ([PR #23](https://github.com/l3a0/trading-strategies/pull/23)) and the analysis-code commit. The verdict is
   §6 row 4 — null on the put wing (SPY gross t +0.20, net-0.5bp +0.09; IWM +1.00 / +0.91,
   does not confirm) — reported in `docs/vol_premium.md` and pinned by
   `TestSpyShortPutRegression` / `TestIwmShortPutRegression`.

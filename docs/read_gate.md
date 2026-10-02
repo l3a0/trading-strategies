@@ -94,7 +94,7 @@ code and data the proposer must be able to run — so fencing the files where it
 
 2. **Git history holds the full plaintext.** Verified: `git show HEAD:idea_ledger.jsonl` returns all
    42 answer-key rows, `p_value` fields and all. The file is committed (deliberately — e-LOND
-   auditability needs it) across commits #63/#66/#67. A `git mv` into `vault/` only changes the path
+   auditability needs it) across the merges of [PR #63](https://github.com/l3a0/trading-strategies/pull/63), [PR #66](https://github.com/l3a0/trading-strategies/pull/66) and [PR #67](https://github.com/l3a0/trading-strategies/pull/67). A `git mv` into `vault/` only changes the path
    *going forward*; every prior commit keeps the file at its old top-level path, and
    `git show <oldsha>:idea_ledger.jsonl`, `git log -p`, and `git cat-file` are blind to a
    `vault/**` path-deny. Git is content-addressed: even the post-move blob is reachable by its

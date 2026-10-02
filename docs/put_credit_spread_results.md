@@ -1,10 +1,10 @@
 # Registered put-credit-spread experiment — the results
 
 **Registration:** [docs/prereg_put_credit_spread.md](prereg_put_credit_spread.md),
-effective at merge commit `4ddbbbe` (PR #133), with Amendment 1 (the
-`bracket75` exit variant; 69-cell lattice) recorded pre-computation at PR
-#134. **Analysis code:** `realchains/walk_forward_structure.py` /
-`realchains/run_prereg_put_spread.py`, merged at `dd8c428` (PR #135) before
+effective at merge commit `4ddbbbe` ([PR #133](https://github.com/l3a0/trading-strategies/pull/133)), with Amendment 1 (the
+`bracket75` exit variant; 69-cell lattice) recorded pre-computation at
+[PR #134](https://github.com/l3a0/trading-strategies/pull/134). **Analysis code:** `realchains/walk_forward_structure.py` /
+`realchains/run_prereg_put_spread.py`, merged at `dd8c428` ([PR #135](https://github.com/l3a0/trading-strategies/pull/135)) before
 any number existed, per the §10 ordering rule. **The run:** executed once,
 2026-07-17 21:08 UTC, `python -m realchains.run_prereg_put_spread`, exit 0;
 the C1 drift alarm reproduced the campaign's committed cell at **−0.91**
