@@ -2,9 +2,9 @@
 
 **Status:** FINAL — killed at Stage 1. Per [the registration](prereg_trend_gate.md)
 §10, this report cites the registration merge commit `4d2239b`
-([#12](https://github.com/l3a0/trading-strategies/pull/12)) and the
+([PR #12](https://github.com/l3a0/trading-strategies/pull/12)) and the
 analysis-code commit `d9ddb43`
-([#14](https://github.com/l3a0/trading-strategies/pull/14)). Stage 1 ran on
+([PR #14](https://github.com/l3a0/trading-strategies/pull/14)). Stage 1 ran on
 2026-06-12 from a clean `main` checkout at `d9ddb43`, in the registered
 environment (Python 3.9.6, numpy 2.0.2, pandas 2.3.3). The registration
 document was never amended; no exploratory demotions apply.

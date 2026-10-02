@@ -185,7 +185,7 @@ foil that justifies the interlocks — none of which is a container.
 
 - **Phase A — oracle-side gates (buildable now, activates nothing).** What actually gates the live
   model, all on the trusted side: the **numberless seal** hardened into the sole prompt guard
-  (`assert_numberless` + the completed ban-set + the leaf-type guard — done in #82); the
+  (`assert_numberless` + the completed ban-set + the leaf-type guard — done in [PR #82](https://github.com/l3a0/trading-strategies/pull/82)); the
   **prompt builder** (`build_proposer_prompt` — the numberless prompt assembled from the menu +
   scrubbed corpus + onboarded tickers, sealed by `assert_numberless` on the corpus input, pinned by
   `TestProposerPrompt`); the **activation gate simplified** to its no-model backstop (the

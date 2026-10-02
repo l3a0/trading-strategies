@@ -27,8 +27,8 @@ pinned structure number runs through — where Gaps C+B could land as a zero-eng
 the negative-skew MAE tail into something survivable?
 
 Predecessors are all in: Gap A (the R-multiple ledger, [docs/van_tharp_gap_a.md](van_tharp_gap_a.md),
-merged in #125), Gap D (the six-regime R-distributions, [docs/van_tharp_gap_d.md](van_tharp_gap_d.md),
-merged in #126), and Gaps C+B (the fixed-fractional replay + marble-bag resampler,
+merged in [PR #125](https://github.com/l3a0/trading-strategies/pull/125)), Gap D (the six-regime R-distributions, [docs/van_tharp_gap_d.md](van_tharp_gap_d.md),
+merged in [PR #126](https://github.com/l3a0/trading-strategies/pull/126)), and Gaps C+B (the fixed-fractional replay + marble-bag resampler,
 [docs/van_tharp_gap_cb.md](van_tharp_gap_cb.md), BUILT per its Status).
 
 Every number this design will produce is **EXPLORATORY** — sample-spending, kill-or-justify, never a
@@ -460,9 +460,9 @@ PR. E2 adds the dataset-gated Experiment 4 pins.
 - [docs/van_tharp_test_plan.md](van_tharp_test_plan.md) — the parent plan whose Gap E row ("the
   heaviest lift") and Experiment 4 this doc designs
 - [docs/van_tharp_gap_a.md](van_tharp_gap_a.md) — the R-multiple ledger every variant is measured
-  through (merged, #125)
+  through (merged, [PR #125](https://github.com/l3a0/trading-strategies/pull/125))
 - [docs/van_tharp_gap_d.md](van_tharp_gap_d.md) — the six-regime bucketing available to slice variant
-  ledgers (merged, #126)
+  ledgers (merged, [PR #126](https://github.com/l3a0/trading-strategies/pull/126))
 - [docs/van_tharp_gap_cb.md](van_tharp_gap_cb.md) — the sizing replay whose ruin curves close the
   Experiment 4 loop (BUILT per its Status)
 - [docs/explorations.md](explorations.md) — the exploratory pattern and the log-entry home for the E2

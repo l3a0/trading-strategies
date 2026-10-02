@@ -263,7 +263,7 @@ registered run is now done; its verdict is next.
 
 The put side was the point of the experiment: the equity-index premium is supposed
 to live in the OTM puts, not the call wing the covered-call work had measured. It was
-pre-registered before the put data existed — registration effective at PR #23's merge
+pre-registered before the put data existed — registration effective at [PR #23](https://github.com/l3a0/trading-strategies/pull/23)'s merge
 — precisely because the call phase had already seen the SPY price path. The run is now
 complete (`realchains/run_registered_vrp.py`), and the pre-committed outcome language (§6, row 4)
 is published verbatim:

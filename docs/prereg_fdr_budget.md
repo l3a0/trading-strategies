@@ -1,12 +1,12 @@
 # Pre-registration: e-value false-discovery control for the edge-search loop
 
-**Status:** REGISTERED — effective at this file's merge to `main` (#50) — and now
+**Status:** REGISTERED — effective at this file's merge to `main` ([PR #50](https://github.com/l3a0/trading-strategies/pull/50)) — and now
 ACTIVATED. The machinery (§2) and constants (§3) are implemented in `search/evalue_fdr.py`
 and pinned by `tests/test_evalue_fdr.py` (oracle-validated against the `online-fdr` package
 / the papers). e-LOND is now the live FDR control in `run_structure_campaign` (BY
 retained as a reported diagnostic): its first governed verdict — **0 / 28 cells
 flagged** in the structure campaign — is pinned by `TestStructureCampaign`. The rule
-still predates every number it governs: it was registered at #50 before the e-LOND
+still predates every number it governs: it was registered at [PR #50](https://github.com/l3a0/trading-strategies/pull/50) before the e-LOND
 control judged anything. (The 28-cell batch is the *head* of the e-LOND stream — R = 0
 at the start, so the first cell faces the loosest `1/(α·γ₁)` bar — and is now the
 committed lifetime ledger, populated via `--record`; §6 is the pre-registration
@@ -97,7 +97,7 @@ examples).
    implementation asserts `∫₀¹ f ≤ 1`. A `measurement_invalid` cell gets `e_i = 0`
    — it enters the stream but `0` can never clear any threshold, so it counts yet
    can never be rejected, the e-value analogue of the `p = None` defense pinned in
-   #46. **The calibrated e-value is only *asymptotically* a valid e-value**: the
+   [PR #46](https://github.com/l3a0/trading-strategies/pull/46). **The calibrated e-value is only *asymptotically* a valid e-value**: the
    HAC-t p is asymptotically (not exactly) uniform under the null, so `E[e_i] ≤ 1`
    holds only to that approximation — the per-cell asymptotics the whole chain
    inherits. The betting e-process (§7) is what would make it finite-sample valid.
@@ -237,7 +237,7 @@ re-registration trigger, not a death.
   `docs/prereg_trend_gate.md` §9, which replaces a t-formula with a placebo null;
   the betting e-process in §7 is the analogous upgrade here.)
 - **The lifetime ledger this reads:** interlock #3a, `idea_ledger.jsonl` /
-  `record_trials` / `_data_lineage_hash` (#48), narrated in
+  `record_trials` / `_data_lineage_hash` ([PR #48](https://github.com/l3a0/trading-strategies/pull/48)), narrated in
   [docs/edge_search.md](edge_search.md).
 - **The registration discipline:** modeled on
   [docs/prereg_trend_gate.md](prereg_trend_gate.md).

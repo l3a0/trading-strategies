@@ -4,7 +4,7 @@
 implementation design for the analysis-code PR that
 [docs/prereg_put_credit_spread.md](prereg_put_credit_spread.md) §10 requires
 before any number is produced. The registration became effective at merge
-commit `4ddbbbe` (PR #133); this plan changes nothing in that document (an
+commit `4ddbbbe` ([PR #133](https://github.com/l3a0/trading-strategies/pull/133)); this plan changes nothing in that document (an
 edit there would be a §11 amendment) — it only decides *how* the frozen rules
 become code.
 

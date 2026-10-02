@@ -28,10 +28,10 @@ more independent markets improve a positive-expectancy system, and noncorrelated
 improve the whole. **This is the plan's last gap.** With this document, all seven gaps (A through G)
 carry designs and six carry builds; Gap G's build is the last open item.
 
-Predecessors are all in: Gap A ([docs/van_tharp_gap_a.md](van_tharp_gap_a.md), merged #125), Gap D
-([docs/van_tharp_gap_d.md](van_tharp_gap_d.md), merged #126), Gaps C+B
-([docs/van_tharp_gap_cb.md](van_tharp_gap_cb.md), designed in #127 and built in #128), Gap E
-([docs/van_tharp_gap_e.md](van_tharp_gap_e.md), designed in #129 and built in #130), and Gap F
+Predecessors are all in: Gap A ([docs/van_tharp_gap_a.md](van_tharp_gap_a.md), merged [PR #125](https://github.com/l3a0/trading-strategies/pull/125)), Gap D
+([docs/van_tharp_gap_d.md](van_tharp_gap_d.md), merged [PR #126](https://github.com/l3a0/trading-strategies/pull/126)), Gaps C+B
+([docs/van_tharp_gap_cb.md](van_tharp_gap_cb.md), designed in [PR #127](https://github.com/l3a0/trading-strategies/pull/127) and built in [PR #128](https://github.com/l3a0/trading-strategies/pull/128)), Gap E
+([docs/van_tharp_gap_e.md](van_tharp_gap_e.md), designed in [PR #129](https://github.com/l3a0/trading-strategies/pull/129) and built in [PR #130](https://github.com/l3a0/trading-strategies/pull/130)), and Gap F
 ([docs/van_tharp_gap_f.md](van_tharp_gap_f.md), BUILT per its Status with the random-entry measurement
 in, docs/van_tharp_gap_f.md:5-18). The streams Experiment 6 consumes already exist.
 
@@ -369,7 +369,7 @@ claim on this cross-section. Either way the matrix gets pinned.
 - One era per combo, each a single mostly-rising span; nothing regime-conditional. The correlations are
   full-sample descriptive — regime-conditional correlation, the crisis-convergence problem of
   correlations rising in stress (the Loc 4292 warning), is a named widening via Gap D's six-regime map
-  ([docs/van_tharp_gap_d.md](van_tharp_gap_d.md), merged #126).
+  ([docs/van_tharp_gap_d.md](van_tharp_gap_d.md), merged [PR #126](https://github.com/l3a0/trading-strategies/pull/126)).
 - Two and three legs at pre-committed equal weights; no frontier, no weight claim, no sizing claim.
 - No significance claim on DD differences — DD comparisons are point-descriptive gap sizes; only the NW
   t carries a significance shape, and it stays descriptive throughout.

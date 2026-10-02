@@ -716,7 +716,7 @@ to time your selling? Three gate proposals all assumed yes, in different
 directions: sell when the insurance looks *rich* (betting spikes are
 overreactions), sell when it looks *cheap* (betting cheap means safe), or
 sell into *vol spikes*. The frozen design of
-[wing_premium_diagnostic_plan.md](wing_premium_diagnostic_plan.md) (#143)
+[wing_premium_diagnostic_plan.md](wing_premium_diagnostic_plan.md) ([PR #143](https://github.com/l3a0/trading-strategies/pull/143))
 measures the one claim all three share — that the wing risk premium is
 **state-dependent** — before any of them can spend strategy sample.
 Per non-overlapping \~30-DTE cycle: what the 0.25Δ wing charged (IV backed
@@ -902,7 +902,7 @@ registration* with a committed sign, never as a revival of this entry.
 ## The owner's 1-DTE QQQ wheel — EVERY CELL TRAILS HOLDING; THE LOSSES BECOME TIME (2026-07-20)
 
 **The idea (owner-specified; design frozen in
-[qqq_wheel_1dte_plan.md](qqq_wheel_1dte_plan.md), PR #149).** The **wheel**:
+[qqq_wheel_1dte_plan.md](qqq_wheel_1dte_plan.md), [PR #149](https://github.com/l3a0/trading-strategies/pull/149)).** The **wheel**:
 sell an overnight put roughly 1% below the price (nearest −0.20 delta,
 expiring the next session); if QQQ finishes below the strike you're
 **assigned** — you buy 100 shares at the strike — and you switch to selling
@@ -1051,7 +1051,7 @@ revival of this entry.
 ## Tharp's support/resistance catalog, replicated — THE QUOTE MISSES BY 30 POINTS; NOTHING BEATS RANDOM (2026-07-20)
 
 **The idea (design frozen in
-[tharp_sr_replication_plan.md](tharp_sr_replication_plan.md), PR #151).**
+[tharp_sr_replication_plan.md](tharp_sr_replication_plan.md), [PR #151](https://github.com/l3a0/trading-strategies/pull/151)).**
 The book's support/resistance catalog carries a handful of *checkable*
 claims, quoted from the committed book notes by Kindle location. We
 counted them on our own price data — two phases, no fills, no fees, just

@@ -595,7 +595,7 @@ bar is t \~6.35, so recording-not-flagging was the expected shape of even a good
 The design's crude iron-condor triangulation prior got 5 of 7 signs right — SPY nearly
 exactly (predicted −0.62, measured −0.64). One infrastructure find rode along: the
 campaign's first run crashed at the write step, exposing that `write_ledger`'s default
-path had been broken since the #122 package refactor — fixed with a regression pin
+path had been broken since the [PR #122](https://github.com/l3a0/trading-strategies/pull/122) package refactor — fixed with a regression pin
 (`TestWriteLedgerDefaultPath`).
 
 ### NVDA — the seventh ticker (live-onboarded, folded in)
